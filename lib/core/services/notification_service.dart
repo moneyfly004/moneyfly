@@ -15,7 +15,9 @@ class NotificationService {
 
   Future<int> unreadCount() async {
     final data = await ApiClient.instance.get(Endpoints.notificationsUnread);
-    if (data is Map && data['count'] != null) return (data['count'] as num).toInt();
+    if (data is Map && data['count'] != null) {
+      return num.tryParse(data['count'].toString())?.toInt() ?? 0;
+    }
     return 0;
   }
 

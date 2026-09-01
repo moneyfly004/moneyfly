@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
@@ -16,6 +17,13 @@ class SessionState extends ChangeNotifier {
   bool loggedIn = false;
 
   Future<void> restore() async {
+    // 「自动登录」开关关闭时，不恢复登录态（见 login_page.setAutoLogin）
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('moneyfly_auto_login') == false) {
+      loggedIn = false;
+      notifyListeners();
+      return;
+    }
     final t = await ApiClient.readAccessToken();
     loggedIn = t != null && t.isNotEmpty;
     notifyListeners();
@@ -83,6 +91,9 @@ class RootShell extends StatelessWidget {
   }
 }
 
+/// 全局主标签索引（供首页/我的等页面一键跳转「充值」tab）
+final ValueNotifier<int> mainTabIndex = ValueNotifier<int>(0);
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -92,6 +103,8 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _index = 0;
+  /// 已访问过的 tab（懒构建 + 保活：切 tab 不重建、不动画闪烁）
+  final Set<int> _visited = {0};
 
   static const _pages = [
     HomePage(),
@@ -100,10 +113,25 @@ class _MainShellState extends State<MainShell> {
     ProfilePage(),
   ];
 
+  void _onTap(int i) {
+    mainTabIndex.value = i;
+    setState(() {
+      _index = i;
+      _visited.add(i);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_index],
+      // IndexedStack 保活已访问页面；未访问的用占位避免登录瞬间并发拉取
+      body: IndexedStack(
+        index: _index,
+        children: [
+          for (var i = 0; i < _pages.length; i++)
+            _visited.contains(i) ? _pages[i] : const SizedBox.shrink(),
+        ],
+      ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: MFColors.bg,
@@ -113,7 +141,7 @@ class _MainShellState extends State<MainShell> {
           top: false,
           child: BottomNavigationBar(
             currentIndex: _index,
-            onTap: (i) => setState(() => _index = i),
+            onTap: _onTap,
             items: const [
               BottomNavigationBarItem(
                 icon: Icon(Icons.home_outlined, size: 22),

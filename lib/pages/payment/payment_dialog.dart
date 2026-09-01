@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/api/api_client.dart';
@@ -101,7 +102,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('请使用支付宝扫码支付', style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
+            Text('请使用${widget.methodName}扫码支付', style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
             const SizedBox(height: 3),
             Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
                 style: const TextStyle(fontSize: 10, color: MFColors.txt3, letterSpacing: 1.4)),
@@ -137,8 +138,24 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                   style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
             ])),
             const SizedBox(height: 5),
-            Text('订单号 ${widget.orderNo}',
-                style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
+            GestureDetector(
+              onTap: () {
+                // 剪贴板无需等待，直接提示
+                Clipboard.setData(ClipboardData(text: widget.orderNo));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('订单号已复制'), duration: Duration(seconds: 1)),
+                );
+              },
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('订单号 ${widget.orderNo}',
+                      style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
+                  const SizedBox(width: 5),
+                  const Icon(Icons.copy, size: 12, color: MFColors.txt3),
+                ],
+              ),
+            ),
             const SizedBox(height: 14),
             if (_polling)
               Row(
@@ -173,8 +190,11 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () {
-                      // 手动立即查一次
+                      // 手动立即查一次：重置计时与轮询状态，避免超时后无法再查
                       _timer?.cancel();
+                      _elapsed = 0;
+                      _polling = true;
+                      _pollError = null;
                       _startPolling();
                     },
                     child: Container(

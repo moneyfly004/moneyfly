@@ -71,6 +71,7 @@ class ApiClient {
 
   late final Dio _dio;
   VoidCallback? _onSessionExpired;
+  Future<bool>? _refreshing;
 
   // ---------- Token 存取 ----------
   static Future<String?> readAccessToken() => _storage.read(key: 'access_token');
@@ -89,7 +90,11 @@ class ApiClient {
   /// 会话失效回调（强制回登录页）
   void onSessionExpired(VoidCallback cb) => _onSessionExpired = cb;
 
-  Future<bool> _tryRefresh() async {
+  /// 并发 401 去重：同一时刻只允许一个刷新请求在途
+  Future<bool> _tryRefresh() =>
+      _refreshing ??= _doRefresh().whenComplete(() => _refreshing = null);
+
+  Future<bool> _doRefresh() async {
     final rt = await readRefreshToken();
     if (rt == null || rt.isEmpty) return false;
     try {
@@ -109,7 +114,13 @@ class ApiClient {
   }
 
   // ---------- 统一解包 ----------
+  /// 后端业务错误（success:false）：抛出携带 message 的异常，
+  /// 由 errorMsg() 归一化为中文提示，避免服务层拿到 null 后抛 TypeError
   static dynamic _unwrap(dynamic body) {
+    if (body is Map && body['success'] == false) {
+      final msg = body['message'] ?? body['error'] ?? body['detail'];
+      throw ApiException(msg?.toString() ?? '请求失败，请稍后重试');
+    }
     if (body is Map && body['success'] == true && body.containsKey('data')) {
       return body['data'];
     }
@@ -148,6 +159,7 @@ class ApiClient {
 
   // ---------- 错误归一化 ----------
   static String errorMsg(Object e) {
+    if (e is ApiException) return e.message;
     if (e is DioException) {
       final d = e.response?.data;
       if (d is Map) {
@@ -178,4 +190,13 @@ class ApiClient {
     if (e is FormatException) return '数据解析失败';
     return e.toString();
   }
+}
+
+/// 后端业务错误异常（success:false 信封）
+class ApiException implements Exception {
+  final String message;
+  ApiException(this.message);
+
+  @override
+  String toString() => message;
 }

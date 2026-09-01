@@ -80,8 +80,13 @@ class ConnectionController extends ChangeNotifier {
   bool autoReconnect = true;
   String? lastSpeedTestTime;
 
+  /// 实时速率（MB/s）——阶段 3 内核接入后由 Clash API 流量统计填充
+  double upSpeedMbps = 0;
+  double downSpeedMbps = 0;
+
   Timer? _reconnectTimer;
   int _reconnectCount = 0;
+  int _epoch = 0;
 
   Future<void> loadNodes(List<ProxyNode> list) {
     nodes = list;
@@ -90,18 +95,22 @@ class ConnectionController extends ChangeNotifier {
   }
 
   /// 连接：测速（可选）→ 选最优 → 启动内核
+  /// _epoch 守卫：连接过程中用户断开/再次连接时，旧流程的结果不再覆盖状态
   Future<void> connect({bool runSpeedTest = true}) async {
     if (nodes.isEmpty) {
       error = '没有可用节点，请先刷新订阅';
       notifyListeners();
       return;
     }
+    final epoch = ++_epoch;
+    _reconnectTimer?.cancel();
     status = ConnStatus.testing;
     error = null;
     notifyListeners();
 
     if (runSpeedTest && autoTest) {
       final tested = await SpeedTester.instance.testAll(nodes);
+      if (epoch != _epoch) return;
       nodes = tested;
       final best = SpeedTester.selectBest(tested);
       if (best != null) current = best;
@@ -109,6 +118,7 @@ class ConnectionController extends ChangeNotifier {
     } else {
       current ??= nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
     }
+    if (epoch != _epoch) return;
     if (current == null) {
       status = ConnStatus.error;
       error = '所有节点均不可用';
@@ -125,9 +135,11 @@ class ConnectionController extends ChangeNotifier {
         smartMode: smartMode,
       );
       await _core.start(cfg);
+      if (epoch != _epoch) return;
       status = ConnStatus.connected;
       _reconnectCount = 0;
     } catch (e) {
+      if (epoch != _epoch) return;
       status = ConnStatus.error;
       error = e is UnsupportedError ? _core.lastError ?? e.message : e.toString();
     }
@@ -135,9 +147,11 @@ class ConnectionController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _epoch++; // 使在途的 connect 流程失效（“取消连接”语义）
     _reconnectTimer?.cancel();
     await _core.stop();
     status = ConnStatus.disconnected;
+    error = null;
     notifyListeners();
   }
 

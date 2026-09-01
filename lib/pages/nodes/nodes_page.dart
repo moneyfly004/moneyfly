@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -18,6 +20,7 @@ class _NodesPageState extends State<NodesPage> {
   bool _autoBest = true;
   bool _testing = false;
   String _query = '';
+  Timer? _debounce; // 搜索防抖
 
   Future<void> _load({bool force = false}) async {
     final conn = context.read<ConnectionController>();
@@ -52,6 +55,12 @@ class _NodesPageState extends State<NodesPage> {
     }
   }
 
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -69,7 +78,7 @@ class _NodesPageState extends State<NodesPage> {
       groups.putIfAbsent(key, () => []).add(n);
     }
     final sortedCodes = groups.keys.toList()
-      ..sort((a, b) => _regionName(a).compareTo(_regionName(b)));
+      ..sort((a, b) => regionName(a).compareTo(regionName(b)));
 
     return Scaffold(
       body: SafeArea(
@@ -101,13 +110,28 @@ class _NodesPageState extends State<NodesPage> {
                           color: MFColors.card, borderRadius: BorderRadius.circular(13),
                           border: Border.all(color: MFColors.line2)),
                       child: TextField(
-                        onChanged: (v) => setState(() => _query = v),
+                        onChanged: (v) {
+                          // 300ms 防抖：输入时不做全量过滤，滚动更流畅
+                          _debounce?.cancel();
+                          _debounce = Timer(const Duration(milliseconds: 300), () {
+                            if (mounted) setState(() => _query = v.trim());
+                          });
+                        },
                         style: const TextStyle(color: MFColors.txt, fontSize: 13.5),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: '搜索节点 / 地区 / 协议',
-                          hintStyle: TextStyle(fontSize: 13, color: MFColors.txt3),
+                          hintStyle: const TextStyle(fontSize: 13, color: MFColors.txt3),
                           border: InputBorder.none,
-                          prefixIcon: Icon(Icons.search, size: 17, color: MFColors.txt3),
+                          prefixIcon: const Icon(Icons.search, size: 17, color: MFColors.txt3),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : GestureDetector(
+                                  onTap: () {
+                                    _debounce?.cancel();
+                                    setState(() => _query = '');
+                                  },
+                                  child: const Icon(Icons.close, size: 16, color: MFColors.txt3),
+                                ),
                         ),
                       ),
                     ),
@@ -194,27 +218,11 @@ class _NodesPageState extends State<NodesPage> {
                         ],
                       ),
                     )
-                  : ListView(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      children: [
-                        for (final code in sortedCodes) ...[
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 6, 24, 7),
-                            child: Row(
-                              children: [
-                                Text(_flagOf(code), style: const TextStyle(fontSize: 13)),
-                                const SizedBox(width: 7),
-                                Text(_regionName(code),
-                                    style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
-                                const Spacer(),
-                                Text('${groups[code]!.length} 个节点',
-                                    style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
-                              ],
-                            ),
-                          ),
-                          for (final n in groups[code]!) _buildNodeRow(conn, n),
-                        ],
-                      ],
+                  : _NodeListView(
+                      conn: conn,
+                      groups: groups,
+                      sortedCodes: sortedCodes,
+                      buildNodeRow: _buildNodeRow,
                     ),
             ),
           ],
@@ -225,9 +233,13 @@ class _NodesPageState extends State<NodesPage> {
 
   Widget _buildNodeRow(ConnectionController conn, dynamic n) {
     final isCurrent = conn.current?.tag == n.tag;
-    final latencyColor = !n.online
-        ? MFColors.red
-        : (n.latencyMs < 100 ? MFColors.green : (n.latencyMs < 300 ? MFColors.amber : MFColors.red));
+    // 未测速（latencyMs < 0）显示中性色，避免误导为“极低延迟”
+    final untested = n.online && n.latencyMs < 0;
+    final latencyColor = untested
+        ? MFColors.txt3
+        : !n.online
+            ? MFColors.red
+            : (n.latencyMs < 100 ? MFColors.green : (n.latencyMs < 300 ? MFColors.amber : MFColors.red));
     return GestureDetector(
       onTap: () async {
         await conn.switchNode(n);
@@ -274,7 +286,7 @@ class _NodesPageState extends State<NodesPage> {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: latencyColor.withValues(alpha: .25)),
               ),
-              child: Text(n.online ? '${n.latencyMs} ms' : '— ms',
+              child: Text(n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '— ms',
                   style: TextStyle(fontSize: 11.5, color: latencyColor, fontFamily: kNumFont, fontWeight: FontWeight.w600)),
             ),
             if (isCurrent) ...[
@@ -291,24 +303,77 @@ class _NodesPageState extends State<NodesPage> {
       ),
     );
   }
+}
 
-  static String _flagOf(String code) {
-    const flags = {
-      'HK': '🇭🇰', 'TW': '🇹🇼', 'JP': '🇯🇵', 'SG': '🇸🇬', 'KR': '🇰🇷',
-      'US': '🇺🇸', 'GB': '🇬🇧', 'DE': '🇩🇪', 'FR': '🇫🇷', 'AU': '🇦🇺',
-      'CA': '🇨🇦', 'RU': '🇷🇺', 'IN': '🇮🇳', 'TH': '🇹🇭', 'VN': '🇻🇳',
-      'NL': '🇳🇱', 'SE': '🇸🇪', 'AE': '🇦🇪',
-    };
-    return flags[code] ?? '🌐';
-  }
 
-  static String _regionName(String code) {
-    const names = {
-      'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
-      'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-      'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
-      'NL': '荷兰', 'SE': '瑞典', 'AE': '阿联酋', 'XX': '其他',
-    };
-    return names[code] ?? '其他';
+/// 节点懒加载列表：分组头/节点行拍平为索引，只构建视口内可见项（680+ 节点也流畅）
+class _NodeListView extends StatelessWidget {
+  const _NodeListView({
+    required this.conn,
+    required this.groups,
+    required this.sortedCodes,
+    required this.buildNodeRow,
+  });
+
+  final ConnectionController conn;
+  final Map<String, List<dynamic>> groups;
+  final List<String> sortedCodes;
+  final Widget Function(ConnectionController, dynamic) buildNodeRow;
+
+  @override
+  Widget build(BuildContext context) {
+    // 拍平：header 用负索引标记，节点行用实际对象
+    final entries = <dynamic>[];
+    for (final code in sortedCodes) {
+      entries.add('__header__$code');
+      entries.addAll(groups[code]!);
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 12),
+      itemCount: entries.length,
+      itemBuilder: (context, i) {
+        final e = entries[i];
+        if (e is String && e.startsWith('__header__')) {
+          final code = e.substring('__header__'.length);
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 6, 24, 7),
+            child: Row(
+              children: [
+                Text(regionFlag(code), style: const TextStyle(fontSize: 13)),
+                const SizedBox(width: 7),
+                Text(regionName(code),
+                    style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                const Spacer(),
+                Text('${groups[code]!.length} 个节点',
+                    style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
+              ],
+            ),
+          );
+        }
+        return buildNodeRow(conn, e);
+      },
+    );
   }
+}
+
+/// 地区旗标（顶层函数，供懒加载列表与分组排序共用）
+String regionFlag(String code) {
+  const flags = {
+    'HK': '🇭🇰', 'TW': '🇹🇼', 'JP': '🇯🇵', 'SG': '🇸🇬', 'KR': '🇰🇷',
+    'US': '🇺🇸', 'GB': '🇬🇧', 'DE': '🇩🇪', 'FR': '🇫🇷', 'AU': '🇦🇺',
+    'CA': '🇨🇦', 'RU': '🇷🇺', 'IN': '🇮🇳', 'TH': '🇹🇭', 'VN': '🇻🇳',
+    'NL': '🇳🇱', 'SE': '🇸🇪', 'AE': '🇦🇪',
+  };
+  return flags[code] ?? '🌐';
+}
+
+/// 地区名（顶层函数）
+String regionName(String code) {
+  const names = {
+    'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
+    'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
+    'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
+    'NL': '荷兰', 'SE': '瑞典', 'AE': '阿联酋', 'XX': '其他',
+  };
+  return names[code] ?? '其他';
 }

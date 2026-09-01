@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
@@ -48,12 +49,14 @@ class _RegisterPageState extends State<RegisterPage> {
     setState(() => _sending = true);
     try {
       await ApiClient.instance.post(Endpoints.sendCode, data: {'type': 'email', 'email': email});
+      if (!mounted) return; // 等待期间页面已退出
       _toast('验证码已发送到邮箱，5 分钟内有效');
       setState(() {
         _codeSent = true;
         _countdown = 60;
       });
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) return t.cancel(); // 页面销毁后停止倒计时
         if (_countdown <= 1) {
           t.cancel();
           setState(() => _countdown = 0);
@@ -62,7 +65,7 @@ class _RegisterPageState extends State<RegisterPage> {
         }
       });
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -125,6 +128,10 @@ class _RegisterPageState extends State<RegisterPage> {
               const SizedBox(height: 12),
               _field('验证码', _code,
                   hint: '6 位验证码',
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
                   suffix: SizedBox(
                     width: 104,
                     height: 48,
@@ -205,7 +212,8 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   Widget _field(String label, TextEditingController c,
-      {required String hint, bool obscure = false, Widget? suffix}) {
+      {required String hint, bool obscure = false, Widget? suffix,
+      List<TextInputFormatter>? inputFormatters}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -220,6 +228,7 @@ class _RegisterPageState extends State<RegisterPage> {
                 controller: c,
                 obscureText: obscure,
                 style: const TextStyle(color: MFColors.txt, fontSize: 15),
+                inputFormatters: inputFormatters,
                 decoration: InputDecoration(hintText: hint),
               ),
             ),

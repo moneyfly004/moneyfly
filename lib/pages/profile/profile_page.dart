@@ -19,7 +19,7 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
+class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   dynamic _dashboard;
   bool _loading = true;
 
@@ -27,6 +27,19 @@ class _ProfilePageState extends State<ProfilePage> {
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 回前台刷新仪表盘（保活页面避免数据过期）
+    if (state == AppLifecycleState.resumed && mounted) _load();
   }
 
   Future<void> _load() async {
@@ -73,6 +86,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
                 )
               else ...[
+                if (hasSub && remaining < 7) ...[
+                  _buildExpiringBanner(remaining),
+                  const SizedBox(height: 12),
+                ],
                 _buildSubscriptionCard(hasSub, remaining, expire, online, total),
                 const SizedBox(height: 18),
                 _buildMenu(context, online, total),
@@ -112,6 +129,36 @@ class _ProfilePageState extends State<ProfilePage> {
           ],
         ),
       ],
+    );
+  }
+
+  /// 到期提醒（剩余 < 7 天）→ 一键续费
+  Widget _buildExpiringBanner(int remaining) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0x33FFB020), Color(0x0DFFB020)]),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: MFColors.amber.withValues(alpha: .45)),
+      ),
+      child: Row(
+        children: [
+          const Text('⏰', style: TextStyle(fontSize: 16)),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text('套餐还剩 $remaining 天，请及时续费避免中断',
+                style: const TextStyle(fontSize: 12, color: MFColors.txt)),
+          ),
+          GestureDetector(
+            onTap: () => mainTabIndex.value = 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+              child: const Text('去续费', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

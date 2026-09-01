@@ -26,6 +26,7 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final list = await OrderService.instance.list();
@@ -41,6 +42,7 @@ class _OrdersPageState extends State<OrdersPage> {
     try {
       // 先确认订单仍是待支付
       final st = await OrderService.instance.status(o.orderNo);
+      if (!mounted) return;
       if (st.isPaid) {
         _toast('该订单已支付');
         return;
@@ -49,13 +51,18 @@ class _OrdersPageState extends State<OrdersPage> {
         _toast('订单状态：${st.status}，无法继续支付');
         return;
       }
-      // 用当前启用的第一个支付方式（默认支付宝）重新发起
+      // 用当前启用的第一个支付方式（跟随官网后台设置）重新发起
       final methods = await PaymentService.instance.methods();
+      if (!mounted) return;
       if (methods.isEmpty) {
         _toast('暂无可用的支付方式');
         return;
       }
       final pay = await OrderService.instance.pay(orderId: o.id, paymentMethodId: methods.first.id);
+      if (pay.qrCode.isEmpty) {
+        _toast('未获取到支付二维码，请稍后重试');
+        return;
+      }
       if (!mounted) return;
       await showDialog<bool>(
         context: context,
@@ -64,13 +71,13 @@ class _OrdersPageState extends State<OrdersPage> {
           qrContent: pay.qrCode,
           orderNo: pay.orderNo.isEmpty ? o.orderNo : pay.orderNo,
           amount: o.finalAmount > 0 ? o.finalAmount : o.amount,
-          methodName: '支付宝',
+          methodName: methods.first.name,
           onPaid: () {},
         ),
       );
       await _load();
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      if (mounted) _toast(ApiClient.errorMsg(e));
     }
   }
 

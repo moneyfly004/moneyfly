@@ -5,7 +5,7 @@ import '../../core/models/models.dart';
 import '../../core/services/device_service.dart';
 import '../../theme/app_theme.dart';
 
-/// 设备管理：列表 / 备注（≤200 字，可清空）/ 删除（踢下线）
+/// 设备管理：列表 / 删除（踢下线）
 class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key});
 
@@ -25,6 +25,7 @@ class _DevicesPageState extends State<DevicesPage> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final list = await DeviceService.instance.list();
@@ -33,38 +34,6 @@ class _DevicesPageState extends State<DevicesPage> {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _editRemark(DeviceInfo device) async {
-    final controller = TextEditingController(text: device.remark);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: const Text('修改备注', style: TextStyle(fontSize: 16)),
-        content: TextField(
-          controller: controller,
-          maxLength: 200,
-          style: const TextStyle(color: MFColors.txt, fontSize: 14),
-          decoration: const InputDecoration(hintText: '给这台设备起个名字（可清空）'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('保存', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-    if (result == null) return;
-    try {
-      await DeviceService.instance.updateRemark(device.id, result);
-      await _load();
-      if (mounted) _toast('备注已保存');
-    } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
     }
   }
 
@@ -202,13 +171,6 @@ class _DevicesPageState extends State<DevicesPage> {
           const SizedBox(height: 12),
           Row(
             children: [
-              _ActionBtn(
-                icon: Icons.edit_outlined,
-                label: d.remark.isEmpty ? '备注' : '改备注',
-                color: MFColors.brandLight,
-                onTap: () => _editRemark(d),
-              ),
-              const SizedBox(width: 10),
               _ActionBtn(
                 icon: Icons.delete_outline,
                 label: '删除',

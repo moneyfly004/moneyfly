@@ -45,7 +45,13 @@ class _PackagePageState extends State<PackagePage> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      // 重新加载时清掉优惠状态，避免引用旧套餐价格
+      _discountedAmount = null;
+      _couponStatus = null;
+    });
     try {
       final plans = await ApiClient.instance.get(Endpoints.packages);
       final methods = await PaymentService.instance.methods();
@@ -143,9 +149,8 @@ class _PackagePageState extends State<PackagePage> {
           amount: _amount,
           methodName: method.name,
           onPaid: () {
-            // 支付成功：刷新订阅
-            SubscriptionService.instance.fetchNodes(force: true);
-            context.read<ConnectionController>().loadNodes(const []);
+            // 支付成功：节点刷新统一由弹窗关闭后的 _pay 流程处理，
+            // 这里不清空节点，避免与刷新请求竞态导致列表停留在空状态
           },
         ),
       );

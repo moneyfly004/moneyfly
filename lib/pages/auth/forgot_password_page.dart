@@ -42,12 +42,14 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     setState(() => _sending = true);
     try {
       await ApiClient.instance.post(Endpoints.forgotPassword, data: {'email': email});
+      if (!mounted) return; // 等待期间页面已退出
       _toast('重置验证码已发送到邮箱');
       setState(() {
         _codeSent = true;
         _countdown = 60;
       });
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) return t.cancel(); // 页面销毁后停止倒计时
         if (_countdown <= 1) {
           t.cancel();
           setState(() => _countdown = 0);
@@ -56,7 +58,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         }
       });
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _sending = false);
     }

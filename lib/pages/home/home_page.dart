@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/api/api_client.dart';
+import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../settings/settings_page.dart';
 
@@ -17,18 +21,57 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
+
+  /// 连接状态下的呼吸动画（仅连接时运行，断开即停 → 省电 + 流畅）
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+    lowerBound: .35,
+    upperBound: 1,
+  );
 
   @override
   void initState() {
     super.initState();
     _ensureNodes();
+    // 连接状态变化时启停呼吸动画
+    ConnectionController.instance.addListener(_onConnChanged);
+    // 回前台自动刷新订阅（保活页面避免数据过期）
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    ConnectionController.instance.removeListener(_onConnChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _ensureNodes();
+    }
+  }
+
+  void _onConnChanged() {
+    if (!mounted) return;
+    final s = ConnectionController.instance.status;
+    if (s == ConnStatus.connected && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (s != ConnStatus.connected && _pulse.isAnimating) {
+      _pulse.stop();
+    }
   }
 
   Future<void> _ensureNodes({bool force = false}) async {
     final conn = context.read<ConnectionController>();
     if (conn.nodes.isNotEmpty && !force) return;
+    if (!mounted) return;
     setState(() => _loadingNodes = true);
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
@@ -41,8 +84,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _toggleConnect(ConnectionController conn) async {
+    // 触感反馈（Android）
+    unawaited(HapticFeedback.mediumImpact());
     if (conn.status == ConnStatus.connected) {
       await conn.disconnect();
+    } else if (conn.status == ConnStatus.testing ||
+        conn.status == ConnStatus.connecting ||
+        conn.status == ConnStatus.reconnecting) {
+      // 连接/测速进行中再点一次 = 取消本次连接
+      await conn.disconnect();
+      _toast('已取消连接');
     } else if (conn.nodes.isEmpty) {
       _toast('暂无节点，请先刷新订阅');
     } else {
@@ -77,6 +128,10 @@ class _HomePageState extends State<HomePage> {
             children: [
               _buildHeader(),
               const SizedBox(height: 6),
+              if (conn.nodes.isEmpty) ...[
+                _buildNoSubscriptionBanner(),
+                const SizedBox(height: 12),
+              ],
               _buildConnectCard(conn, connected, busy),
               const SizedBox(height: 12),
               _buildModeSwitch(conn),
@@ -94,6 +149,36 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 未开通/订阅过期引导条 → 一键跳充值
+  Widget _buildNoSubscriptionBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0x33FFB020), Color(0x0DFFB020)]),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: MFColors.amber.withValues(alpha: .4)),
+      ),
+      child: Row(
+        children: [
+          const Text('🛒', style: TextStyle(fontSize: 16)),
+          const SizedBox(width: 9),
+          const Expanded(
+            child: Text('尚未开通套餐，开通后即可畅连全球节点',
+                style: TextStyle(fontSize: 12, color: MFColors.txt)),
+          ),
+          GestureDetector(
+            onTap: () => mainTabIndex.value = 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+              child: const Text('去开通', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -103,7 +188,10 @@ class _HomePageState extends State<HomePage> {
             width: 36,
             height: 36,
             decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(11)),
-            child: const Icon(Icons.flight_takeoff, color: MFColors.brand, size: 19),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: Image.asset('assets/moneyfly-logo.png', width: 36, height: 36),
+            ),
           ),
           const SizedBox(width: 10),
           const Column(
@@ -155,50 +243,60 @@ class _HomePageState extends State<HomePage> {
         children: [
           GestureDetector(
             onTap: () => _toggleConnect(conn),
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: connected
-                        ? MFColors.green.withValues(alpha: .45)
-                        : MFColors.brand.withValues(alpha: .25),
-                    blurRadius: 34,
-                  ),
-                ],
-              ),
-              child: Container(
-                margin: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: connected
-                      ? const RadialGradient(colors: [Color(0xFF1E3B3A), Color(0xFF0E1716)], stops: [0, .75])
-                      : const RadialGradient(colors: [Color(0xFF1B2233), Color(0xFF0E121B)], stops: [0, .75]),
-                  border: Border.all(
-                      color: connected ? MFColors.green.withValues(alpha: .5) : MFColors.line2,
-                      width: 1.2),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(statusLabel,
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 2, color: statusColor)),
-                    const SizedBox(height: 3),
-                    Text(
-                      switch (conn.status) {
-                        ConnStatus.testing => 'TESTING',
-                        ConnStatus.connecting => 'CONNECTING',
-                        ConnStatus.connected => 'CONNECTED',
-                        ConnStatus.error => 'ERROR',
-                        _ => 'OFFLINE',
-                      },
-                      style: TextStyle(
-                          fontSize: 9, fontFamily: kNumFont, fontWeight: FontWeight.w600,
-                          color: connected ? const Color(0xFFD8FFEF) : MFColors.txt3),
+            // RepaintBoundary：呼吸动画只重绘按钮区域，不影响整页
+            child: RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, child) {
+                  final glow = connected ? _pulse.value : 1.0;
+                  return Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: connected
+                              ? MFColors.green.withValues(alpha: .45 * glow)
+                              : MFColors.brand.withValues(alpha: .25),
+                          blurRadius: 34,
+                        ),
+                      ],
                     ),
-                  ],
+                    child: child,
+                  );
+                },
+                child: Container(
+                  margin: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: connected
+                        ? const RadialGradient(colors: [Color(0xFF1E3B3A), Color(0xFF0E1716)], stops: [0, .75])
+                        : const RadialGradient(colors: [Color(0xFF1B2233), Color(0xFF0E121B)], stops: [0, .75]),
+                    border: Border.all(
+                        color: connected ? MFColors.green.withValues(alpha: .5) : MFColors.line2,
+                        width: 1.2),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(statusLabel,
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 2, color: statusColor)),
+                      const SizedBox(height: 3),
+                      Text(
+                        switch (conn.status) {
+                          ConnStatus.testing => 'TESTING',
+                          ConnStatus.connecting => 'CONNECTING',
+                          ConnStatus.connected => 'CONNECTED',
+                          ConnStatus.error => 'ERROR',
+                          _ => 'OFFLINE',
+                        },
+                        style: TextStyle(
+                            fontSize: 9, fontFamily: kNumFont, fontWeight: FontWeight.w600,
+                            color: connected ? const Color(0xFFD8FFEF) : MFColors.txt3),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -474,11 +572,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStats(ConnectionController conn) {
+    // 实时速率由内核接入后提供（阶段 3）；当前展示占位，避免伪造数据误导用户
+    final up = conn.upSpeedMbps, down = conn.downSpeedMbps;
     return Row(
       children: [
-        Expanded(child: _StatCard(label: '上行速率', value: conn.status == ConnStatus.connected ? '1.2' : '0.0', unit: 'MB/s', color: MFColors.brandLight)),
+        Expanded(child: _StatCard(label: '上行速率', value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
         const SizedBox(width: 12),
-        Expanded(child: _StatCard(label: '下行速率', value: conn.status == ConnStatus.connected ? '8.5' : '0.0', unit: 'MB/s', color: MFColors.green)),
+        Expanded(child: _StatCard(label: '下行速率', value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
       ],
     );
   }

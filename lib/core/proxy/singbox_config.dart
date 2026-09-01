@@ -18,43 +18,106 @@ class SingBoxConfigBuilder {
   }
 
   static Map<String, dynamic> _toOutbound(ProxyNode n) {
+    // 类型归一化（Clash 名 → sing-box 名）
+    final type = switch (n.type) {
+      'ss' => 'shadowsocks',
+      'ssr' => 'shadowsocksr',
+      'vless' => 'vless',
+      'vmess' => 'vmess',
+      'trojan' => 'trojan',
+      'hysteria2' => 'hysteria2',
+      'tuic' => 'tuic',
+      'anytls' => 'anytls',
+      'wireguard' => 'wireguard',
+      _ => n.type,
+    };
     final base = <String, dynamic>{
-      'type': n.type,
+      'type': type,
       'tag': n.tag,
       'server': n.server,
       'server_port': n.port,
     };
+    final raw = n.raw;
+    final insecure = raw['skip-cert-verify'] == true;
+    final sni = n.sni ?? raw['servername']?.toString();
+
+    Map<String, dynamic> tls({bool withReality = false}) {
+      final t = <String, dynamic>{
+        'enabled': n.tls != false,
+        'server_name': sni ?? n.server,
+        'insecure': insecure,
+      };
+      final fingerprint = raw['client-fingerprint']?.toString();
+      if (fingerprint != null && fingerprint.isNotEmpty) {
+        t['utls'] = {'enabled': true, 'fingerprint': fingerprint};
+      }
+      if (withReality) {
+        final ro = raw['reality-opts'];
+        if (ro is Map) {
+          t['reality'] = {
+            'enabled': true,
+            'public_key': ro['public-key']?.toString() ?? '',
+            'short_id': ro['short-id']?.toString() ?? '',
+          };
+        }
+      }
+      return t;
+    }
+
     switch (n.type) {
       case 'vless':
         base['uuid'] = n.uuid ?? '';
-        if (n.flow != null && n.flow!.isNotEmpty) base['flow'] = n.flow;
-        if (n.tls == true) {
-          base['tls'] = {'enabled': true, 'server_name': n.sni ?? n.server, 'insecure': false};
-        }
+        final flow = n.flow ?? raw['flow']?.toString();
+        if (flow != null && flow.isNotEmpty) base['flow'] = flow;
+        base['tls'] = tls(withReality: raw['reality-opts'] is Map);
         _applyTransport(base, n);
       case 'vmess':
         base['uuid'] = n.uuid ?? '';
-        base['security'] = 'auto';
-        if (n.tls == true) {
-          base['tls'] = {'enabled': true, 'server_name': n.sni ?? n.server, 'insecure': false};
-        }
+        base['security'] = (n.cipher?.isNotEmpty ?? false) && n.cipher != 'auto' ? n.cipher! : 'auto';
+        final alterId = raw['alterId'];
+        if (alterId is num && alterId > 0) base['alter_id'] = alterId.toInt();
+        base['tls'] = tls();
         _applyTransport(base, n);
       case 'trojan':
         base['password'] = n.password ?? '';
-        if (n.tls != false) {
-          base['tls'] = {'enabled': true, 'server_name': n.sni ?? n.server, 'insecure': false};
-        }
+        base['tls'] = tls();
         _applyTransport(base, n);
       case 'shadowsocks':
       case 'ss':
         base['method'] = n.cipher ?? 'aes-128-gcm';
         base['password'] = n.password ?? '';
+        final obfs = raw['obfs']?.toString();
+        final obfsPwd = raw['obfs-password']?.toString();
+        if (obfs != null && obfs.isNotEmpty) {
+          base['plugin'] = obfs == 'http' ? 'obfs-local' : obfs;
+          base['plugin_opts'] = 'obfs=$obfs${obfsPwd != null ? ';obfs-host=$obfsPwd' : ''}';
+        }
       case 'hysteria2':
-      case 'tuic':
         base['password'] = n.password ?? '';
-        if (n.sni != null) base['tls'] = {'enabled': true, 'server_name': n.sni};
+        base['tls'] = tls();
+      case 'tuic':
+        base['uuid'] = n.uuid ?? '';
+        base['password'] = n.password ?? '';
+        base['congestion_control'] = raw['congestion-controller']?.toString() ?? 'cubic';
+        final relay = raw['udp-relay-mode']?.toString() ?? raw['udp_relay_mode']?.toString();
+        if (relay != null && relay.isNotEmpty) base['udp_relay_mode'] = relay;
+        final alpn = raw['alpn'];
+        base['tls'] = tls();
+        if (alpn is List && alpn.isNotEmpty) {
+          (base['tls'] as Map<String, dynamic>)['alpn'] = alpn.map((e) => e.toString()).toList();
+        }
+      case 'anytls':
+        base['password'] = n.password ?? '';
+        base['tls'] = tls();
       case 'wireguard':
-        base['private_key'] = n.raw['private-key'] ?? '';
+        base['private_key'] = raw['private-key'] ?? '';
+      case 'shadowsocksr':
+        base['method'] = n.cipher ?? 'aes-128-cfb';
+        base['password'] = n.password ?? '';
+        base['obfs'] = raw['obfs']?.toString() ?? 'plain';
+        base['obfs_param'] = raw['obfs-param']?.toString() ?? '';
+        base['protocol'] = raw['protocol']?.toString() ?? 'origin';
+        base['protocol_param'] = raw['protocol-param']?.toString() ?? '';
     }
     return base;
   }
@@ -82,17 +145,35 @@ class SingBoxConfigBuilder {
     String dns = '223.5.5.5',
   }) {
     final outbounds = buildOutbounds(nodes);
-    // selector：用户当前选中节点
+    // selector：包含全部节点 → 支持 clash-api 热切换到任意节点
     outbounds.insert(0, {
       'type': 'selector',
       'tag': 'select',
-      'outbounds': [if (nodes.any((n) => n.tag == selectedTag)) selectedTag, if (nodes.isNotEmpty) nodes.first.tag, 'direct'],
+      'outbounds': [for (final n in nodes) n.tag, 'direct'],
+      'default': nodes.any((n) => n.tag == selectedTag) ? selectedTag : (nodes.isNotEmpty ? nodes.first.tag : 'direct'),
     });
     final rules = <Map<String, dynamic>>[];
+    final ruleSets = <Map<String, dynamic>>[
+      {
+        'tag': 'geoip-cn',
+        'type': 'remote',
+        'format': 'binary',
+        'url': 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs',
+        'download_detour': 'direct',
+      },
+      {
+        'tag': 'geosite-cn',
+        'type': 'remote',
+        'format': 'binary',
+        'url': 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs',
+        'download_detour': 'direct',
+      },
+    ];
     if (smartMode) {
+      // 智能模式：国内直连 + 本地放行 + UDP 走代理（sing-box 1.12+ 用 rule_set）
       rules.addAll([
-        {'geoip': ['cn'], 'outbound': 'direct'},
-        {'geosite': ['cn'], 'outbound': 'direct'},
+        {'rule_set': ['geoip-cn'], 'outbound': 'direct'},
+        {'rule_set': ['geosite-cn'], 'outbound': 'direct'},
         {'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
         {'network': 'udp', 'outbound': 'select'},
       ]);
@@ -101,13 +182,26 @@ class SingBoxConfigBuilder {
     }
     return {
       'log': {'level': 'info', 'timestamp': true},
-      'dns': {'servers': [{'address': dns}]},
+      // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
+      'dns': {
+        'servers': [
+          {'type': 'udp', 'server': dns, 'tag': 'dns-main'},
+          {'type': 'local', 'tag': 'dns-fallback'},
+        ],
+        'final': 'dns-main',
+      },
       'inbounds': [
         {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080, 'set_system_proxy': true},
         {'type': 'tun', 'tag': 'tun-in', 'auto_route': true, 'strict_route': false, 'stack': 'system'},
       ],
       'outbounds': outbounds,
-      'route': {'rules': rules, 'final': 'select'},
+      'route': {
+        'rule_set': ruleSets,
+        'rules': rules,
+        'final': 'select',
+        // sing-box 1.12+：出站域名解析走 DNS 服务器（否则启动报错）
+        'default_domain_resolver': {'server': 'dns-main'},
+      },
       'experimental': {'clash_api': {'external_controller': '127.0.0.1:9090', 'external_ui': '', 'secret': ''}},
     };
   }

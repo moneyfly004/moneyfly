@@ -170,7 +170,7 @@ class PaymentResult {
 
   factory PaymentResult.fromJson(Map<String, dynamic> j) => PaymentResult(
         qrCode: j['payment_qr_code']?.toString() ?? j['qrcode']?.toString() ?? '',
-        orderNo: j['order_no']?.toString() ?? '',
+        orderNo: j['order_no']?.toString() ?? j['orderNo']?.toString() ?? '',
         status: j['status']?.toString() ?? 'pending',
       );
 }
@@ -242,7 +242,7 @@ class OrderStatus {
   });
 
   factory OrderStatus.fromJson(Map<String, dynamic> j) => OrderStatus(
-        orderNo: j['order_no']?.toString() ?? '',
+        orderNo: j['order_no']?.toString() ?? j['orderNo']?.toString() ?? '',
         status: j['status']?.toString() ?? 'pending',
         amount: (j['amount'] as num?)?.toDouble() ?? 0,
         finalAmount: (j['final_amount'] as num?)?.toDouble() ?? 0,

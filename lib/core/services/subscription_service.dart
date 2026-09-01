@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
 
 import '../api/api_client.dart';
@@ -39,11 +40,21 @@ class SubscriptionService {
     final info = await fetchInfo();
     if (info.subscribeUrl.isEmpty) return [];
     final raw = await ApiClient.instance.fetchText(info.subscribeUrl);
-    final nodes = parseClashYaml(raw);
+    // 大订阅解析放到后台 isolate，避免阻塞 UI 线程
+    final nodes = await compute(_parseInIsolate, raw);
     _cache = nodes;
     _cacheTime = DateTime.now();
     return nodes;
   }
+
+  /// 面板展示性伪节点过滤（📢官网 / ⏰到期 / 📱设备 / 💬客服 等，server 为 baidu.com 占位）
+  static bool _isPanelPseudoNode(ProxyNode n) {
+    const markers = ['📢', '⏰', '📱', '💬', '🎯', '🚀', '♻️', '🔯', '🔮', '🛑', '🐟'];
+    return markers.any((m) => n.tag.contains(m)) || n.server == 'baidu.com';
+  }
+
+  /// isolate 入口（compute 要求顶层/静态函数）
+  static List<ProxyNode> _parseInIsolate(String raw) => parseClashYaml(raw);
 
   /// 解析 Clash YAML 中的 proxies
   static List<ProxyNode> parseClashYaml(String raw) {
@@ -61,6 +72,7 @@ class SubscriptionService {
         .whereType<Map>()
         .map((e) => ProxyNode.fromClashMap(Map<String, dynamic>.from(e)))
         .where((n) => n.server.isNotEmpty && n.port > 0)
+        .where((n) => !_isPanelPseudoNode(n))
         .toList();
   }
 

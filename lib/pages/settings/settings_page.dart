@@ -92,7 +92,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🏠', title: '绕过局域网流量',
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _section('外观'),
-            _row(icon: '🎨', title: '主题', value: _s['theme']?.toString() == 'light' ? '浅色' : '跟随系统',
+            _row(icon: '🎨', title: '主题',
+                value: switch (_s['theme']?.toString()) {
+                  'light' => '浅色',
+                  'dark' => '深色',
+                  _ => '跟随系统',
+                },
                 onTap: () => _picker(['跟随系统', '深色', '浅色'], (v) => _set('theme', v == '深色' ? 'dark' : (v == '浅色' ? 'light' : 'system')))),
             _row(icon: '🌏', title: '语言', value: '简体中文',
                 onTap: () => _toast('语言：简体中文（English 后续版本支持）')),
