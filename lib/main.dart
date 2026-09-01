@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -8,6 +9,7 @@ import 'core/services/auth_service.dart';
 import 'core/services/crash_logger.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
+import 'l10n/app_strings.dart';
 import 'pages/auth/login_page.dart';
 import 'pages/home/home_page.dart';
 import 'pages/nodes/nodes_page.dart';
@@ -82,15 +84,26 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
         ChangeNotifierProvider.value(value: _session),
         ChangeNotifierProvider.value(value: ConnectionController.instance),
         ChangeNotifierProvider.value(value: ThemeController.instance),
+        ChangeNotifierProvider.value(value: LocaleController.instance),
       ],
       child: Consumer<ThemeController>(
-        builder: (context, themeCtrl, _) => MaterialApp(
-          title: 'MoneyFly',
-          debugShowCheckedModeBanner: false,
-          theme: buildMoneyFlyTheme(brightness: Brightness.light),
-          darkTheme: buildMoneyFlyTheme(brightness: Brightness.dark),
-          themeMode: themeCtrl.mode,
-          home: const RootShell(),
+        builder: (context, themeCtrl, _) =>
+            Consumer<LocaleController>(
+          builder: (context, locale, _) => MaterialApp(
+            title: AppStrings.t('app_name'),
+            debugShowCheckedModeBanner: false,
+            theme: buildMoneyFlyTheme(brightness: Brightness.light),
+            darkTheme: buildMoneyFlyTheme(brightness: Brightness.dark),
+            themeMode: themeCtrl.mode,
+            locale: locale.lang == 'en' ? const Locale('en') : const Locale('zh'),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [Locale('zh'), Locale('en')],
+            home: const RootShell(),
+          ),
         ),
       ),
     );
@@ -159,26 +172,26 @@ class _MainShellState extends State<MainShell> {
           child: BottomNavigationBar(
             currentIndex: _index,
             onTap: _onTap,
-            items: const [
+            items: [
               BottomNavigationBarItem(
                 icon: Icon(Icons.home_outlined, size: 22),
                 activeIcon: Icon(Icons.home, size: 22),
-                label: '首页',
+                label: AppStrings.t('home'),
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.dns_outlined, size: 22),
                 activeIcon: Icon(Icons.dns, size: 22),
-                label: '节点',
+                label: AppStrings.t('nodes_title'),
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.payments_outlined, size: 22),
                 activeIcon: Icon(Icons.payments, size: 22),
-                label: '充值',
+                label: AppStrings.t('purchase_title'),
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.person_outline, size: 22),
                 activeIcon: Icon(Icons.person, size: 22),
-                label: '我的',
+                label: AppStrings.t('profile_title'),
               ),
             ],
           ),

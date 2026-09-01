@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/order_service.dart';
@@ -44,23 +45,23 @@ class _OrdersPageState extends State<OrdersPage> {
       final st = await OrderService.instance.status(o.orderNo);
       if (!mounted) return;
       if (st.isPaid) {
-        _toast('该订单已支付');
+        _toast(AppStrings.t('order_paid'));
         return;
       }
       if (st.status != 'pending') {
-        _toast('订单状态：${st.status}，无法继续支付');
+        _toast(AppStrings.t('order_status_tip', {'status': st.status}));
         return;
       }
       // 用当前启用的第一个支付方式（跟随官网后台设置）重新发起
       final methods = await PaymentService.instance.methods();
       if (!mounted) return;
       if (methods.isEmpty) {
-        _toast('暂无可用的支付方式');
+        _toast(AppStrings.t('no_pay_methods'));
         return;
       }
       final pay = await OrderService.instance.pay(orderId: o.id, paymentMethodId: methods.first.id);
       if (pay.qrCode.isEmpty) {
-        _toast('未获取到支付二维码，请稍后重试');
+        _toast(AppStrings.t('no_qrcode_retry'));
         return;
       }
       if (!mounted) return;
@@ -86,13 +87,13 @@ class _OrdersPageState extends State<OrdersPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('取消订单', style: TextStyle(fontSize: 16)),
-        content:  Text('确定取消这笔待支付订单吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        title: Text(AppStrings.t('cancel_order'), style: TextStyle(fontSize: 16)),
+        content: Text(AppStrings.t('order_cancel_confirm'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('再想想')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('取消订单', style: TextStyle(color: MFColors.red)),
+            child: Text(AppStrings.t('cancel_order'), style: const TextStyle(color: MFColors.red)),
           ),
         ],
       ),
@@ -101,7 +102,7 @@ class _OrdersPageState extends State<OrdersPage> {
     try {
       await OrderService.instance.cancel(o.orderNo);
       await _load();
-      if (mounted) _toast('订单已取消');
+      if (mounted) _toast(AppStrings.t('order_cancelled'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     }
@@ -117,7 +118,7 @@ class _OrdersPageState extends State<OrdersPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('我的订单'),
+        title: Text(AppStrings.t('my_orders')),
         actions: [TextButton(onPressed: _load, child: const Text('刷新', style: TextStyle(color: MFColors.brandLight)))],
       ),
       body: SafeArea(
@@ -162,7 +163,7 @@ class _OrdersPageState extends State<OrdersPage> {
           Row(
             children: [
               Expanded(
-                child: Text(o.packageName ?? '订单 ${o.type}',
+                child: Text(o.packageName ?? AppStrings.t('order_type', {'type': o.type}),
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               ),
               Container(
@@ -189,7 +190,7 @@ class _OrdersPageState extends State<OrdersPage> {
           ),
           if (o.createdAt.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text('下单时间 ${o.createdAt}', style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+            Text('${AppStrings.t('order_time', {'time': ''})}${o.createdAt}', style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
           ],
           if (o.status == 'pending') ...[
             const SizedBox(height: 12),
@@ -205,7 +206,7 @@ class _OrdersPageState extends State<OrdersPage> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: MFColors.red.withValues(alpha: .3))),
                     alignment: Alignment.center,
-                    child: const Text('取消订单', style: TextStyle(fontSize: 11.5, color: MFColors.red, fontWeight: FontWeight.w600)),
+                    child: Text(AppStrings.t('cancel_order'), style: TextStyle(fontSize: 11.5, color: MFColors.red, fontWeight: FontWeight.w600)),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -215,7 +216,7 @@ class _OrdersPageState extends State<OrdersPage> {
                     height: 32, padding: const EdgeInsets.symmetric(horizontal: 16),
                     decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
                     alignment: Alignment.center,
-                    child: const Text('继续支付', style: TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600)),
+                    child: Text(AppStrings.t('pay_again'), style: TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600)),
                   ),
                 ),
               ],

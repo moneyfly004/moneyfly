@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
+import '../../l10n/app_strings.dart';
 import '../../core/api/endpoints.dart';
 import '../../theme/app_theme.dart';
 
@@ -38,7 +39,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   Future<void> _sendCode() async {
     final email = _email.text.trim();
-    if (email.isEmpty || !email.contains('@')) return _toast('请先输入正确的注册邮箱');
+    if (email.isEmpty || !email.contains('@')) return _toast(AppStrings.t('email_reg_invalid'));
     setState(() => _sending = true);
     try {
       await ApiClient.instance.post(Endpoints.forgotPassword, data: {'email': email});
@@ -65,8 +66,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _reset() async {
-    if (_newPassword.text.length < 8) return _toast('新密码至少 8 位');
-    if (_newPassword.text != _confirm.text) return _toast('两次输入的新密码不一致');
+    if (_newPassword.text.length < 8) return _toast(AppStrings.t('pwd_short'));
+    if (_newPassword.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
     setState(() => _loading = true);
     try {
       await ApiClient.instance.post(Endpoints.resetPassword, data: {
@@ -74,7 +75,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         'verification_code': _code.text.trim(),
         'new_password': _newPassword.text,
       });
-      _toast('密码已重置，请使用新密码登录');
+      _toast(AppStrings.t('pwd_reset'));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       _toast(ApiClient.errorMsg(e));
@@ -93,11 +94,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('找回密码'),
+        title: Text(AppStrings.t('forgot_title')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('登录', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+            child: Text(AppStrings.t('login_title'), style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -111,19 +112,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _Step(done: true, no: '✓', label: '验证身份'),
+                  _Step(done: true, no: '✓', label: AppStrings.t('step_verify')),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 10),
                     child: SizedBox(width: 26, height: 1, child: ColoredBox(color: MFColors.line2)),
                   ),
-                  _Step(done: false, no: '2', label: '设置新密码'),
+                  _Step(done: false, no: '2', label: AppStrings.t('step_new_pwd')),
                 ],
               ),
               const SizedBox(height: 26),
-              _field('邮箱', _email, hint: '请输入注册邮箱'),
+              _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_reg_hint')),
               const SizedBox(height: 12),
               _field('验证码', _code,
-                  hint: '6 位验证码',
+                  hint: AppStrings.t('code_hint'),
                   suffix: SizedBox(
                     width: 104,
                     height: 48,
@@ -143,24 +144,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                             child: Container(
                               alignment: Alignment.center,
                               decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(12)),
-                              child: Text(_sending ? '发送中…' : '发送验证码',
+                              child: Text(_sending ? AppStrings.t('sending') : AppStrings.t('send_code'),
                                   style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
                             ),
                           ),
                   )),
               if (_codeSent) ...[
                 const SizedBox(height: 6),
-                const Text('✓ 身份验证通过', style: TextStyle(fontSize: 10.5, color: MFColors.green, fontWeight: FontWeight.w600)),
+                Text(AppStrings.t('identity_ok'), style: TextStyle(fontSize: 10.5, color: MFColors.green, fontWeight: FontWeight.w600)),
               ],
               const SizedBox(height: 12),
               _field('新密码', _newPassword, hint: '至少 8 位，含字母和数字', obscure: _obscure),
               const SizedBox(height: 12),
-              _field('确认新密码', _confirm, hint: '再次输入新密码', obscure: _obscure),
+              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure),
               const SizedBox(height: 14),
-               Text('🔒 验证码将发送到注册邮箱，5 分钟内有效；重置成功后请使用新密码登录。',
+               Text(AppStrings.t('forgot_tip'),
                   style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.7)),
               const SizedBox(height: 22),
-              MFPrimaryButton(label: '重置密码', loading: _loading, onPressed: _loading ? null : _reset),
+              MFPrimaryButton(label: AppStrings.t('reset_pwd_btn'), loading: _loading, onPressed: _loading ? null : _reset),
             ],
           ),
         ),

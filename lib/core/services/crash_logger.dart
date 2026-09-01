@@ -22,6 +22,9 @@ class CrashLogger {
     // 启动时读取开关（异步，不影响首帧）
     SettingsStore.instance.load().then((s) => _enabled = s['crashReport'] == true);
 
+    // flutter_test 环境不接管 onError（测试绑定自行管理，接管会破坏断言）
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+
     FlutterError.onError = (details) {
       FlutterError.presentError(details); // 保留默认控制台输出
       _log('FlutterError: ${details.exceptionAsString()}\n${details.stack ?? ''}');

@@ -7,6 +7,7 @@ import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/speed_tester.dart';
 import '../../core/services/subscription_service.dart';
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/country_flag.dart';
 
@@ -29,7 +30,7 @@ class _NodesPageState extends State<NodesPage> {
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       await conn.loadNodes(nodes);
-      if (mounted && nodes.isEmpty) _toast('订阅中没有可用节点');
+      if (mounted && nodes.isEmpty) _toast(AppStrings.t('no_nodes_hint'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     }
@@ -38,7 +39,7 @@ class _NodesPageState extends State<NodesPage> {
   Future<void> _runSpeedTest() async {
     final conn = context.read<ConnectionController>();
     if (conn.nodes.isEmpty) {
-      _toast('暂无节点');
+      _toast(AppStrings.t('no_nodes'));
       return;
     }
     setState(() => _testing = true);
@@ -46,7 +47,7 @@ class _NodesPageState extends State<NodesPage> {
       final tested = await SpeedTester.instance.testAll(conn.nodes);
       await conn.loadNodes(tested);
       if (mounted) {
-        _toast('测速完成，已按延迟排序');
+        _toast(AppStrings.t('speed_done'));
         if (_autoBest) {
           final best = SpeedTester.selectBest(tested);
           if (best != null) await conn.switchNode(best);
@@ -91,11 +92,11 @@ class _NodesPageState extends State<NodesPage> {
               padding: const EdgeInsets.fromLTRB(22, 10, 22, 4),
               child: Row(
                 children: [
-                  const Text('节点列表', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
+                  Text(AppStrings.t('nodes_title'), style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => _load(force: true),
-                    child: const Text('🔄 刷新订阅', style: TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                    child: Text('🔄 ${AppStrings.t('refresh_sub')}', style: const TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                   ),
                 ],
               ),
@@ -121,7 +122,7 @@ class _NodesPageState extends State<NodesPage> {
                         },
                         style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
                         decoration: InputDecoration(
-                          hintText: '搜索节点 / 地区 / 协议',
+                          hintText: AppStrings.t('search_hint'),
                           hintStyle:  TextStyle(fontSize: 13, color: MFColors.txt3),
                           border: InputBorder.none,
                           prefixIcon:  Icon(Icons.search, size: 17, color: MFColors.txt3),
@@ -146,7 +147,7 @@ class _NodesPageState extends State<NodesPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(13)),
                       alignment: Alignment.center,
-                      child: Text(_testing ? '测速中…' : '⚡ 测速',
+                      child: Text(_testing ? AppStrings.t('speed_testing') : '⚡ ${AppStrings.t('speed_test')}',
                           style: const TextStyle(fontSize: 12.5, color: Colors.white, fontWeight: FontWeight.w600)),
                     ),
                   ),
@@ -167,8 +168,8 @@ class _NodesPageState extends State<NodesPage> {
                   children: [
                     const Text('✨', style: TextStyle(fontSize: 14)),
                     const SizedBox(width: 7),
-                    const Expanded(
-                      child: Text('自动选择最优节点', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    Expanded(
+                      child: Text(AppStrings.t('auto_best'), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                     ),
                     GestureDetector(
                       onTap: () => setState(() => _autoBest = !_autoBest),
@@ -179,7 +180,7 @@ class _NodesPageState extends State<NodesPage> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: _autoBest ? MFColors.green.withValues(alpha: .3) : MFColors.line2),
                         ),
-                        child: Text(_autoBest ? '已开启' : '已关闭',
+                        child: Text(_autoBest ? AppStrings.t('auto_test_on') : AppStrings.t('auto_test_off'),
                             style: TextStyle(fontSize: 9.5,
                                 color: _autoBest ? MFColors.green : MFColors.txt3,
                                 fontWeight: FontWeight.w700)),
@@ -193,7 +194,7 @@ class _NodesPageState extends State<NodesPage> {
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(9)),
                         alignment: Alignment.center,
-                        child: const Text('立即选优', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
+                        child: Text(AppStrings.t('pick_best'), style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
                       ),
                     ),
                   ],
@@ -207,14 +208,14 @@ class _NodesPageState extends State<NodesPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                           Text('暂无节点', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                           Text(AppStrings.t('no_nodes'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                           const SizedBox(height: 10),
                           GestureDetector(
                             onTap: () => _load(force: true),
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                               decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(12)),
-                              child: const Text('刷新订阅', style: TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                              child: Text(AppStrings.t('refresh_sub'), style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
                             ),
                           ),
                         ],
@@ -245,7 +246,7 @@ class _NodesPageState extends State<NodesPage> {
     return GestureDetector(
       onTap: () async {
         await conn.switchNode(n);
-        if (mounted) _toast('已切换到 ${n.tag}');
+        if (mounted) _toast(AppStrings.t('switched_to', {'name': n.tag}));
       },
       child: Container(
         margin: const EdgeInsets.fromLTRB(22, 0, 22, 8),
@@ -276,7 +277,7 @@ class _NodesPageState extends State<NodesPage> {
                       style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                   if (isCurrent) ...[
                     const SizedBox(height: 2),
-                    const Text('✨ 已选中', style: TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                    Text('✨ ${AppStrings.t('selected')}', style: const TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                   ],
                 ],
               ),
@@ -346,7 +347,7 @@ class _NodeListView extends StatelessWidget {
                 Text(regionName(code),
                     style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
                 const Spacer(),
-                Text('${groups[code]!.length} 个节点',
+                Text('${groups[code]!.length} ${AppStrings.t('nodes_count')}',
                     style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
               ],
             ),

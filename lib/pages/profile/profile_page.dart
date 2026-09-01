@@ -5,6 +5,7 @@ import '../../core/api/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/user_service.dart';
 import '../../main.dart';
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../devices/devices_page.dart';
 import '../notifications/notifications_page.dart';
@@ -65,7 +66,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final email = _dashboard?.email ?? '';
     final balance = (_dashboard?.balance as num?)?.toDouble() ?? 0;
     final remaining = (_dashboard?.remainingDays as num?)?.toInt() ?? 0;
-    final expire = _dashboard?.expireTime?.toString() ?? '未设置';
+    final expire = _dashboard?.expireTime?.toString() ?? AppStrings.t('expire_na');
     final online = (_dashboard?.onlineDevices as num?)?.toInt() ?? 0;
     final total = (_dashboard?.totalDevices as num?)?.toInt() ?? 0;
     final hasSub = _dashboard?.hasSubscription == true;
@@ -125,7 +126,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: [
             Text('¥${balance.toStringAsFixed(2)}',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
-             Text('账户余额', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+             Text(AppStrings.t('balance'), style: TextStyle(fontSize: 10, color: MFColors.txt3)),
           ],
         ),
       ],
@@ -146,7 +147,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           const Text('⏰', style: TextStyle(fontSize: 16)),
           const SizedBox(width: 9),
           Expanded(
-            child: Text('套餐还剩 $remaining 天，请及时续费避免中断',
+            child: Text(AppStrings.t('expiring_days', {'days': '$remaining'}),
                 style:  TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
           GestureDetector(
@@ -154,7 +155,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
               decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-              child: const Text('去续费', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+              child: Text(AppStrings.t('renew'), style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
             ),
           ),
         ],
@@ -176,8 +177,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         children: [
           Row(
             children: [
-              Text(hasSub ? '${_dashboard?.membership ?? '订阅套餐'} · 不限流量'
-                  : '尚未开通套餐',
+              Text(hasSub ? '${_dashboard?.membership ?? ''} · ${AppStrings.t('unlimited')}'
+                  : AppStrings.t('no_plan_yet'),
                   style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
               const Spacer(),
               Container(
@@ -187,7 +188,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: (hasSub ? MFColors.green : MFColors.amber).withValues(alpha: .3)),
                 ),
-                child: Text(hasSub ? '● 生效中' : '● 未开通',
+                child: Text(hasSub ? '● ${AppStrings.t('active')}' : '● ${AppStrings.t('inactive')}',
                     style: TextStyle(fontSize: 10, color: hasSub ? MFColors.green : MFColors.amber, fontWeight: FontWeight.w600)),
               ),
             ],
@@ -195,9 +196,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           const SizedBox(height: 14),
           Row(
             children: [
-              _SubItem(value: '$remaining 天', label: '剩余天数'),
-              _SubItem(value: expire.length > 12 ? expire.substring(0, 10) : expire, label: '到期时间'),
-              _SubItem(value: '$online / $total', label: '设备数'),
+              _SubItem(value: '$remaining 天', label: AppStrings.t('remaining_days')),
+              _SubItem(value: expire.length > 12 ? expire.substring(0, 10) : expire, label: AppStrings.t('expire_time')),
+              _SubItem(value: '$online / $total', label: AppStrings.t('plan_devices')),
             ],
           ),
         ],
@@ -207,12 +208,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Widget _buildMenu(BuildContext context, int online, int total) {
     final rows = [
-      ('📱', '设备管理', '$online/$total', () => _push(context, const DevicesPage())),
-      ('🧾', '我的订单', null, () => _push(context, const OrdersPage())),
-      ('🎟️', '优惠券', null, () => _toast('我的优惠券：请到套餐页输入使用')),
-      ('🔔', '通知中心', null, () => _push(context, const NotificationsPage())),
-      ('⚙️', '设置', null, () => _push(context, const SettingsPage())),
-      ('ℹ️', '关于 MoneyFly', null, () => _showAbout(context)),
+      ('📱', AppStrings.t('profile_devices'), '$online/$total', () => _push(context, const DevicesPage())),
+      ('🧾', AppStrings.t('profile_orders'), null, () => _push(context, const OrdersPage())),
+      ('🎟️', AppStrings.t('profile_coupons'), null, () => _toast(AppStrings.t('coupon_ok'))),
+      ('🔔', AppStrings.t('profile_notifications'), null, () => _push(context, const NotificationsPage())),
+      ('⚙️', AppStrings.t('settings'), null, () => _push(context, const SettingsPage())),
+      ('ℹ️', AppStrings.t('profile_about'), null, () => _showAbout(context)),
     ];
     return Column(
       children: [
@@ -254,13 +255,13 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           context: context,
           builder: (_) => AlertDialog(
             backgroundColor: MFColors.card2,
-            title: const Text('退出登录', style: TextStyle(fontSize: 16)),
-            content:  Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+            title: Text(AppStrings.t('logout'), style: TextStyle(fontSize: 16)),
+            content:  Text(AppStrings.t('logout_confirm'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+              TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel'))),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('退出', style: TextStyle(color: MFColors.red)),
+                child: Text(AppStrings.t('logout_yes'), style: TextStyle(color: MFColors.red)),
               ),
             ],
           ),
@@ -278,7 +279,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(15),
           border: Border.all(color: MFColors.red.withValues(alpha: .35)),
         ),
-        child: const Text('退出登录', style: TextStyle(fontSize: 14.5, color: MFColors.red, fontWeight: FontWeight.w600)),
+        child: Text(AppStrings.t('logout'), style: TextStyle(fontSize: 14.5, color: MFColors.red, fontWeight: FontWeight.w600)),
       ),
     );
   }
@@ -291,8 +292,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('关于 MoneyFly'),
-        content:  Text('MoneyFly v1.0.0\n\n极速 · 稳定 · 全球畅连\ndy.moneyfly.top',
+        title: Text(AppStrings.t('profile_about')),
+        content:  Text('MoneyFly v1.0.0\n\n${AppStrings.t('slogan')}\ndy.moneyfly.top',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('好的'))],

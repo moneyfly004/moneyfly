@@ -9,6 +9,7 @@ import '../../core/services/speed_tester.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/api/api_client.dart';
+import '../../l10n/app_strings.dart';
 import '../../core/services/geo_lookup.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
@@ -100,12 +101,12 @@ class _HomePageState extends State<HomePage>
       await conn.disconnect();
       _toast('已取消连接');
     } else if (conn.nodes.isEmpty) {
-      _toast('暂无节点，请先刷新订阅');
+      _toast(AppStrings.t('no_nodes'));
     } else {
       // 连接前：VPN 授权 + 通知 + 电池优化豁免（最高权限，防断连/防杀后台）
       final ok = await PermissionService.instance.ensureAllForConnect();
       if (!ok) {
-        _toast('需要授予 VPN 权限才能连接');
+        _toast(AppStrings.t('vpn_permission_needed'));
         return;
       }
       await conn.connect();
@@ -168,7 +169,7 @@ class _HomePageState extends State<HomePage>
           const Text('🛒', style: TextStyle(fontSize: 16)),
           const SizedBox(width: 9),
            Expanded(
-            child: Text('尚未开通套餐，开通后即可畅连全球节点',
+            child: Text(AppStrings.t('no_subscription'),
                 style: TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
           GestureDetector(
@@ -176,7 +177,7 @@ class _HomePageState extends State<HomePage>
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
               decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-              child: const Text('去开通', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+              child: Text(AppStrings.t('go_purchase'), style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
             ),
           ),
         ],
@@ -203,13 +204,13 @@ class _HomePageState extends State<HomePage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('MoneyFly', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
-              Text('全球加速已就绪', style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+              Text(AppStrings.t('home_ready'), style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
             ],
           ),
           const Spacer(),
           IconButton(
             icon:  Icon(Icons.refresh, size: 20, color: MFColors.txt2),
-            tooltip: '刷新订阅',
+            tooltip: AppStrings.t('refresh_sub'),
             onPressed: _loadingNodes ? null : () => _ensureNodes(force: true),
           ),
           IconButton(
@@ -228,12 +229,12 @@ class _HomePageState extends State<HomePage>
         ? MFColors.amber
         : (connected ? MFColors.green : MFColors.txt3);
     final statusLabel = switch (conn.status) {
-      ConnStatus.testing => '测速中',
-      ConnStatus.connecting => '连接中',
-      ConnStatus.reconnecting => '重连中',
-      ConnStatus.connected => '已连接',
-      ConnStatus.error => '连接失败',
-      _ => '已断开',
+      ConnStatus.testing => AppStrings.t('testing'),
+      ConnStatus.connecting => AppStrings.t('connecting'),
+      ConnStatus.reconnecting => AppStrings.t('reconnecting'),
+      ConnStatus.connected => AppStrings.t('connected'),
+      ConnStatus.error => AppStrings.t('error'),
+      _ => AppStrings.t('disconnected'),
     };
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
@@ -334,7 +335,7 @@ class _HomePageState extends State<HomePage>
               ],
             )
           else
-             Text('暂无节点 · 点击右上角刷新订阅',
+             Text(AppStrings.t('no_nodes'),
                 style: TextStyle(fontSize: 13, color: MFColors.txt3)),
           // 真实出口：连接后通过隧道 IP 定位实测（非节点名猜测）
           if (connected && conn.realCountry != null) ...[
@@ -368,13 +369,13 @@ class _HomePageState extends State<HomePage>
       child: Row(
         children: [
           _ModeOption(
-            label: '智能模式',
+            label: AppStrings.t('smart_mode'),
             icon: Icons.gps_fixed,
             selected: conn.smartMode,
             onTap: () => conn.toggleMode(true),
           ),
           _ModeOption(
-            label: '全局模式',
+            label: AppStrings.t('global_mode'),
             icon: Icons.travel_explore,
             selected: !conn.smartMode,
             onTap: () => conn.toggleMode(false),
@@ -405,7 +406,7 @@ class _HomePageState extends State<HomePage>
                 child: const Icon(Icons.bolt, size: 15, color: Colors.white),
               ),
               const SizedBox(width: 8),
-              const Text('自动测速 · 自动选优', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              Text(AppStrings.t('auto_test_title'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
               const Spacer(),
               GestureDetector(
                 onTap: () => conn.setAutoTest(!conn.autoTest),
@@ -417,7 +418,7 @@ class _HomePageState extends State<HomePage>
                     border: Border.all(
                         color: conn.autoTest ? MFColors.green.withValues(alpha: .3) : MFColors.line2),
                   ),
-                  child: Text(conn.autoTest ? '● 已开启' : '○ 已关闭',
+                  child: Text(conn.autoTest ? '● ${AppStrings.t('auto_test_on')}' : '○ ${AppStrings.t('auto_test_off')}',
                       style: TextStyle(fontSize: 10,
                           color: conn.autoTest ? MFColors.green : MFColors.txt3,
                           fontWeight: FontWeight.w700)),
@@ -440,7 +441,7 @@ class _HomePageState extends State<HomePage>
                       CountryFlag(best?.countryCode, size: 15),
                       const SizedBox(width: 7),
                       Expanded(
-                        child: Text(best?.tag ?? '暂无节点',
+                        child: Text(best?.tag ?? AppStrings.t('no_nodes'),
                             maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                       ),
@@ -452,7 +453,7 @@ class _HomePageState extends State<HomePage>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(12)),
-                        child: const Text('最优', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                        child: Text(AppStrings.t('best'), style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
                       ),
                     ],
                   ),
@@ -461,7 +462,7 @@ class _HomePageState extends State<HomePage>
               const SizedBox(width: 9),
               GestureDetector(
                 onTap: () async {
-                  _toast('正在测速全部节点…');
+                  _toast(AppStrings.t('testing_all'));
                   await conn.connect();
                   if (mounted && conn.error != null) _toast(conn.error!);
                 },
@@ -470,12 +471,12 @@ class _HomePageState extends State<HomePage>
                   padding: const EdgeInsets.symmetric(horizontal: 13),
                   decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(11)),
                   alignment: Alignment.center,
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.refresh, size: 13, color: Colors.white),
-                      SizedBox(width: 4),
-                      Text('重新测速', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
+                      const Icon(Icons.refresh, size: 13, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(AppStrings.t('retest'), style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
@@ -486,7 +487,7 @@ class _HomePageState extends State<HomePage>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(conn.autoTest ? '连接前自动测速 · 断线自动重选' : '自动测速已关闭',
+              Text(conn.autoTest ? AppStrings.t('auto_test_on') : AppStrings.t('auto_test_off'),
                   style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
               Text('${conn.nodes.length} 节点${conn.lastSpeedTestTime != null ? ' · ${conn.lastSpeedTestTime} 测速' : ''}',
                   style:  TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
@@ -515,7 +516,7 @@ class _HomePageState extends State<HomePage>
       children: [
         Row(
           children: [
-            const Text('快速切换国家', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            Text(AppStrings.t('quick_region'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
             const Spacer(),
              Text('点按即切换该国最优节点', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
           ],
@@ -530,7 +531,7 @@ class _HomePageState extends State<HomePage>
           childAspectRatio: 1.55,
           children: [
             // 自动最优
-            _regionTile(conn, null, '自动最优', conn.current?.latencyMs ?? -1, isAuto: true),
+            _regionTile(conn, null, AppStrings.t('auto_best'), conn.current?.latencyMs ?? -1, isAuto: true),
             for (final (code, name) in list)
               _regionTile(conn, code, name, byCountry[code] ?? -1),
           ],
@@ -548,7 +549,7 @@ class _HomePageState extends State<HomePage>
       onTap: () async {
         if (isAuto) {
           // 自动最优：重新测速并选优
-          _toast('正在重新测速并选择最优节点…');
+          _toast(AppStrings.t('testing_all'));
           await conn.connect();
         } else {
           // 切到该国延迟最低的节点
@@ -557,11 +558,11 @@ class _HomePageState extends State<HomePage>
               .toList()
             ..sort((a, b) => a.latencyMs.compareTo(b.latencyMs));
           if (candidates.isEmpty) {
-            _toast('该地区暂无可用节点');
+            _toast(AppStrings.t('region_empty'));
             return;
           }
           await conn.switchNode(candidates.first);
-          _toast('已切换到 ${candidates.first.tag}');
+          _toast(AppStrings.t('switched_to', {'name': candidates.first.tag}));
         }
       },
       child: Container(
@@ -597,9 +598,9 @@ class _HomePageState extends State<HomePage>
     final up = conn.upSpeedMbps, down = conn.downSpeedMbps;
     return Row(
       children: [
-        Expanded(child: _StatCard(label: '上行速率', value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
+        Expanded(child: _StatCard(label: AppStrings.t('up_speed'), value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
         const SizedBox(width: 12),
-        Expanded(child: _StatCard(label: '下行速率', value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
+        Expanded(child: _StatCard(label: AppStrings.t('down_speed'), value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
       ],
     );
   }

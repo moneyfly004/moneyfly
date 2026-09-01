@@ -7,6 +7,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/update_service.dart';
+import '../../l10n/app_strings.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
@@ -53,7 +54,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('退出登录', style: TextStyle(fontSize: 16)),
+        title: Text(AppStrings.t('logout'), style: const TextStyle(fontSize: 16)),
         content: Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
@@ -95,9 +96,9 @@ class _SettingsPageState extends State<SettingsPage> {
               // 默认值同步生效到连接控制器与主题
               ConnectionController.instance.applySettings(defaults);
               ThemeController.instance.setTheme(defaults['theme']?.toString() ?? 'system');
-              _toast('已恢复默认设置');
+              _toast(AppStrings.t('restored'));
             },
-            child: Text('恢复默认', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+            child: Text(AppStrings.t('restore_default'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
           ),
         ],
       ),
@@ -105,48 +106,48 @@ class _SettingsPageState extends State<SettingsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
           children: [
-            _section('连接设置'),
-            _row(icon: '🔌', title: '启动时自动连接',
+            _section(AppStrings.t('settings_conn')),
+            _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
                 trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v))),
-            _row(icon: '⚡', title: '自动测速并选最优', desc: '连接前测速全部节点',
+            _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
                 trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
-            _row(icon: '🔁', title: '断线自动重连', desc: '自动换最优节点重连',
+            _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),
                 trailing: _switch(_s['autoReconnect'] == true, (v) => _set('autoReconnect', v))),
-            _row(icon: '⏱️', title: '后台测速间隔', value: '${_s['testIntervalMin'] ?? 30} 分钟',
-                onTap: () => _picker(['15 分钟', '30 分钟', '60 分钟'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
-            _row(icon: '🌐', title: 'DNS 服务器', value: _s['dns']?.toString() ?? '223.5.5.5',
+            _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: '${_s['testIntervalMin'] ?? 30} ${AppStrings.t('settings_minutes')}',
+                onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
+            _row(icon: '🌐', title: AppStrings.t('settings_dns'), value: _s['dns']?.toString() ?? '223.5.5.5',
                 onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
-            _row(icon: '📡', title: '协议过滤',
+            _row(icon: '📡', title: AppStrings.t('settings_protocol'),
                 value: switch (_s['protocolFilter']?.toString()) {
-                  'vless' => '仅 vless',
-                  'trojan' => '仅 trojan',
-                  _ => '全部协议',
+                  'vless' => AppStrings.t('only_vless'),
+                  'trojan' => AppStrings.t('only_trojan'),
+                  _ => AppStrings.t('all_protocols'),
                 },
-                onTap: () => _picker(['全部协议', '仅 vless', '仅 trojan'], (v) => _set('protocolFilter',
-                    v == '仅 vless' ? 'vless' : (v == '仅 trojan' ? 'trojan' : 'all')))),
-            _section('模式'),
-            _row(icon: '🎯', title: '默认模式',
+                onTap: () => _picker([AppStrings.t('all_protocols'), AppStrings.t('only_vless'), AppStrings.t('only_trojan')], (v) => _set('protocolFilter',
+                    v == AppStrings.t('only_vless') ? 'vless' : (v == AppStrings.t('only_trojan') ? 'trojan' : 'all')))),
+            _section(AppStrings.t('settings_mode')),
+            _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
                 trailing: _seg2(
                   left: '智能', right: '全局',
                   selectedLeft: _s['defaultMode'] != 'global',
                   onLeft: () => _set('defaultMode', 'smart'),
                   onRight: () => _set('defaultMode', 'global'),
                 )),
-            _section('网络'),
-            _row(icon: '🚀', title: 'TUN 虚拟网卡',
+            _section(AppStrings.t('settings_network')),
+            _row(icon: '🚀', title: AppStrings.t('settings_tun'),
                 value: switch (_s['tunMode']?.toString()) {
-                  'off' => '关闭',
-                  'force' => '强制',
-                  _ => '自动',
+                  'off' => AppStrings.t('tun_off'),
+                  'force' => AppStrings.t('tun_force'),
+                  _ => AppStrings.t('tun_auto'),
                 },
-                onTap: () => _picker(['自动', '强制', '关闭'], (v) => _set('tunMode',
-                    v == '强制' ? 'force' : (v == '关闭' ? 'off' : 'auto')))),
-            _row(icon: '🏠', title: '绕过局域网流量',
+                onTap: () => _picker([AppStrings.t('tun_auto'), AppStrings.t('tun_force'), AppStrings.t('tun_off')], (v) => _set('tunMode',
+                    v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto')))),
+            _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
-            _section('外观'),
-            _row(icon: '🎨', title: '主题',
+            _section(AppStrings.t('settings_appearance')),
+            _row(icon: '🎨', title: AppStrings.t('settings_theme'),
                 value: switch (_s['theme']?.toString()) {
-                  'light' => '浅色',
+                  'light' => AppStrings.t('theme_light'),
                   'dark' => '深色',
                   _ => '跟随系统',
                 },
@@ -155,23 +156,27 @@ class _SettingsPageState extends State<SettingsPage> {
                   ThemeController.instance.setTheme(t); // 立即生效
                   _set('theme', t);
                 })),
-            _row(icon: '🌏', title: '语言', value: '简体中文',
-                onTap: () => _toast('语言：简体中文（English 后续版本支持）')),
-            _section('隐私'),
-            _row(icon: '🔔', title: '允许通知', desc: '套餐到期横幅提醒（系统通知后续版本）',
+            _row(icon: '🌏', title: AppStrings.t('settings_language'),
+                value: AppStrings.lang == 'en' ? 'English' : '简体中文',
+                onTap: _pickLanguage),
+            _section(AppStrings.t('settings_privacy')),
+            _row(icon: '🔔', title: AppStrings.t('settings_notify'),
+                desc: AppStrings.t('settings_notify_desc'),
                 trailing: _switch(_s['notify'] == true, (v) => _set('notify', v))),
-            _row(icon: '🩹', title: '崩溃日志上报', desc: '本地记录崩溃日志',
+            _row(icon: '🩹', title: AppStrings.t('settings_crash'),
+                desc: AppStrings.t('settings_crash_desc'),
                 trailing: _switch(_s['crashReport'] == true, (v) => _set('crashReport', v))),
-            _row(icon: '📊', title: '匿名使用统计', desc: '预留（后续版本接入）',
+            _row(icon: '📊', title: AppStrings.t('settings_analytics'),
+                desc: AppStrings.t('settings_analytics_desc'),
                 trailing: _switch(_s['analytics'] == true, (v) => _set('analytics', v))),
-            _section('账号'),
-            _row(icon: '🔑', title: '修改密码', desc: '需当前密码', onTap: () => Navigator.of(context).push(
+            _section(AppStrings.t('settings_account')),
+            _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
-            _row(icon: '⏻', title: '退出登录', danger: true, onTap: _logout),
-            _section('关于'),
-            _row(icon: '🔄', title: '检查更新', value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
-            _row(icon: '📄', title: '用户协议', onTap: () => _openUrl('https://dy.moneyfly.top/terms')),
-            _row(icon: '🛡️', title: '隐私政策', onTap: () => _openUrl('https://dy.moneyfly.top/privacy')),
+            _row(icon: '⏻', title: AppStrings.t('logout'), danger: true, onTap: _logout),
+            _section(AppStrings.t('settings_about')),
+            _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
+            _row(icon: '📄', title: AppStrings.t('settings_tos'), onTap: () => _openUrl('https://dy.moneyfly.top/terms')),
+            _row(icon: '🛡️', title: AppStrings.t('settings_privacy_policy'), onTap: () => _openUrl('https://dy.moneyfly.top/privacy')),
             const SizedBox(height: 12),
              Center(
               child: Text('MoneyFly v1.0.0 · dy.moneyfly.top',
@@ -287,6 +292,42 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  /// 语言切换：简体中文 / English（立即生效）
+  Future<void> _pickLanguage() async {
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        backgroundColor: MFColors.card2,
+        title: const Text('Language'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'zh'),
+            child: Row(children: [
+              Text(AppStrings.t('zh'), style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
+              if (AppStrings.lang == 'zh') ...[
+                const Spacer(),
+                const Icon(Icons.check, size: 16, color: MFColors.brandLight),
+              ],
+            ]),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'en'),
+            child: Row(children: [
+              Text(AppStrings.t('en'), style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
+              if (AppStrings.lang == 'en') ...[
+                const Spacer(),
+                const Icon(Icons.check, size: 16, color: MFColors.brandLight),
+              ],
+            ]),
+          ),
+        ],
+      ),
+    );
+    if (v != null && v != AppStrings.lang) {
+      await LocaleController.instance.setLang(v);
+    }
   }
 
   bool _checkingUpdate = false;

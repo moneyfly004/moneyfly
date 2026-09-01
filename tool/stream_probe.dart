@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print, directives_ordering
 // 探针：验证 dio ResponseType.stream 能否正确读取 sing-box /traffic 持续流
 // 用法：先启动内核，再 dart run tool/stream_probe.dart
 import 'dart:convert';

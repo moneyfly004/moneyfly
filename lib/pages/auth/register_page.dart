@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
 import '../../theme/app_theme.dart';
@@ -43,7 +44,7 @@ class _RegisterPageState extends State<RegisterPage> {
   Future<void> _sendCode() async {
     final email = _email.text.trim();
     if (email.isEmpty || !email.contains('@')) {
-      _toast('请先输入正确的邮箱');
+      _toast(AppStrings.t('email_invalid'));
       return;
     }
     setState(() => _sending = true);
@@ -72,10 +73,10 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   Future<void> _register() async {
-    if (_username.text.trim().length < 4) return _toast('用户名至少 4 位');
-    if (_password.text.length < 8) return _toast('密码至少 8 位');
-    if (_password.text != _confirm.text) return _toast('两次输入的密码不一致');
-    if (!_agreed) return _toast('请先阅读并同意用户协议与隐私政策');
+    if (_username.text.trim().length < 4) return _toast(AppStrings.t('username_short'));
+    if (_password.text.length < 8) return _toast(AppStrings.t('pwd_short'));
+    if (_password.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
+    if (!_agreed) return _toast(AppStrings.t('agree_required'));
     setState(() => _loading = true);
     try {
       await ApiClient.instance.post(Endpoints.register, data: {
@@ -85,7 +86,7 @@ class _RegisterPageState extends State<RegisterPage> {
         'verification_code': _code.text.trim(),
         if (_invite.text.trim().isNotEmpty) 'invite_code': _invite.text.trim(),
       });
-      _toast('注册成功，请登录');
+      _toast(AppStrings.t('registered'));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       _toast(ApiClient.errorMsg(e));
@@ -104,11 +105,11 @@ class _RegisterPageState extends State<RegisterPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('注册账号'),
+        title: Text(AppStrings.t('register_title')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('登录', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+            child: Text(AppStrings.t('login_title'), style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -118,16 +119,16 @@ class _RegisterPageState extends State<RegisterPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-               Text('加入 MoneyFly',
+               Text(AppStrings.t('join_moneyfly'),
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: MFColors.txt)),
               const SizedBox(height: 4),
-               Text('注册后即可购买套餐开始加速',
+               Text(AppStrings.t('join_tip'),
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
               const SizedBox(height: 24),
-              _field('邮箱', _email, hint: '用于接收验证码'),
+              _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_hint')),
               const SizedBox(height: 12),
               _field('验证码', _code,
-                  hint: '6 位验证码',
+                  hint: AppStrings.t('code_hint'),
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(6),
@@ -154,24 +155,24 @@ class _RegisterPageState extends State<RegisterPage> {
                                 gradient: MFColors.brandGradient,
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Text(_sending ? '发送中…' : '发送验证码',
+                              child: Text(_sending ? AppStrings.t('sending') : AppStrings.t('send_code'),
                                   style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
                             ),
                           ),
                   )),
               if (_codeSent) ...[
                 const SizedBox(height: 6),
-                const Text('✓ 验证码已发送至邮箱，5 分钟内有效',
+                Text(AppStrings.t('code_sent'),
                     style: TextStyle(fontSize: 10.5, color: MFColors.green, fontWeight: FontWeight.w600)),
               ],
               const SizedBox(height: 12),
-              _field('用户名', _username, hint: '登录用户名（4-20 位）'),
+              _field(AppStrings.t('username_label'), _username, hint: AppStrings.t('username_hint')),
               const SizedBox(height: 12),
-              _field('密码', _password, hint: '至少 8 位，含字母和数字', obscure: _obscure),
+              _field(AppStrings.t('password_label'), _password, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure),
               const SizedBox(height: 12),
-              _field('确认密码', _confirm, hint: '再次输入密码', obscure: _obscure),
+              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure),
               const SizedBox(height: 12),
-              _field('邀请码（选填）', _invite, hint: '如有邀请码请填写'),
+              _field(AppStrings.t('invite_label'), _invite, hint: AppStrings.t('invite_hint')),
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -203,7 +204,7 @@ class _RegisterPageState extends State<RegisterPage> {
                 ],
               ),
               const SizedBox(height: 22),
-              MFPrimaryButton(label: '注 册', loading: _loading, onPressed: _loading ? null : _register),
+              MFPrimaryButton(label: AppStrings.t('register_btn'), loading: _loading, onPressed: _loading ? null : _register),
             ],
           ),
         ),

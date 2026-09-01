@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/device_service.dart';
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 
 /// 设备管理：列表 / 删除（踢下线）
@@ -42,14 +43,14 @@ class _DevicesPageState extends State<DevicesPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('删除设备', style: TextStyle(fontSize: 16)),
-        content: Text('确定删除「${device.displayName}」吗？\n删除后该设备将无法使用当前订阅连接。',
+        title: Text(AppStrings.t('delete_device'), style: const TextStyle(fontSize: 16)),
+        content: Text(AppStrings.t('delete_device_body', {'name': device.displayName}),
             style:  TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除', style: TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+            child: Text(AppStrings.t('delete'), style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -59,7 +60,7 @@ class _DevicesPageState extends State<DevicesPage> {
     try {
       await DeviceService.instance.delete(device.id);
       await _load();
-      if (mounted) _toast('设备已删除');
+      if (mounted) _toast(AppStrings.t('device_deleted'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
@@ -77,7 +78,7 @@ class _DevicesPageState extends State<DevicesPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('设备管理'),
+        title: Text(AppStrings.t('device_manage')),
         actions: [
           TextButton(onPressed: _load, child: const Text('刷新', style: TextStyle(color: MFColors.brandLight))),
         ],
@@ -90,9 +91,9 @@ class _DevicesPageState extends State<DevicesPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                         Text('暂无设备', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                         Text(AppStrings.t('no_devices'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                         const SizedBox(height: 8),
-                         Text('连接一次 VPN 后，这里会显示你的设备', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                         Text(AppStrings.t('no_devices_hint'), style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                       ],
                     ),
                   )
@@ -147,7 +148,7 @@ class _DevicesPageState extends State<DevicesPage> {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: (d.isActive ? MFColors.green : MFColors.red).withValues(alpha: .3)),
                 ),
-                child: Text(d.isActive ? '在线' : '离线',
+                child: Text(d.isActive ? AppStrings.t('online') : AppStrings.t('offline'),
                     style: TextStyle(fontSize: 10, color: d.isActive ? MFColors.green : MFColors.red, fontWeight: FontWeight.w600)),
               ),
             ],
@@ -160,12 +161,12 @@ class _DevicesPageState extends State<DevicesPage> {
               if (d.ipAddress.isNotEmpty)
                 _meta('IP', d.ipAddress),
               if (d.location.isNotEmpty)
-                _meta('位置', d.location),
+                _meta(AppStrings.t('location'), d.location),
               if (d.softwareVersion.isNotEmpty)
-                _meta('版本', d.softwareVersion),
-              _meta('访问', '${d.accessCount} 次'),
+                _meta(AppStrings.t('version'), d.softwareVersion),
+              _meta(AppStrings.t('access'), '${d.accessCount}'),
               if (d.lastSeen.isNotEmpty)
-                _meta('最近', d.lastSeen),
+                _meta(AppStrings.t('recent'), d.lastSeen),
             ],
           ),
           const SizedBox(height: 12),
@@ -173,7 +174,7 @@ class _DevicesPageState extends State<DevicesPage> {
             children: [
               _ActionBtn(
                 icon: Icons.delete_outline,
-                label: '删除',
+                label: AppStrings.t('delete'),
                 color: MFColors.red,
                 loading: _deletingId == d.id,
                 onTap: () => _deleteDevice(d),

@@ -1,8 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:moneyfly/main.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({'moneyfly_lang': 'zh'}));
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   testWidgets('MoneyFly 启动冒烟测试：应显示登录页', (WidgetTester tester) async {
     await tester.pumpWidget(const MoneyFlyApp());
     await tester.pump(const Duration(milliseconds: 300));

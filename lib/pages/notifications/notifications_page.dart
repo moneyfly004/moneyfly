@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/notification_service.dart';
@@ -50,7 +51,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     try {
       await NotificationService.instance.markAllRead();
       await _load();
-      if (mounted) _toast('已全部标记为已读');
+      if (mounted) _toast(AppStrings.t('marked_read'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     }
@@ -61,13 +62,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('删除通知', style: TextStyle(fontSize: 16)),
-        content:  Text('确定删除这条通知吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        title: Text(AppStrings.t('delete_notify'), style: TextStyle(fontSize: 16)),
+        content:  Text(AppStrings.t('delete_notify_body'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除', style: TextStyle(color: MFColors.red)),
+            child: Text(AppStrings.t('delete'), style: TextStyle(color: MFColors.red)),
           ),
         ],
       ),
@@ -107,17 +108,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('通知中心'),
+        title: Text(AppStrings.t('notify_center')),
         actions: [
           if (_items.any((n) => !n.isRead))
-            TextButton(onPressed: _markAll, child: const Text('全部已读', style: TextStyle(color: MFColors.brandLight))),
+            TextButton(onPressed: _markAll, child: Text(AppStrings.t('mark_all_read'), style: const TextStyle(color: MFColors.brandLight))),
         ],
       ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
             : _items.isEmpty
-                ?  Center(child: Text('暂无通知', style: TextStyle(fontSize: 14, color: MFColors.txt3)))
+                ?  Center(child: Text(AppStrings.t('no_notifications'), style: TextStyle(fontSize: 14, color: MFColors.txt3)))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                     itemCount: _items.length,

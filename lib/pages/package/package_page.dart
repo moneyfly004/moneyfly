@@ -9,6 +9,7 @@ import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/subscription_service.dart';
+import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../payment/payment_dialog.dart';
 
@@ -106,7 +107,7 @@ class _PackagePageState extends State<PackagePage> {
       if (mounted) {
         setState(() {
           _discountedAmount = finalAmount;
-          _couponStatus = '优惠码已生效';
+          _couponStatus = AppStrings.t('coupon_ok');
         });
       }
     } catch (e) {
@@ -124,8 +125,8 @@ class _PackagePageState extends State<PackagePage> {
   Future<void> _pay() async {
     final plan = _selectedPlan == null ? null : _plans[_selectedPlan!];
     final method = _selectedMethod == null ? null : _methods[_selectedMethod!];
-    if (plan == null) return _toast('请选择套餐');
-    if (method == null) return _toast('请选择支付方式');
+    if (plan == null) return _toast(AppStrings.t('select_plan'));
+    if (method == null) return _toast(AppStrings.t('select_pay'));
     setState(() => _paying = true);
     try {
       final order = await OrderService.instance.create(
@@ -134,10 +135,10 @@ class _PackagePageState extends State<PackagePage> {
       );
       final orderId = (order['id'] as num?)?.toInt() ?? 0;
       final orderNo = order['order_no']?.toString() ?? '';
-      if (orderId == 0) throw Exception('订单创建失败');
+      if (orderId == 0) throw Exception(AppStrings.t('order_failed'));
 
       final pay = await OrderService.instance.pay(orderId: orderId, paymentMethodId: method.id);
-      if (pay.qrCode.isEmpty) throw Exception('未获取到支付二维码');
+      if (pay.qrCode.isEmpty) throw Exception(AppStrings.t('no_qrcode'));
 
       if (!mounted) return;
       final paid = await showDialog<bool>(
@@ -155,7 +156,7 @@ class _PackagePageState extends State<PackagePage> {
         ),
       );
       if (paid == true && mounted) {
-        _toast('开通成功！已为你准备最新节点');
+        _toast(AppStrings.t('activated'));
         // 重新拉取订阅
         try {
           final nodes = await SubscriptionService.instance.fetchNodes(force: true);
@@ -188,9 +189,9 @@ class _PackagePageState extends State<PackagePage> {
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(22, 10, 22, 24),
                   children: [
-                    const Text('购买套餐', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                    Text(AppStrings.t('purchase_title'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 3),
-                     Text('选择适合你的加速方案，付款后立即开通', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+                     Text(AppStrings.t('purchase_sub'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
                     const SizedBox(height: 18),
                     if (_plans.isNotEmpty) _buildPlans(),
                     if (_plans.isNotEmpty) ...[
@@ -200,17 +201,17 @@ class _PackagePageState extends State<PackagePage> {
                     const SizedBox(height: 14),
                     _buildCoupon(),
                     const SizedBox(height: 18),
-                     Text('选择支付方式', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
+                     Text(AppStrings.t('pay_methods'), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
                     const SizedBox(height: 10),
                     if (_methods.isEmpty)
                        Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Text('暂无可用的支付方式，请稍后再试', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+                        child: Text(AppStrings.t('no_pay_methods'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
                       )
                     else
                       for (var i = 0; i < _methods.length; i++) _buildMethod(i, _methods[i]),
                     const SizedBox(height: 10),
-                     Text('💡 支付方式随官网设置实时同步：dy.moneyfly.top 后台启用的支付渠道会自动出现在这里，默认支付宝。',
+                     Text(AppStrings.t('pay_hint'),
                         style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.6)),
                     const SizedBox(height: 20),
                     Container(
@@ -220,7 +221,7 @@ class _PackagePageState extends State<PackagePage> {
                           border: Border.all(color: MFColors.line)),
                       child: Row(
                         children: [
-                          Text('合计（${_plans.isEmpty ? '' : _plans[_selectedPlan ?? 0].name}）',
+                          Text('${AppStrings.t('total')}（${_plans.isEmpty ? '' : _plans[_selectedPlan ?? 0].name}）',
                               style:  TextStyle(fontSize: 12.5, color: MFColors.txt2)),
                           const Spacer(),
                           if (_discountedAmount != null && _discountedAmount != _plans[_selectedPlan ?? 0].price) ...[
@@ -237,7 +238,7 @@ class _PackagePageState extends State<PackagePage> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    MFPrimaryButton(label: '立即支付', loading: _paying, onPressed: _paying ? null : _pay),
+                    MFPrimaryButton(label: AppStrings.t('pay_now'), loading: _paying, onPressed: _paying ? null : _pay),
                   ],
                 ),
               ),
@@ -291,7 +292,7 @@ class _PackagePageState extends State<PackagePage> {
                                   style:  TextStyle(fontSize: 11, color: MFColors.txt3)),
                             ])),
                             const SizedBox(height: 5),
-                            Text('${_plans[i].durationDays} 天 · ${_plans[i].deviceLimit} 台',
+                            Text(AppStrings.t('days_devices', {'days': '${_plans[i].durationDays}', 'devices': '${_plans[i].deviceLimit}'}),
                                 style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
                           ],
                         ),
@@ -303,7 +304,7 @@ class _PackagePageState extends State<PackagePage> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(20)),
-                              child: const Text('最划算', style: TextStyle(fontSize: 9.5, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                              child: Text(AppStrings.t('recommended'), style: TextStyle(fontSize: 9.5, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
                             ),
                           ),
                         ),
@@ -324,13 +325,13 @@ class _PackagePageState extends State<PackagePage> {
           color: MFColors.card, borderRadius: BorderRadius.circular(15), border: Border.all(color: MFColors.line)),
       child: Row(
         children: [
-          _DetailItem(value: '${p.durationDays} 天', label: '套餐时长'),
+          _DetailItem(value: '${p.durationDays} 天', label: AppStrings.t('plan_duration')),
           const _DetailDivider(),
-          _DetailItem(value: '${p.deviceLimit} 台', label: '设备数'),
+          _DetailItem(value: '${p.deviceLimit} 台', label: AppStrings.t('plan_devices')),
           const _DetailDivider(),
-          const _DetailItem(value: '不限', label: '流量'),
+          _DetailItem(value: AppStrings.t('unlimited'), label: AppStrings.t('plan_traffic')),
           const _DetailDivider(),
-          const _DetailItem(value: '680+', label: '节点'),
+          _DetailItem(value: '680+', label: AppStrings.t('plan_nodes')),
         ],
       ),
     );
@@ -347,7 +348,7 @@ class _PackagePageState extends State<PackagePage> {
                 controller: _coupon,
                 style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
                 decoration: InputDecoration(
-                  hintText: '优惠码（选填）',
+                  hintText: AppStrings.t('coupon_hint'),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
                 ),
               ),
@@ -362,7 +363,7 @@ class _PackagePageState extends State<PackagePage> {
                     color: MFColors.card, borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: MFColors.line2)),
                 alignment: Alignment.center,
-                child: const Text('验证', style: TextStyle(fontSize: 13, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                child: Text(AppStrings.t('verify'), style: TextStyle(fontSize: 13, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
               ),
             ),
           ],
@@ -378,12 +379,12 @@ class _PackagePageState extends State<PackagePage> {
   Widget _buildMethod(int index, PayMethod m) {
     final selected = _selectedMethod == index;
     final (icon, bg, label, sub) = m.isAlipay
-        ? ('支', MFColors.brand.withValues(alpha: .85), '支付宝', '推荐 · 扫码支付')
+        ? ('支', MFColors.brand.withValues(alpha: .85), AppStrings.t('alipay'), AppStrings.t('recommended_sub'))
         : m.isWechat
-            ? ('微', const Color(0xFF07C160), '微信支付', '扫码支付')
+            ? ('微', const Color(0xFF07C160), AppStrings.t('wechat_pay'), AppStrings.t('scan_pay'))
             : m.isCrypto
-                ? ('₮', const Color(0xFF2A3242), 'USDT 加密货币', '链上确认后开通')
-                : (m.name.isNotEmpty ? m.name.characters.first : '支', MFColors.card2, m.name, '扫码支付');
+                ? ('₮', const Color(0xFF2A3242), AppStrings.t('usdt'), AppStrings.t('chain_confirm'))
+                : (m.name.isNotEmpty ? m.name.characters.first : '支', MFColors.card2, m.name, AppStrings.t('scan_pay'));
     return GestureDetector(
       onTap: () => setState(() => _selectedMethod = index),
       child: Container(

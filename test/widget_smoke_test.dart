@@ -6,6 +6,7 @@ import 'package:moneyfly/pages/auth/register_page.dart';
 import 'package:moneyfly/pages/settings/settings_page.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({'moneyfly_lang': 'zh'}));
   testWidgets('启动进入登录页', (tester) async {
     await tester.pumpWidget(const MoneyFlyApp());
     await tester.pump(const Duration(milliseconds: 300));

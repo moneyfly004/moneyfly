@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/services/auth_service.dart';
+import '../../l10n/app_strings.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
 import 'forgot_password_page.dart';
@@ -52,7 +53,7 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _login() async {
     if (_account.text.trim().isEmpty || _password.text.isEmpty) {
-      _toast('请输入账号和密码');
+      _toast(AppStrings.t('input_account_pwd'));
       return;
     }
     setState(() => _loading = true);
@@ -98,28 +99,28 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ),
               const SizedBox(height: 18),
-              const Center(
-                child: Text('MoneyFly',
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 1.6)),
+              Center(
+                child: Text(AppStrings.t('app_name'),
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 1.6)),
               ),
               const SizedBox(height: 6),
                Center(
-                child: Text('极速 · 稳定 · 全球畅连',
+                child: Text(AppStrings.t('slogan'),
                     style: TextStyle(fontSize: 12.5, color: MFColors.txt3, letterSpacing: 3)),
               ),
               const SizedBox(height: 44),
               _Field(
-                label: '账号 / 邮箱',
+                label: AppStrings.t('account_label'),
                 controller: _account,
-                hint: '请输入账号或邮箱',
+                hint: AppStrings.t('account_hint'),
                 action: TextInputAction.next,
                 onSubmitted: (_) => FocusScope.of(context).nextFocus(),
               ),
               const SizedBox(height: 12),
               _Field(
-                label: '密码',
+                label: AppStrings.t('password_label'),
                 controller: _password,
-                hint: '请输入密码',
+                hint: AppStrings.t('password_hint'),
                 obscure: _obscure,
                 action: TextInputAction.done,
                 onSubmitted: (_) => _loading ? null : _login(),
@@ -132,7 +133,7 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                   Text('自动登录', style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+                   Text(AppStrings.t('auto_login'), style: TextStyle(fontSize: 13, color: MFColors.txt2)),
                   const Spacer(),
                   Switch(
                     value: _autoLogin,
@@ -144,7 +145,7 @@ class _LoginPageState extends State<LoginPage> {
                 ],
               ),
               const SizedBox(height: 16),
-              MFPrimaryButton(label: '登 录', loading: _loading, onPressed: _loading ? null : _login),
+              MFPrimaryButton(label: AppStrings.t('login_button'), loading: _loading, onPressed: _loading ? null : _login),
               const SizedBox(height: 26),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -153,15 +154,15 @@ class _LoginPageState extends State<LoginPage> {
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const RegisterPage())),
                     child: Text.rich(TextSpan(children: [
-                      TextSpan(text: '还没有账号？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
-                      TextSpan(text: '注册', style: TextStyle(fontSize: 13.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                      TextSpan(text: AppStrings.t('no_account'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+                      TextSpan(text: AppStrings.t('register'), style: TextStyle(fontSize: 13.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                     ])),
                   ),
                   Container(width: 1, height: 12, margin: const EdgeInsets.symmetric(horizontal: 18), color: MFColors.line2),
                   GestureDetector(
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const ForgotPasswordPage())),
-                    child:  Text('忘记密码', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+                    child: Text(AppStrings.t('forgot_password'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
                   ),
                 ],
               ),

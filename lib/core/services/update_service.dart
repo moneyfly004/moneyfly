@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -48,8 +50,9 @@ class UpdateService {
     };
   }
 
-  /// 初始化：读取当前应用版本
+  /// 初始化：读取当前应用版本（flutter_test 环境跳过，避免平台通道挂起）
   Future<void> init() async {
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
     try {
       final info = await PackageInfo.fromPlatform();
       UpdateInfo.currentVersion = info.version;

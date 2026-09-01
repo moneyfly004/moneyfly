@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
 import '../../core/services/order_service.dart';
 import '../../theme/app_theme.dart';
@@ -70,7 +71,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
           _timer?.cancel();
           setState(() {
             _polling = false;
-            _pollError = '订单已${s.status == 'cancelled' ? '取消' : '过期'}';
+            _pollError = AppStrings.t('order_status_tip', {'status': s.status == 'cancelled' ? AppStrings.t('cancelled') : AppStrings.t('expired')});
           });
         }
       } catch (e) {
@@ -102,7 +103,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('请使用${widget.methodName}扫码支付', style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
+            Text(AppStrings.t('pay_with_method', {'method': widget.methodName}), style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
             const SizedBox(height: 3),
             Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
                 style:  TextStyle(fontSize: 10, color: MFColors.txt3, letterSpacing: 1.4)),
@@ -164,7 +165,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                   const SizedBox(width: 13, height: 13,
                       child: CircularProgressIndicator(strokeWidth: 2, color: MFColors.brandLight)),
                   const SizedBox(width: 8),
-                  Text('等待支付 $_clock，支付成功后自动开通套餐…',
+                  Text('${AppStrings.t('waiting_pay')} $_clock，${AppStrings.t('pay_success_auto')}',
                       style:  TextStyle(fontSize: 12, color: MFColors.txt2)),
                 ],
               )
@@ -183,7 +184,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('取消'),
+                    child: Text(AppStrings.t('cancel')),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -201,7 +202,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                       height: 50,
                       decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
                       alignment: Alignment.center,
-                      child: const Text('我已支付', style: TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.w600)),
+                      child: Text(AppStrings.t('i_paid'), style: TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ),

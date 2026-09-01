@@ -134,16 +134,10 @@ class MoneyFlyVpnService : VpnService() {
     private fun extractBinary(): String {
         val out = File(filesDir, "sing-box")
         if (!out.exists() || out.length() == 0L) {
-            val abiDir = when {
-                Build.SUPPORTED_ABIS.any { it.startsWith("arm64") } -> "arm64-v8a"
-                Build.SUPPORTED_ABIS.any { it.startsWith("armeabi") } -> "armeabi-v7a"
-                Build.SUPPORTED_ABIS.any { it.startsWith("x86_64") } -> "x86_64"
-                else -> "arm64-v8a"
-            }
-            val assetPath = "flutter_assets/assets/sing-box/$abiDir/sing-box"
-            assets.open(assetPath).use { input ->
-                out.outputStream().use { output -> input.copyTo(output) }
-            }
+            // 内核通过 jniLibs 按 ABI 打包（split-per-abi 时每个 APK 只含自己的二进制）
+            val src = File(applicationInfo.nativeLibraryDir, "libsingbox.so")
+            if (!src.exists()) throw IllegalStateException("未找到内置内核 libsingbox.so")
+            src.copyTo(out, overwrite = true)
             out.setExecutable(true, false)
         }
         return out.absolutePath

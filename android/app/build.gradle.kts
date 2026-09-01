@@ -33,6 +33,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/libsingbox.so"
+        }
+    }
+
     defaultConfig {
         applicationId = "top.moneyfly.app"
         minSdk = flutter.minSdkVersion
