@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
+import '../services/speed_tester.dart';
 import 'singbox_config.dart';
 
 /// 连接状态
@@ -221,71 +221,5 @@ class ConnectionController extends ChangeNotifier {
   void dispose() {
     _reconnectTimer?.cancel();
     super.dispose();
-  }
-}
-
-/// 节点测速工具（供 ConnectionController 使用）
-class SpeedTester {
-  SpeedTester._();
-  static final SpeedTester instance = SpeedTester._();
-
-  static const _connectTimeout = Duration(seconds: 5);
-  static const _probeCount = 3;
-  static const _maxConcurrent = 12;
-
-  Future<int> testOne(ProxyNode node) async {
-    final samples = <int>[];
-    for (var i = 0; i < _probeCount; i++) {
-      final sw = Stopwatch()..start();
-      try {
-        final socket = await Socket.connect(node.server, node.port, timeout: _connectTimeout);
-        await socket.close();
-        sw.stop();
-        samples.add(sw.elapsedMilliseconds);
-      } catch (_) {
-        return -1;
-      }
-    }
-    samples.sort();
-    return samples[samples.length ~/ 2];
-  }
-
-  Future<List<ProxyNode>> testAll(List<ProxyNode> nodes, {void Function(int, int)? onProgress}) async {
-    final result = List<ProxyNode>.of(nodes);
-    final queue = List<int>.generate(result.length, (i) => i);
-    var done = 0;
-
-    Future<void> worker() async {
-      while (queue.isNotEmpty) {
-        final idx = queue.removeLast();
-        final ms = await testOne(result[idx]);
-        result[idx].latencyMs = ms;
-        result[idx].online = ms >= 0;
-        done++;
-        onProgress?.call(done, result.length);
-      }
-    }
-
-    final count = result.isEmpty ? 1 : (result.length < _maxConcurrent ? result.length : _maxConcurrent);
-    await Future.wait(List.generate(count, (_) => worker()));
-    return result;
-  }
-
-  static ProxyNode? selectBest(List<ProxyNode> nodes) {
-    final online = nodes.where((n) => n.online && n.latencyMs >= 0).toList();
-    if (online.isEmpty) return null;
-    online.sort((a, b) => a.latencyMs.compareTo(b.latencyMs));
-    return online.first;
-  }
-
-  static Map<String, int> bestLatencyByCountry(List<ProxyNode> nodes) {
-    final map = <String, int>{};
-    for (final n in nodes) {
-      if (!n.online || n.latencyMs < 0) continue;
-      final code = n.countryCode ?? 'XX';
-      final cur = map[code];
-      if (cur == null || n.latencyMs < cur) map[code] = n.latencyMs;
-    }
-    return map;
   }
 }

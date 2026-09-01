@@ -37,6 +37,61 @@ flutter build macos         # 需完整 Xcode（当前机器仅有 CommandLineTo
 flutter build windows       # 需 Windows 机器
 ```
 
+## GitHub Actions 多平台多版本构建（推荐分发方式）
+
+推送 tag 即自动构建并发布到 GitHub Releases：
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+也可以在 Actions 页面手动触发（可填版本号）。
+
+### 产物清单
+
+| 平台 | 产物 | 说明 |
+|---|---|---|
+| Android | `MoneyFly-android-arm64-v8a-<v>.apk` | 主流 64 位手机（2017 年后机型） |
+| Android | `MoneyFly-android-armeabi-v7a-<v>.apk` | 老 32 位机型 |
+| Android | `MoneyFly-android-x86_64-<v>.apk` | 模拟器 / 部分平板 |
+| Android | `MoneyFly-android-<v>.aab` | 应用商店备用 |
+| Windows | `MoneyFly-setup-<v>.exe` | Inno Setup 安装版（开始菜单/桌面快捷方式/卸载器） |
+| Windows | `MoneyFly-windows-x64-portable-<v>.zip` | 便携版，解压即用 |
+| macOS | `MoneyFly-macos-arm64-<v>.dmg` | **Apple 芯片**（M1/M2/M3/M4） |
+| macOS | `MoneyFly-macos-x64-<v>.dmg` | **Intel 芯片** |
+| macOS | `MoneyFly-macos-universal-<v>.dmg` | 通用版（两种芯片都能跑，体积最大） |
+
+每个平台产物附 `SHA256SUMS.txt` 校验文件。
+
+### 仓库 Secrets 配置（Settings → Secrets and variables → Actions）
+
+**Android 正式签名（必配，否则回退 debug 签名，每次构建签名不同、用户无法覆盖升级）：**
+
+| Secret | 值 |
+|---|---|
+| `KEYSTORE_BASE64` | `keytool -genkey -v -keystore release.keystore -alias moneyfly -keyalg RSA -keysize 2048 -validity 10000` 生成后 `base64 -i release.keystore` |
+| `KEYSTORE_PASSWORD` | keystore 密码 |
+| `KEY_ALIAS` | 别名（如 `moneyfly`） |
+| `KEY_PASSWORD` | 密钥密码 |
+
+> ⚠️ keystore 请妥善备份；丢失后无法对已有用户推送更新。
+
+### 系统要求
+
+| 平台 | 最低系统 |
+|---|---|
+| Android | Android 7.0+（minSdk 随 Flutter 引擎） |
+| Windows | **Windows 10 (1809)+ / Windows 11** |
+| macOS | macOS 10.15+（Intel 与 Apple 芯片均支持） |
+
+> ⚠️ 关于 Windows 7：**Flutter 桌面引擎自 3.10 起已移除 Windows 7/8 支持**（官方 RFC flutter-drop-win7-2024，flutter/flutter#140830），Flutter 应用无法运行在 Win7 上。若必须覆盖 Win7 用户，需要单独用原生技术（如 Go + WinForms）开发 Win7 专用客户端，属于独立项目。本项目目标系统为 Windows 10 及以上。
+
+### 签名与分发说明
+
+- **Android**：配置 Secrets 后 CI 自动使用正式签名；未配置时为 debug 签名（仅供内测）。
+- **macOS**：CI 产物为 ad-hoc 签名（无 Apple Developer ID）。首次打开若被 Gatekeeper 拦截，右键 → 打开即可；正式分发建议申请 Developer ID 并公证（`codesign` + `notarytool`）。
+- **Windows**：未签名 exe，SmartScreen 可能提示「更多信息 → 仍要运行」；正式分发建议购买代码签名证书。
+
 ## 测试
 
 ```bash

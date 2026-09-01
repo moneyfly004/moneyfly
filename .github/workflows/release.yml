@@ -113,12 +113,13 @@ jobs:
           RELEASE_DIR="build/windows/x64/runner/Release"
           mkdir -p dist
 
-          # zip 便携版（解压即用）
-          powershell -Command "Compress-Archive -Path '$(pwd)/$RELEASE_DIR/*' -DestinationPath '$(pwd)/dist/MoneyFly-windows-x64-portable-$V.zip' -Force"
+          # zip 便携版（解压即用）——powershell 需要 Windows 路径
+          WIN_RELEASE_DIR=$(cygpath -w "$(pwd)/$RELEASE_DIR")
+          WIN_DIST=$(cygpath -w "$(pwd)/dist")
+          powershell -Command "Compress-Archive -Path '$WIN_RELEASE_DIR\*' -DestinationPath '$WIN_DIST\MoneyFly-windows-x64-portable-$V.zip' -Force"
 
           # Inno Setup 安装版（开始菜单/桌面快捷方式/卸载器）
-          WIN_BUILD_DIR=$(cygpath -w "$(pwd)/$RELEASE_DIR")
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" //DVERSION="$V" //DBUILD_DIR="$WIN_BUILD_DIR" scripts/windows_installer.iss
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" //DVERSION="$V" //DBUILD_DIR="$WIN_RELEASE_DIR" scripts/windows_installer.iss
 
           cd dist && sha256sum * > SHA256SUMS.txt
         env:

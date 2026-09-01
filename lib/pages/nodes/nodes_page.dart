@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
+import '../../core/services/speed_tester.dart';
 import '../../core/services/subscription_service.dart';
 import '../../theme/app_theme.dart';
 

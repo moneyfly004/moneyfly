@@ -144,6 +144,7 @@ class SingBoxConfigBuilder {
     required bool smartMode,
     String dns = '223.5.5.5',
   }) {
+    final initialMode = smartMode ? 'Rule' : 'Global';
     final outbounds = buildOutbounds(nodes);
     // selector：包含全部节点 → 支持 clash-api 热切换到任意节点
     outbounds.insert(0, {
@@ -152,7 +153,6 @@ class SingBoxConfigBuilder {
       'outbounds': [for (final n in nodes) n.tag, 'direct'],
       'default': nodes.any((n) => n.tag == selectedTag) ? selectedTag : (nodes.isNotEmpty ? nodes.first.tag : 'direct'),
     });
-    final rules = <Map<String, dynamic>>[];
     final ruleSets = <Map<String, dynamic>>[
       {
         'tag': 'geoip-cn',
@@ -169,17 +169,18 @@ class SingBoxConfigBuilder {
         'download_detour': 'direct',
       },
     ];
-    if (smartMode) {
-      // 智能模式：国内直连 + 本地放行 + UDP 走代理（sing-box 1.12+ 用 rule_set）
-      rules.addAll([
-        {'rule_set': ['geoip-cn'], 'outbound': 'direct'},
-        {'rule_set': ['geosite-cn'], 'outbound': 'direct'},
-        {'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
-        {'network': ['udp'], 'outbound': 'select'},
-      ]);
-    } else {
-      rules.add({'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'});
-    }
+    // 智能/全局两套规则内置同一份配置，用 clash_mode 条件区分：
+    // PATCH /configs {"mode":"Global"|"Rule"} 即可无缝切换（sing-box clash-api 唯一支持热更新的字段）
+    final rules = <Map<String, dynamic>>[
+      // 全局模式：除本地外全部走代理
+      {'clash_mode': 'Global', 'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
+      {'clash_mode': 'Global', 'action': 'route', 'outbound': 'select'},
+      // 智能模式（Rule）：国内直连 + UDP 走代理
+      {'clash_mode': 'Rule', 'rule_set': ['geoip-cn'], 'outbound': 'direct'},
+      {'clash_mode': 'Rule', 'rule_set': ['geosite-cn'], 'outbound': 'direct'},
+      {'clash_mode': 'Rule', 'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
+      {'clash_mode': 'Rule', 'network': ['udp'], 'outbound': 'select'},
+    ];
     return {
       // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
       'log': {'level': 'warn', 'timestamp': true},
@@ -203,7 +204,14 @@ class SingBoxConfigBuilder {
         // sing-box 1.12+：出站域名解析走 DNS 服务器（否则启动报错）
         'default_domain_resolver': {'server': 'dns-main'},
       },
-      'experimental': {'clash_api': {'external_controller': '127.0.0.1:9090', 'external_ui': '', 'secret': ''}},
+      'experimental': {
+        'clash_api': {
+          'external_controller': '127.0.0.1:9090',
+          'external_ui': '',
+          'secret': '',
+          'default_mode': initialMode,
+        },
+      },
     };
   }
 
