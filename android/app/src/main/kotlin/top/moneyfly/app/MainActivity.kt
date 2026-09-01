@@ -1,4 +1,4 @@
-package top.moneyfly.moneyfly_vpn
+package top.moneyfly.app
 
 import android.Manifest
 import android.content.Context

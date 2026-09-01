@@ -1,4 +1,4 @@
-package top.moneyfly.moneyfly_vpn.vpn
+package top.moneyfly.app.vpn
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,8 +9,8 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import top.moneyfly.moneyfly_vpn.MainActivity
-import top.moneyfly.moneyfly_vpn.R
+import top.moneyfly.app.MainActivity
+import top.moneyfly.app.R
 import java.io.FileInputStream
 import java.io.FileOutputStream
 

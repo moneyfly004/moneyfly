@@ -1,4 +1,4 @@
-package top.moneyfly.moneyfly_vpn.vpn
+package top.moneyfly.app.vpn
 
 import android.content.BroadcastReceiver
 import android.content.Context
