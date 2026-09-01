@@ -118,10 +118,10 @@ class _RegisterPageState extends State<RegisterPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('加入 MoneyFly',
+               Text('加入 MoneyFly',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: MFColors.txt)),
               const SizedBox(height: 4),
-              const Text('注册后即可购买套餐开始加速',
+               Text('注册后即可购买套餐开始加速',
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
               const SizedBox(height: 24),
               _field('邮箱', _email, hint: '用于接收验证码'),
@@ -144,7 +144,7 @@ class _RegisterPageState extends State<RegisterPage> {
                               border: Border.all(color: MFColors.line2),
                             ),
                             child: Text('${_countdown}s 后重发',
-                                style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
+                                style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
                           )
                         : GestureDetector(
                             onTap: _sending ? null : _sendCode,
@@ -192,7 +192,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                   ),
                   const SizedBox(width: 9),
-                  const Expanded(
+                   Expanded(
                     child: Text.rich(TextSpan(children: [
                       TextSpan(text: '我已阅读并同意 ', style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
                       TextSpan(text: '《用户协议》', style: TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
@@ -219,7 +219,7 @@ class _RegisterPageState extends State<RegisterPage> {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 7),
-          child: Text(label, style: const TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
+          child: Text(label, style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
         ),
         Row(
           children: [
@@ -227,7 +227,7 @@ class _RegisterPageState extends State<RegisterPage> {
               child: TextField(
                 controller: c,
                 obscureText: obscure,
-                style: const TextStyle(color: MFColors.txt, fontSize: 15),
+                style:  TextStyle(color: MFColors.txt, fontSize: 15),
                 inputFormatters: inputFormatters,
                 decoration: InputDecoration(hintText: hint),
               ),

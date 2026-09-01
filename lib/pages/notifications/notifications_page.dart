@@ -62,7 +62,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: const Text('删除通知', style: TextStyle(fontSize: 16)),
-        content: const Text('确定删除这条通知吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        content:  Text('确定删除这条通知吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(
@@ -117,7 +117,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
             : _items.isEmpty
-                ? const Center(child: Text('暂无通知', style: TextStyle(fontSize: 14, color: MFColors.txt3)))
+                ?  Center(child: Text('暂无通知', style: TextStyle(fontSize: 14, color: MFColors.txt3)))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                     itemCount: _items.length,
@@ -153,13 +153,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                             color: n.isRead ? MFColors.txt2 : MFColors.txt)),
                                   ),
                                   Text(_formatTime(n.createdAt),
-                                      style: const TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
+                                      style:  TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
                                 ],
                               ),
                               if (n.content.isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Text(n.content,
-                                    style: const TextStyle(fontSize: 12.5, color: MFColors.txt2, height: 1.6)),
+                                    style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, height: 1.6)),
                               ],
                             ],
                           ),

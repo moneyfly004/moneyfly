@@ -105,7 +105,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
             Text('请使用${widget.methodName}扫码支付', style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
             const SizedBox(height: 3),
             Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
-                style: const TextStyle(fontSize: 10, color: MFColors.txt3, letterSpacing: 1.4)),
+                style:  TextStyle(fontSize: 10, color: MFColors.txt3, letterSpacing: 1.4)),
             const SizedBox(height: 16),
             GestureDetector(
               onTap: () => setState(() => _zoom = !_zoom),
@@ -130,10 +130,10 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
               ),
             ),
             const SizedBox(height: 6),
-            const Text('点按二维码可放大', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+             Text('点按二维码可放大', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
             const SizedBox(height: 12),
             Text.rich(TextSpan(children: [
-              const TextSpan(text: '¥', style: TextStyle(fontSize: 15, color: MFColors.txt2)),
+               TextSpan(text: '¥', style: TextStyle(fontSize: 15, color: MFColors.txt2)),
               TextSpan(text: widget.amount.toStringAsFixed(1),
                   style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
             ])),
@@ -150,9 +150,9 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text('订单号 ${widget.orderNo}',
-                      style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
+                      style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
                   const SizedBox(width: 5),
-                  const Icon(Icons.copy, size: 12, color: MFColors.txt3),
+                   Icon(Icons.copy, size: 12, color: MFColors.txt3),
                 ],
               ),
             ),
@@ -165,7 +165,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                       child: CircularProgressIndicator(strokeWidth: 2, color: MFColors.brandLight)),
                   const SizedBox(width: 8),
                   Text('等待支付 $_clock，支付成功后自动开通套餐…',
-                      style: const TextStyle(fontSize: 12, color: MFColors.txt2)),
+                      style:  TextStyle(fontSize: 12, color: MFColors.txt2)),
                 ],
               )
             else
@@ -178,7 +178,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: MFColors.txt2,
-                      side: const BorderSide(color: MFColors.line2),
+                      side:  BorderSide(color: MFColors.line2),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),

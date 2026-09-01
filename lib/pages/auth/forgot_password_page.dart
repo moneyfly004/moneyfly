@@ -110,7 +110,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               // 步骤条
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   _Step(done: true, no: '✓', label: '验证身份'),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 10),
@@ -136,7 +136,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                               border: Border.all(color: MFColors.line2),
                             ),
                             child: Text('${_countdown}s 后重发',
-                                style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
+                                style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
                           )
                         : GestureDetector(
                             onTap: _sending ? null : _sendCode,
@@ -157,7 +157,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               const SizedBox(height: 12),
               _field('确认新密码', _confirm, hint: '再次输入新密码', obscure: _obscure),
               const SizedBox(height: 14),
-              const Text('🔒 验证码将发送到注册邮箱，5 分钟内有效；重置成功后请使用新密码登录。',
+               Text('🔒 验证码将发送到注册邮箱，5 分钟内有效；重置成功后请使用新密码登录。',
                   style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.7)),
               const SizedBox(height: 22),
               MFPrimaryButton(label: '重置密码', loading: _loading, onPressed: _loading ? null : _reset),
@@ -175,7 +175,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 7),
-          child: Text(label, style: const TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
+          child: Text(label, style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
         ),
         Row(
           children: [
@@ -183,7 +183,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               child: TextField(
                 controller: c,
                 obscureText: obscure,
-                style: const TextStyle(color: MFColors.txt, fontSize: 15),
+                style:  TextStyle(color: MFColors.txt, fontSize: 15),
                 decoration: InputDecoration(hintText: hint),
               ),
             ),

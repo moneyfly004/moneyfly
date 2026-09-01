@@ -8,6 +8,7 @@ import '../../core/proxy/proxy_core.dart';
 import '../../core/services/speed_tester.dart';
 import '../../core/services/subscription_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/country_flag.dart';
 
 /// 节点列表（设计稿 03）：自动选优条 + 分组 + 延迟徽标 + 真实测速
 class NodesPage extends StatefulWidget {
@@ -118,12 +119,12 @@ class _NodesPageState extends State<NodesPage> {
                             if (mounted) setState(() => _query = v.trim());
                           });
                         },
-                        style: const TextStyle(color: MFColors.txt, fontSize: 13.5),
+                        style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
                         decoration: InputDecoration(
                           hintText: '搜索节点 / 地区 / 协议',
-                          hintStyle: const TextStyle(fontSize: 13, color: MFColors.txt3),
+                          hintStyle:  TextStyle(fontSize: 13, color: MFColors.txt3),
                           border: InputBorder.none,
-                          prefixIcon: const Icon(Icons.search, size: 17, color: MFColors.txt3),
+                          prefixIcon:  Icon(Icons.search, size: 17, color: MFColors.txt3),
                           suffixIcon: _query.isEmpty
                               ? null
                               : GestureDetector(
@@ -131,7 +132,7 @@ class _NodesPageState extends State<NodesPage> {
                                     _debounce?.cancel();
                                     setState(() => _query = '');
                                   },
-                                  child: const Icon(Icons.close, size: 16, color: MFColors.txt3),
+                                  child:  Icon(Icons.close, size: 16, color: MFColors.txt3),
                                 ),
                         ),
                       ),
@@ -206,7 +207,7 @@ class _NodesPageState extends State<NodesPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text('暂无节点', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                           Text('暂无节点', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                           const SizedBox(height: 10),
                           GestureDetector(
                             onTap: () => _load(force: true),
@@ -261,7 +262,7 @@ class _NodesPageState extends State<NodesPage> {
               height: 34,
               decoration: BoxDecoration(color: const Color(0xFF1B2233), borderRadius: BorderRadius.circular(11)),
               alignment: Alignment.center,
-              child: Text(n.flag, style: const TextStyle(fontSize: 17)),
+              child: CountryFlag(n.countryCode, size: 17),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -272,7 +273,7 @@ class _NodesPageState extends State<NodesPage> {
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
                   Text('${n.type} · ${n.port}',
-                      style: const TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
+                      style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                   if (isCurrent) ...[
                     const SizedBox(height: 2),
                     const Text('✨ 已选中', style: TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
@@ -343,10 +344,10 @@ class _NodeListView extends StatelessWidget {
                 Text(regionFlag(code), style: const TextStyle(fontSize: 13)),
                 const SizedBox(width: 7),
                 Text(regionName(code),
-                    style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                    style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
                 const Spacer(),
                 Text('${groups[code]!.length} 个节点',
-                    style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
+                    style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
               ],
             ),
           );

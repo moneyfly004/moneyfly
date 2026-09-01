@@ -11,12 +11,14 @@ import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
+import top.moneyfly.app.vpn.MoneyFlyVpnService
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "top.moneyfly/vpn_permissions"
+        private const val CORE_CHANNEL = "top.moneyfly/vpn_core"
         private const val REQ_VPN = 1001
         private const val REQ_NOTIFY = 1002
         private const val REQ_BATTERY = 1003
@@ -41,6 +43,38 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // 核心控制通道：启动/停止 VPN（sing-box 内核由 VpnService 托管）
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CORE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "startVpn" -> {
+                        val config = call.argument<String>("config")
+                        if (config.isNullOrEmpty()) {
+                            result.error("no_config", "缺少配置", null)
+                            return@setMethodCallHandler
+                        }
+                        val intent = Intent(this, MoneyFlyVpnService::class.java).apply {
+                            action = MoneyFlyVpnService.ACTION_START
+                            putExtra(MoneyFlyVpnService.EXTRA_CONFIG, config)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(true)
+                    }
+                    "stopVpn" -> {
+                        startService(Intent(this, MoneyFlyVpnService::class.java).apply {
+                            action = MoneyFlyVpnService.ACTION_STOP
+                        })
+                        result.success(true)
+                    }
+                    "isVpnRunning" -> result.success(MoneyFlyVpnService.isRunning)
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     // ---------- VPN ----------

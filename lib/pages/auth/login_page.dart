@@ -103,7 +103,7 @@ class _LoginPageState extends State<LoginPage> {
                     style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 1.6)),
               ),
               const SizedBox(height: 6),
-              const Center(
+               Center(
                 child: Text('极速 · 稳定 · 全球畅连',
                     style: TextStyle(fontSize: 12.5, color: MFColors.txt3, letterSpacing: 3)),
               ),
@@ -132,7 +132,7 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Text('自动登录', style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+                   Text('自动登录', style: TextStyle(fontSize: 13, color: MFColors.txt2)),
                   const Spacer(),
                   Switch(
                     value: _autoLogin,
@@ -152,7 +152,7 @@ class _LoginPageState extends State<LoginPage> {
                   GestureDetector(
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const RegisterPage())),
-                    child: const Text.rich(TextSpan(children: [
+                    child: Text.rich(TextSpan(children: [
                       TextSpan(text: '还没有账号？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
                       TextSpan(text: '注册', style: TextStyle(fontSize: 13.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                     ])),
@@ -161,7 +161,7 @@ class _LoginPageState extends State<LoginPage> {
                   GestureDetector(
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const ForgotPasswordPage())),
-                    child: const Text('忘记密码', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+                    child:  Text('忘记密码', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
                   ),
                 ],
               ),
@@ -200,12 +200,12 @@ class _Field extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 7),
-          child: Text(label, style: const TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
+          child: Text(label, style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
         ),
         TextField(
           controller: controller,
           obscureText: obscure,
-          style: const TextStyle(color: MFColors.txt, fontSize: 15),
+          style:  TextStyle(color: MFColors.txt, fontSize: 15),
           textInputAction: action,
           onSubmitted: onSubmitted,
           decoration: InputDecoration(hintText: hint, suffixIcon: trailing),

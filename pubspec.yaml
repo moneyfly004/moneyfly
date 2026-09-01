@@ -43,6 +43,7 @@ dependencies:
   yaml: ^3.1.2
   device_info_plus: ^11.1.0
   package_info_plus: ^8.1.1
+  path_provider: ^2.1.4
   go_router: ^14.6.0
 
 
@@ -71,6 +72,15 @@ flutter:
 
   assets:
     - assets/moneyfly-logo.png
+    # 智能模式规则集（内置，避免运行时依赖被墙的远程地址）
+    - assets/rules/geoip-cn.srs
+    - assets/rules/geosite-cn.srs
+    # 国旗图片（Windows 上 emoji 国旗显示为字母，用图片兜底）
+    - assets/flags/
+    # sing-box 内核二进制（Android 按 ABI 内置，运行时解压执行；目录资产不递归，需逐个声明）
+    - assets/sing-box/arm64-v8a/sing-box
+    - assets/sing-box/armeabi-v7a/sing-box
+    - assets/sing-box/x86_64/sing-box
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

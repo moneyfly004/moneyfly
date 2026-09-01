@@ -28,6 +28,7 @@ on:
 
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
+  SING_BOX_VERSION: '1.14.0' # 代理内核版本（随配置格式同步升级）
 
 jobs:
   # ================= Android：多 ABI 分版本 =================
@@ -102,6 +103,16 @@ jobs:
       - name: 构建 Windows release
         run: flutter build windows --release
 
+      # ---- 内置 sing-box 内核（App 启动时从 exe 同目录加载）----
+      - name: 下载并内置 sing-box 内核
+        shell: bash
+        run: |
+          RELEASE_DIR="build/windows/x64/runner/Release"
+          curl -fL --max-time 300 -o sing-box.zip \
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-windows-amd64.zip"
+          unzip -o sing-box.zip -d sb && cp sb/sing-box.exe "$RELEASE_DIR/sing-box.exe"
+          ls -la "$RELEASE_DIR/sing-box.exe"
+
       - name: 安装 Inno Setup
         run: choco install innosetup --no-progress -y
 
@@ -163,6 +174,24 @@ jobs:
 
       - name: 校验双架构
         run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
+
+      # ---- 内置 sing-box 内核（universal 合并后放入 Contents/MacOS，
+      #      thin_app.sh 会按目标架构自动裁剪）----
+      - name: 下载并内置 sing-box 内核
+        run: |
+          APP="build/macos/Build/Products/Release/MoneyFly.app"
+          mkdir -p sb && cd sb
+          curl -fL --max-time 300 -o sb-arm64.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
+          curl -fL --max-time 300 -o sb-amd64.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-amd64.tar.gz"
+          tar -xzf sb-arm64.tar.gz && mv sing-box sing-box-arm64
+          tar -xzf sb-amd64.tar.gz && mv sing-box sing-box-amd64
+          lipo -create sing-box-arm64 sing-box-amd64 -output sing-box
+          cd ..
+          cp sb/sing-box "$APP/Contents/MacOS/sing-box"
+          chmod +x "$APP/Contents/MacOS/sing-box"
+          lipo "$APP/Contents/MacOS/sing-box" -verify_arch arm64 x86_64
 
       - name: 生成三个版本 DMG（Apple 芯片 / Intel / 通用）
         run: |

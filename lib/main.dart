@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
 import 'core/services/auth_service.dart';
+import 'core/services/crash_logger.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
 import 'pages/auth/login_page.dart';
@@ -13,6 +14,7 @@ import 'pages/nodes/nodes_page.dart';
 import 'pages/package/package_page.dart';
 import 'pages/profile/profile_page.dart';
 import 'theme/app_theme.dart';
+import 'theme/theme_controller.dart';
 
 /// 全局会话状态
 class SessionState extends ChangeNotifier {
@@ -58,11 +60,14 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
     _session.restore();
     // 启动即读取当前版本（供检查更新比对）
     UpdateService.instance.init();
-    // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）
+    // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）+ 恢复主题
     SettingsStore.instance
         .load()
         .then(ConnectionController.instance.applySettings)
         .catchError((_) {});
+    ThemeController.instance.restore();
+    // 崩溃日志（设置开关控制）
+    CrashLogger.init();
     // 会话失效（refresh 失败）→ 强制回登录页
     ApiClient.instance.onSessionExpired(() {
       AuthService.instance.logout();
@@ -76,14 +81,17 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
       providers: [
         ChangeNotifierProvider.value(value: _session),
         ChangeNotifierProvider.value(value: ConnectionController.instance),
+        ChangeNotifierProvider.value(value: ThemeController.instance),
       ],
-      child: MaterialApp(
-        title: 'MoneyFly',
-        debugShowCheckedModeBanner: false,
-        theme: buildMoneyFlyTheme(),
-        darkTheme: buildMoneyFlyTheme(),
-        themeMode: ThemeMode.dark,
-        home: const RootShell(),
+      child: Consumer<ThemeController>(
+        builder: (context, themeCtrl, _) => MaterialApp(
+          title: 'MoneyFly',
+          debugShowCheckedModeBanner: false,
+          theme: buildMoneyFlyTheme(brightness: Brightness.light),
+          darkTheme: buildMoneyFlyTheme(brightness: Brightness.dark),
+          themeMode: themeCtrl.mode,
+          home: const RootShell(),
+        ),
       ),
     );
   }
@@ -142,7 +150,7 @@ class _MainShellState extends State<MainShell> {
         ],
       ),
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
+        decoration:  BoxDecoration(
           color: MFColors.bg,
           border: Border(top: BorderSide(color: MFColors.line)),
         ),

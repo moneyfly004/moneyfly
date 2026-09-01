@@ -116,7 +116,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-            Text(email.isEmpty ? '未登录邮箱' : email, style: const TextStyle(fontSize: 12, color: MFColors.txt3)),
+            Text(email.isEmpty ? '未登录邮箱' : email, style:  TextStyle(fontSize: 12, color: MFColors.txt3)),
           ],
         ),
         const Spacer(),
@@ -125,7 +125,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           children: [
             Text('¥${balance.toStringAsFixed(2)}',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
-            const Text('账户余额', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+             Text('账户余额', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
           ],
         ),
       ],
@@ -147,7 +147,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           const SizedBox(width: 9),
           Expanded(
             child: Text('套餐还剩 $remaining 天，请及时续费避免中断',
-                style: const TextStyle(fontSize: 12, color: MFColors.txt)),
+                style:  TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
           GestureDetector(
             onTap: () => mainTabIndex.value = 2,
@@ -235,10 +235,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(color: const Color(0xFF232B3D), borderRadius: BorderRadius.circular(12)),
-                      child: Text(badge, style: const TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
+                      child: Text(badge, style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                     ),
                   const SizedBox(width: 4),
-                  const Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
+                   Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
                 ],
               ),
             ),
@@ -255,7 +255,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           builder: (_) => AlertDialog(
             backgroundColor: MFColors.card2,
             title: const Text('退出登录', style: TextStyle(fontSize: 16)),
-            content: const Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+            content:  Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
               TextButton(
@@ -292,7 +292,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: const Text('关于 MoneyFly'),
-        content: const Text('MoneyFly v1.0.0\n\n极速 · 稳定 · 全球畅连\ndy.moneyfly.top',
+        content:  Text('MoneyFly v1.0.0\n\n极速 · 稳定 · 全球畅连\ndy.moneyfly.top',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('好的'))],
@@ -316,7 +316,7 @@ class _SubItem extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
           const SizedBox(height: 3),
-          Text(label, style: const TextStyle(fontSize: 10, color: MFColors.txt3)),
+          Text(label, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
         ],
       ),
     );

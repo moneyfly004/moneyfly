@@ -138,11 +138,19 @@ class SingBoxConfigBuilder {
   }
 
   /// 生成完整配置
+  /// [tunMode] 'auto' = TUN + 系统代理双通道 / 'force' = 仅 TUN / 'off' = 仅系统代理
+  /// [bypassLan] true = 局域网流量直连（默认）
+  /// [ruleSetDir] 本地规则集目录（内置 geoip/geosite .srs 的落盘路径）；
+  ///              为空时回退远程地址（开发/降级用）
   static Map<String, dynamic> build({
     required List<ProxyNode> nodes,
     required String selectedTag,
     required bool smartMode,
     String dns = '223.5.5.5',
+    String tunMode = 'auto',
+    bool bypassLan = true,
+    String tunStack = 'system', // 桌面端 system；Android 需 gvisor
+    String? ruleSetDir,
   }) {
     final initialMode = smartMode ? 'Rule' : 'Global';
     final outbounds = buildOutbounds(nodes);
@@ -153,32 +161,48 @@ class SingBoxConfigBuilder {
       'outbounds': [for (final n in nodes) n.tag, 'direct'],
       'default': nodes.any((n) => n.tag == selectedTag) ? selectedTag : (nodes.isNotEmpty ? nodes.first.tag : 'direct'),
     });
+    // 智能模式规则集：优先用内置本地文件（随安装包分发，不受网络墙影响）；
+    // ruleSetDir 为空时回退远程（开发环境未内置规则的情况）
+    Map<String, dynamic> ruleSet(String tag, String file, String remoteUrl) {
+      if (ruleSetDir != null) {
+        return {
+          'tag': tag,
+          'type': 'local',
+          'format': 'binary',
+          'path': '$ruleSetDir/$file',
+        };
+      }
+      return {
+        'tag': tag,
+        'type': 'remote',
+        'format': 'binary',
+        'url': remoteUrl,
+        'download_detour': 'direct',
+      };
+    }
+
     final ruleSets = <Map<String, dynamic>>[
-      {
-        'tag': 'geoip-cn',
-        'type': 'remote',
-        'format': 'binary',
-        'url': 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs',
-        'download_detour': 'direct',
-      },
-      {
-        'tag': 'geosite-cn',
-        'type': 'remote',
-        'format': 'binary',
-        'url': 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs',
-        'download_detour': 'direct',
-      },
+      ruleSet('geoip-cn', 'geoip-cn.srs',
+          'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs'),
+      ruleSet('geosite-cn', 'geosite-cn.srs',
+          'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs'),
     ];
+    // 回环地址始终直连（内核 API/本机服务必须可达）；
+    // 局域网段按 bypassLan 决定是否直连
+    final lanCidrs = <String>['127.0.0.0/8'];
+    if (bypassLan) {
+      lanCidrs.addAll(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']);
+    }
     // 智能/全局两套规则内置同一份配置，用 clash_mode 条件区分：
     // PATCH /configs {"mode":"Global"|"Rule"} 即可无缝切换（sing-box clash-api 唯一支持热更新的字段）
     final rules = <Map<String, dynamic>>[
       // 全局模式：除本地外全部走代理
-      {'clash_mode': 'Global', 'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
+      {'clash_mode': 'Global', 'ip_cidr': lanCidrs, 'outbound': 'direct'},
       {'clash_mode': 'Global', 'action': 'route', 'outbound': 'select'},
       // 智能模式（Rule）：国内直连 + UDP 走代理
       {'clash_mode': 'Rule', 'rule_set': ['geoip-cn'], 'outbound': 'direct'},
       {'clash_mode': 'Rule', 'rule_set': ['geosite-cn'], 'outbound': 'direct'},
-      {'clash_mode': 'Rule', 'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
+      {'clash_mode': 'Rule', 'ip_cidr': lanCidrs, 'outbound': 'direct'},
       {'clash_mode': 'Rule', 'network': ['udp'], 'outbound': 'select'},
     ];
     return {
@@ -193,8 +217,11 @@ class SingBoxConfigBuilder {
         'final': 'dns-main',
       },
       'inbounds': [
-        {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080, 'set_system_proxy': true},
-        {'type': 'tun', 'tag': 'tun-in', 'auto_route': true, 'strict_route': false, 'stack': 'system'},
+        // 设置 → TUN 虚拟网卡：off=仅系统代理 / force=仅 TUN / auto=双通道
+        if (tunMode != 'force')
+          {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080, 'set_system_proxy': true},
+        if (tunMode != 'off')
+          {'type': 'tun', 'tag': 'tun-in', 'auto_route': true, 'strict_route': false, 'stack': tunStack},
       ],
       'outbounds': outbounds,
       'route': {

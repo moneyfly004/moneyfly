@@ -87,7 +87,7 @@ class _OrdersPageState extends State<OrdersPage> {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: const Text('取消订单', style: TextStyle(fontSize: 16)),
-        content: const Text('确定取消这笔待支付订单吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        content:  Text('确定取消这笔待支付订单吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('再想想')),
           TextButton(
@@ -128,9 +128,9 @@ class _OrdersPageState extends State<OrdersPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text('暂无订单', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                         Text('暂无订单', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                         const SizedBox(height: 8),
-                        const Text('购买套餐后订单会显示在这里', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                         Text('购买套餐后订单会显示在这里', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                       ],
                     ),
                   )
@@ -184,12 +184,12 @@ class _OrdersPageState extends State<OrdersPage> {
                   style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
               const Spacer(),
               Text(o.orderNo,
-                  style: const TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
+                  style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
             ],
           ),
           if (o.createdAt.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text('下单时间 ${o.createdAt}', style: const TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+            Text('下单时间 ${o.createdAt}', style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
           ],
           if (o.status == 'pending') ...[
             const SizedBox(height: 12),

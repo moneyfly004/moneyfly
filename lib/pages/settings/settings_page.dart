@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/update_service.dart';
+import '../../main.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/theme_controller.dart';
 import '../auth/change_password_page.dart';
 
 /// 设置页（设计稿 09）：完整清单 + 持久化
@@ -38,7 +43,37 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _s[key] = value);
     // 连接相关设置即时生效到连接控制器（自动测速/断线重连/默认模式）
     ConnectionController.instance.applySettings(_s);
+    if (key == 'crashReport') CrashLogger.setEnabled(value == true);
     await SettingsStore.instance.save(_s);
+  }
+
+  /// 退出登录（二次确认后清会话回登录页）
+  Future<void> _logout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: const Text('退出登录', style: TextStyle(fontSize: 16)),
+        content: Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('退出', style: TextStyle(color: MFColors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await AuthService.instance.logout();
+    if (!mounted) return;
+    context.read<SessionState>().setLoggedIn(false);
+  }
+
+  /// 打开官网页面（用户协议 / 隐私政策）
+  Future<void> _openUrl(String url) async {
+    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!ok && mounted) _toast('无法打开链接，请检查网络后重试');
   }
 
   @override
@@ -54,15 +89,15 @@ class _SettingsPageState extends State<SettingsPage> {
           TextButton(
             onPressed: () async {
               await SettingsStore.instance.save(const {});
-              if (mounted) {
-                setState(() => _s = {});
-                SettingsStore.instance.load().then((v) {
-                  if (mounted) setState(() => _s = v);
-                });
-              }
+              final defaults = await SettingsStore.instance.load();
+              if (!mounted) return;
+              setState(() => _s = defaults);
+              // 默认值同步生效到连接控制器与主题
+              ConnectionController.instance.applySettings(defaults);
+              ThemeController.instance.setTheme(defaults['theme']?.toString() ?? 'system');
               _toast('已恢复默认设置');
             },
-            child: const Text('恢复默认', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+            child: Text('恢复默认', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
           ),
         ],
       ),
@@ -81,8 +116,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: () => _picker(['15 分钟', '30 分钟', '60 分钟'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
             _row(icon: '🌐', title: 'DNS 服务器', value: _s['dns']?.toString() ?? '223.5.5.5',
                 onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
-            _row(icon: '📡', title: '协议过滤', value: _s['protocolFilter'] == 'all' ? '全部协议' : _s['protocolFilter'].toString(),
-                onTap: () => _picker(['全部协议', '仅 vless', '仅 trojan'], (v) => _set('protocolFilter', v))),
+            _row(icon: '📡', title: '协议过滤',
+                value: switch (_s['protocolFilter']?.toString()) {
+                  'vless' => '仅 vless',
+                  'trojan' => '仅 trojan',
+                  _ => '全部协议',
+                },
+                onTap: () => _picker(['全部协议', '仅 vless', '仅 trojan'], (v) => _set('protocolFilter',
+                    v == '仅 vless' ? 'vless' : (v == '仅 trojan' ? 'trojan' : 'all')))),
             _section('模式'),
             _row(icon: '🎯', title: '默认模式',
                 trailing: _seg2(
@@ -92,8 +133,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   onRight: () => _set('defaultMode', 'global'),
                 )),
             _section('网络'),
-            _row(icon: '🚀', title: 'TUN 虚拟网卡', value: _s['tunMode'] == 'off' ? '关闭' : '自动',
-                onTap: () => _picker(['自动', '强制', '关闭'], (v) => _set('tunMode', v))),
+            _row(icon: '🚀', title: 'TUN 虚拟网卡',
+                value: switch (_s['tunMode']?.toString()) {
+                  'off' => '关闭',
+                  'force' => '强制',
+                  _ => '自动',
+                },
+                onTap: () => _picker(['自动', '强制', '关闭'], (v) => _set('tunMode',
+                    v == '强制' ? 'force' : (v == '关闭' ? 'off' : 'auto')))),
             _row(icon: '🏠', title: '绕过局域网流量',
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _section('外观'),
@@ -103,26 +150,30 @@ class _SettingsPageState extends State<SettingsPage> {
                   'dark' => '深色',
                   _ => '跟随系统',
                 },
-                onTap: () => _picker(['跟随系统', '深色', '浅色'], (v) => _set('theme', v == '深色' ? 'dark' : (v == '浅色' ? 'light' : 'system')))),
+                onTap: () => _picker(['跟随系统', '深色', '浅色'], (v) {
+                  final t = v == '深色' ? 'dark' : (v == '浅色' ? 'light' : 'system');
+                  ThemeController.instance.setTheme(t); // 立即生效
+                  _set('theme', t);
+                })),
             _row(icon: '🌏', title: '语言', value: '简体中文',
                 onTap: () => _toast('语言：简体中文（English 后续版本支持）')),
             _section('隐私'),
-            _row(icon: '🔔', title: '允许通知', desc: '套餐到期 / 连接提醒',
+            _row(icon: '🔔', title: '允许通知', desc: '套餐到期横幅提醒（系统通知后续版本）',
                 trailing: _switch(_s['notify'] == true, (v) => _set('notify', v))),
-            _row(icon: '🩹', title: '崩溃日志上报',
+            _row(icon: '🩹', title: '崩溃日志上报', desc: '本地记录崩溃日志',
                 trailing: _switch(_s['crashReport'] == true, (v) => _set('crashReport', v))),
-            _row(icon: '📊', title: '匿名使用统计',
+            _row(icon: '📊', title: '匿名使用统计', desc: '预留（后续版本接入）',
                 trailing: _switch(_s['analytics'] == true, (v) => _set('analytics', v))),
             _section('账号'),
             _row(icon: '🔑', title: '修改密码', desc: '需当前密码', onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
-            _row(icon: '⏻', title: '退出登录', danger: true, onTap: () => _toast('请到「我的」页退出登录')),
+            _row(icon: '⏻', title: '退出登录', danger: true, onTap: _logout),
             _section('关于'),
             _row(icon: '🔄', title: '检查更新', value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
-            _row(icon: '📄', title: '用户协议', onTap: () => _toast('《用户协议》将在官网公布')),
-            _row(icon: '🛡️', title: '隐私政策', onTap: () => _toast('《隐私政策》将在官网公布')),
+            _row(icon: '📄', title: '用户协议', onTap: () => _openUrl('https://dy.moneyfly.top/terms')),
+            _row(icon: '🛡️', title: '隐私政策', onTap: () => _openUrl('https://dy.moneyfly.top/privacy')),
             const SizedBox(height: 12),
-            const Center(
+             Center(
               child: Text('MoneyFly v1.0.0 · dy.moneyfly.top',
                   style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
             ),
@@ -136,7 +187,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
       child: Text(title,
-          style: const TextStyle(fontSize: 11, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 2)),
+          style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 2)),
     );
   }
 
@@ -178,15 +229,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   Text(title,
                       style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500,
                           color: danger ? MFColors.red : MFColors.txt)),
-                  if (desc != null) Text(desc, style: const TextStyle(fontSize: 10, color: MFColors.txt3)),
+                  if (desc != null) Text(desc, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
                 ],
               ),
             ),
             if (value != null)
-              Text(value, style: const TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
+              Text(value, style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
             if (value != null || onTap != null) ...[
               const SizedBox(width: 4),
-              const Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),
+               Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),
             ],
             ?trailing,
           ],
@@ -264,7 +315,7 @@ class _SettingsPageState extends State<SettingsPage> {
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         content: Text(
           '当前版本 v${UpdateInfo.currentVersion}\n最新版本 v${info.latestVersion}${info.sizeText != null ? ' · ${info.sizeText}' : ''}\n\n请下载最新安装包体验新功能。',
-          style: const TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7),
+          style:  TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7),
         ),
         actions: [
           if (!info.forced)
@@ -297,7 +348,7 @@ class _SettingsPageState extends State<SettingsPage> {
           for (final o in options)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(context, o),
-              child: Text(o, style: const TextStyle(fontSize: 13.5, color: MFColors.txt)),
+              child: Text(o, style:  TextStyle(fontSize: 13.5, color: MFColors.txt)),
             ),
         ],
       ),

@@ -9,8 +9,10 @@ import '../../core/services/speed_tester.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/api/api_client.dart';
+import '../../core/services/geo_lookup.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/country_flag.dart';
 import '../settings/settings_page.dart';
 
 /// 首页 · 连接页（设计稿 02）
@@ -77,6 +79,8 @@ class _HomePageState extends State<HomePage>
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       await conn.loadNodes(nodes);
+      // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次）
+      unawaited(conn.autoConnectIfEnabled());
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
@@ -163,7 +167,7 @@ class _HomePageState extends State<HomePage>
         children: [
           const Text('🛒', style: TextStyle(fontSize: 16)),
           const SizedBox(width: 9),
-          const Expanded(
+           Expanded(
             child: Text('尚未开通套餐，开通后即可畅连全球节点',
                 style: TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
@@ -195,7 +199,7 @@ class _HomePageState extends State<HomePage>
             ),
           ),
           const SizedBox(width: 10),
-          const Column(
+           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('MoneyFly', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
@@ -204,12 +208,12 @@ class _HomePageState extends State<HomePage>
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.refresh, size: 20, color: MFColors.txt2),
+            icon:  Icon(Icons.refresh, size: 20, color: MFColors.txt2),
             tooltip: '刷新订阅',
             onPressed: _loadingNodes ? null : () => _ensureNodes(force: true),
           ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 20, color: MFColors.txt2),
+            icon:  Icon(Icons.settings_outlined, size: 20, color: MFColors.txt2),
             onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SettingsPage())),
           ),
@@ -307,7 +311,7 @@ class _HomePageState extends State<HomePage>
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(node.flag, style: const TextStyle(fontSize: 17)),
+                CountryFlag(node.countryCode, size: 17),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(node.tag,
@@ -330,8 +334,21 @@ class _HomePageState extends State<HomePage>
               ],
             )
           else
-            const Text('暂无节点 · 点击右上角刷新订阅',
+             Text('暂无节点 · 点击右上角刷新订阅',
                 style: TextStyle(fontSize: 13, color: MFColors.txt3)),
+          // 真实出口：连接后通过隧道 IP 定位实测（非节点名猜测）
+          if (connected && conn.realCountry != null) ...[
+            const SizedBox(height: 7),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CountryFlag(conn.realCountry, size: 13, rounded: true),
+                const SizedBox(width: 5),
+                Text('真实出口 · ${GeoLookupService.countryName(conn.realCountry)}',
+                    style: const TextStyle(fontSize: 11, color: MFColors.green)),
+              ],
+            ),
+          ],
           if (conn.error != null) ...[
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
@@ -420,7 +437,7 @@ class _HomePageState extends State<HomePage>
                       border: Border.all(color: MFColors.line)),
                   child: Row(
                     children: [
-                      Text(best?.flag ?? '🌐', style: const TextStyle(fontSize: 15)),
+                      CountryFlag(best?.countryCode, size: 15),
                       const SizedBox(width: 7),
                       Expanded(
                         child: Text(best?.tag ?? '暂无节点',
@@ -470,9 +487,9 @@ class _HomePageState extends State<HomePage>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(conn.autoTest ? '连接前自动测速 · 断线自动重选' : '自动测速已关闭',
-                  style: const TextStyle(fontSize: 10, color: MFColors.txt3)),
+                  style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
               Text('${conn.nodes.length} 节点${conn.lastSpeedTestTime != null ? ' · ${conn.lastSpeedTestTime} 测速' : ''}',
-                  style: const TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
+                  style:  TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
             ],
           ),
         ],
@@ -500,7 +517,7 @@ class _HomePageState extends State<HomePage>
           children: [
             const Text('快速切换国家', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
             const Spacer(),
-            const Text('点按即切换该国最优节点', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+             Text('点按即切换该国最优节点', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
           ],
         ),
         const SizedBox(height: 8),
@@ -513,16 +530,16 @@ class _HomePageState extends State<HomePage>
           childAspectRatio: 1.55,
           children: [
             // 自动最优
-            _regionTile(conn, '✨', '自动最优', conn.current?.latencyMs ?? -1, isAuto: true),
+            _regionTile(conn, null, '自动最优', conn.current?.latencyMs ?? -1, isAuto: true),
             for (final (code, name) in list)
-              _regionTile(conn, _flagOf(code), name, byCountry[code] ?? -1),
+              _regionTile(conn, code, name, byCountry[code] ?? -1),
           ],
         ),
       ],
     );
   }
 
-  Widget _regionTile(ConnectionController conn, String flag, String name, int latencyMs,
+  Widget _regionTile(ConnectionController conn, String? code, String name, int latencyMs,
       {bool isAuto = false}) {
     final active = isAuto
         ? conn.current != null && conn.current!.countryCode == null
@@ -549,7 +566,7 @@ class _HomePageState extends State<HomePage>
       },
       child: Container(
         decoration: BoxDecoration(
-          gradient: isAuto ? const LinearGradient(colors: [Color(0x40455FE9), MFColors.card]) : null,
+          gradient: isAuto ?  LinearGradient(colors: [Color(0x40455FE9), MFColors.card]) : null,
           color: isAuto ? null : MFColors.card,
           borderRadius: BorderRadius.circular(13),
           border: Border.all(color: active ? MFColors.brand.withValues(alpha: .8) : MFColors.line),
@@ -557,7 +574,10 @@ class _HomePageState extends State<HomePage>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(isAuto ? '✨' : flag, style: const TextStyle(fontSize: 17)),
+            if (isAuto)
+              const Text('✨', style: TextStyle(fontSize: 17))
+            else
+              CountryFlag(code, size: 17),
             const SizedBox(height: 2),
             Text(name,
                 style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
@@ -582,16 +602,6 @@ class _HomePageState extends State<HomePage>
         Expanded(child: _StatCard(label: '下行速率', value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
       ],
     );
-  }
-
-  static String _flagOf(String code) {
-    const flags = {
-      'HK': '🇭🇰', 'TW': '🇹🇼', 'JP': '🇯🇵', 'SG': '🇸🇬', 'KR': '🇰🇷',
-      'US': '🇺🇸', 'GB': '🇬🇧', 'DE': '🇩🇪', 'FR': '🇫🇷', 'AU': '🇦🇺',
-      'CA': '🇨🇦', 'RU': '🇷🇺', 'IN': '🇮🇳', 'TH': '🇹🇭', 'VN': '🇻🇳',
-      'NL': '🇳🇱', 'SE': '🇸🇪', 'AE': '🇦🇪',
-    };
-    return flags[code] ?? '🌐';
   }
 
   static String nameToCode(String name) {
@@ -655,12 +665,12 @@ class _StatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: MFColors.txt3, letterSpacing: .6)),
+          Text(label, style:  TextStyle(fontSize: 11, color: MFColors.txt3, letterSpacing: .6)),
           const SizedBox(height: 5),
           Text.rich(TextSpan(children: [
             TextSpan(text: value,
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: color, fontFamily: kNumFont)),
-            TextSpan(text: ' $unit', style: const TextStyle(fontSize: 11, color: MFColors.txt3)),
+            TextSpan(text: ' $unit', style:  TextStyle(fontSize: 11, color: MFColors.txt3)),
           ])),
         ],
       ),

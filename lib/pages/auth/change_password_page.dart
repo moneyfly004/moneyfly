@@ -64,7 +64,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('🔒 修改密码后，其他已登录设备将保持登录状态，下次登录请使用新密码。',
+               Text('🔒 修改密码后，其他已登录设备将保持登录状态，下次登录请使用新密码。',
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3, height: 1.7)),
               const SizedBox(height: 22),
               _field('当前密码', _old, hint: '请输入当前密码', obscure: _obscure),
@@ -87,12 +87,12 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 7),
-          child: Text(label, style: const TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
+          child: Text(label, style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
         ),
         TextField(
           controller: c,
           obscureText: obscure,
-          style: const TextStyle(color: MFColors.txt, fontSize: 15),
+          style:  TextStyle(color: MFColors.txt, fontSize: 15),
           decoration: InputDecoration(hintText: hint),
         ),
       ],

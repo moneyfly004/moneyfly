@@ -44,7 +44,7 @@ class _DevicesPageState extends State<DevicesPage> {
         backgroundColor: MFColors.card2,
         title: const Text('删除设备', style: TextStyle(fontSize: 16)),
         content: Text('确定删除「${device.displayName}」吗？\n删除后该设备将无法使用当前订阅连接。',
-            style: const TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+            style:  TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(
@@ -90,9 +90,9 @@ class _DevicesPageState extends State<DevicesPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text('暂无设备', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                         Text('暂无设备', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                         const SizedBox(height: 8),
-                        const Text('连接一次 VPN 后，这里会显示你的设备', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                         Text('连接一次 VPN 后，这里会显示你的设备', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                       ],
                     ),
                   )
@@ -135,7 +135,7 @@ class _DevicesPageState extends State<DevicesPage> {
                     const SizedBox(height: 2),
                     Text(
                       [d.osName, d.deviceModel].where((e) => e.isNotEmpty).join(' · '),
-                      style: const TextStyle(fontSize: 11, color: MFColors.txt3),
+                      style:  TextStyle(fontSize: 11, color: MFColors.txt3),
                     ),
                   ],
                 ),
@@ -188,8 +188,8 @@ class _DevicesPageState extends State<DevicesPage> {
   Widget _meta(String k, String v) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$k ', style: const TextStyle(fontSize: 10.5, color: MFColors.txt3)),
-          Text(v, style: const TextStyle(fontSize: 10.5, color: MFColors.txt2, fontFamily: kNumFont)),
+          Text('$k ', style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+          Text(v, style:  TextStyle(fontSize: 10.5, color: MFColors.txt2, fontFamily: kNumFont)),
         ],
       );
 }

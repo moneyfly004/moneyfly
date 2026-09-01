@@ -190,7 +190,7 @@ class _PackagePageState extends State<PackagePage> {
                   children: [
                     const Text('购买套餐', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 3),
-                    const Text('选择适合你的加速方案，付款后立即开通', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+                     Text('选择适合你的加速方案，付款后立即开通', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
                     const SizedBox(height: 18),
                     if (_plans.isNotEmpty) _buildPlans(),
                     if (_plans.isNotEmpty) ...[
@@ -200,17 +200,17 @@ class _PackagePageState extends State<PackagePage> {
                     const SizedBox(height: 14),
                     _buildCoupon(),
                     const SizedBox(height: 18),
-                    const Text('选择支付方式', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
+                     Text('选择支付方式', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
                     const SizedBox(height: 10),
                     if (_methods.isEmpty)
-                      const Padding(
+                       Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
                         child: Text('暂无可用的支付方式，请稍后再试', style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
                       )
                     else
                       for (var i = 0; i < _methods.length; i++) _buildMethod(i, _methods[i]),
                     const SizedBox(height: 10),
-                    const Text('💡 支付方式随官网设置实时同步：dy.moneyfly.top 后台启用的支付渠道会自动出现在这里，默认支付宝。',
+                     Text('💡 支付方式随官网设置实时同步：dy.moneyfly.top 后台启用的支付渠道会自动出现在这里，默认支付宝。',
                         style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.6)),
                     const SizedBox(height: 20),
                     Container(
@@ -221,15 +221,15 @@ class _PackagePageState extends State<PackagePage> {
                       child: Row(
                         children: [
                           Text('合计（${_plans.isEmpty ? '' : _plans[_selectedPlan ?? 0].name}）',
-                              style: const TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+                              style:  TextStyle(fontSize: 12.5, color: MFColors.txt2)),
                           const Spacer(),
                           if (_discountedAmount != null && _discountedAmount != _plans[_selectedPlan ?? 0].price) ...[
                             Text('¥${_plans[_selectedPlan ?? 0].price.toStringAsFixed(1)}',
-                                style: const TextStyle(fontSize: 13, color: MFColors.txt3, decoration: TextDecoration.lineThrough)),
+                                style:  TextStyle(fontSize: 13, color: MFColors.txt3, decoration: TextDecoration.lineThrough)),
                             const SizedBox(width: 6),
                           ],
                           Text.rich(TextSpan(children: [
-                            const TextSpan(text: '¥', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                             TextSpan(text: '¥', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                             TextSpan(text: _amount.toStringAsFixed(1),
                                 style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
                           ])),
@@ -266,7 +266,7 @@ class _PackagePageState extends State<PackagePage> {
                       Container(
                         decoration: BoxDecoration(
                           gradient: _selectedPlan == i
-                              ? const LinearGradient(colors: [Color(0x33455FE9), MFColors.card])
+                              ?  LinearGradient(colors: [Color(0x33455FE9), MFColors.card])
                               : null,
                           color: _selectedPlan == i ? null : MFColors.card,
                           borderRadius: BorderRadius.circular(17),
@@ -288,11 +288,11 @@ class _PackagePageState extends State<PackagePage> {
                                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont,
                                       color: _selectedPlan == i ? MFColors.brandLight : MFColors.txt)),
                               TextSpan(text: '/${_plans[i].durationDays >= 365 ? '年' : (_plans[i].durationDays >= 90 ? '季' : '月')}',
-                                  style: const TextStyle(fontSize: 11, color: MFColors.txt3)),
+                                  style:  TextStyle(fontSize: 11, color: MFColors.txt3)),
                             ])),
                             const SizedBox(height: 5),
                             Text('${_plans[i].durationDays} 天 · ${_plans[i].deviceLimit} 台',
-                                style: const TextStyle(fontSize: 10, color: MFColors.txt3)),
+                                style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
                           ],
                         ),
                       ),
@@ -345,7 +345,7 @@ class _PackagePageState extends State<PackagePage> {
             Expanded(
               child: TextField(
                 controller: _coupon,
-                style: const TextStyle(color: MFColors.txt, fontSize: 13.5),
+                style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
                 decoration: InputDecoration(
                   hintText: '优惠码（选填）',
                   contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
@@ -408,7 +408,7 @@ class _PackagePageState extends State<PackagePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text(sub, style: const TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+                  Text(sub, style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
                 ],
               ),
             ),
@@ -444,7 +444,7 @@ class _DetailItem extends StatelessWidget {
         children: [
           Text(value, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
           const SizedBox(height: 3),
-          Text(label, style: const TextStyle(fontSize: 10, color: MFColors.txt3)),
+          Text(label, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
         ],
       ),
     );
