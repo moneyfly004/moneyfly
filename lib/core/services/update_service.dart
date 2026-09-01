@@ -56,6 +56,7 @@ class UpdateService {
     try {
       final info = await PackageInfo.fromPlatform();
       UpdateInfo.currentVersion = info.version;
+      ApiClient.userAgent = 'MoneyFly/${info.version}';
     } catch (_) {}
   }
 

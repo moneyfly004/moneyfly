@@ -19,7 +19,7 @@ class ApiClient {
       connectTimeout: const Duration(seconds: 12),
       receiveTimeout: const Duration(seconds: 25),
       sendTimeout: const Duration(seconds: 15),
-      headers: {'Accept': 'application/json'},
+      headers: {'Accept': 'application/json', 'User-Agent': userAgent},
     ));
     if (debugDio != null) return; // 测试环境：跳过 JWT 拦截器
     _dio.interceptors.add(
@@ -68,6 +68,10 @@ class ApiClient {
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
+
+  /// 客户端 User-Agent：MoneyFly/<版本>（后端据此识别为 moneyfly 客户端，
+  /// 设备列表/登录历史会显示 MoneyFly；由 UpdateService.init 在启动时更新）
+  static String userAgent = 'MoneyFly/0.0.1';
 
   /// 测试开关：false 时 token 存内存（避免 flutter test 无插件实现）
   static bool persistTokens = true;
@@ -171,12 +175,10 @@ class ApiClient {
   }
 
   /// 拉取订阅原文（非 JSON）
-  /// 实测：订阅接口对浏览器 UA 返回空 200，必须用客户端/Clash UA
+  /// 订阅 URL 已带 type=clash 参数 → 后端按参数返回 Clash YAML；
+  /// UA 用 MoneyFly/<版本>（后端原生识别 moneyfly 客户端）
   Future<String> fetchText(String url) async {
-    final r = await _dio.getUri(
-      Uri.parse(url),
-      options: Options(headers: {'User-Agent': 'clash.meta'}),
-    );
+    final r = await _dio.getUri(Uri.parse(url));
     return r.data?.toString() ?? '';
   }
 
