@@ -224,19 +224,28 @@ jobs:
           APP="build/macos/Build/Products/Release/MoneyFly.app"
           mkdir -p dist
 
-          # 通用版
-          codesign --force --deep -s - "$APP"
-          hdiutil create -volname MoneyFly -srcfolder "$APP" -ov -format UDZO "dist/MoneyFly-macos-universal-$V.dmg"
+          # 打包辅助：把 App 放入含「应用程序」快捷方式的暂存目录，保证可拖拽安装
+          make_dmg() { # $1=源App $2=输出dmg
+            STAGE="build/dmg-stage"
+            rm -rf "$STAGE" && mkdir -p "$STAGE"
+            cp -R "$1" "$STAGE/MoneyFly.app"
+            ln -s /Applications "$STAGE/Applications"
+            codesign --force --deep -s - "$STAGE/MoneyFly.app"
+            hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "$2"
+          }
+
+          # 通用版（arm64 + x86_64）
+          make_dmg "$APP" "dist/MoneyFly-macos-universal-$V.dmg"
 
           # Apple 芯片版（仅 arm64）
           cp -R "$APP" "build/MoneyFly-arm64.app"
           scripts/thin_app.sh arm64 "build/MoneyFly-arm64.app"
-          hdiutil create -volname MoneyFly -srcfolder "build/MoneyFly-arm64.app" -ov -format UDZO "dist/MoneyFly-macos-arm64-$V.dmg"
+          make_dmg "build/MoneyFly-arm64.app" "dist/MoneyFly-macos-arm64-$V.dmg"
 
           # Intel 版（仅 x86_64）
           cp -R "$APP" "build/MoneyFly-x64.app"
           scripts/thin_app.sh x86_64 "build/MoneyFly-x64.app"
-          hdiutil create -volname MoneyFly -srcfolder "build/MoneyFly-x64.app" -ov -format UDZO "dist/MoneyFly-macos-x64-$V.dmg"
+          make_dmg "build/MoneyFly-x64.app" "dist/MoneyFly-macos-x64-$V.dmg"
 
           cd dist && shasum -a 256 * > SHA256SUMS.txt
         env:

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -22,6 +24,22 @@ class ApiClient {
       headers: {'Accept': 'application/json', 'User-Agent': userAgent},
     ));
     if (debugDio != null) return; // 测试环境：跳过 JWT 拦截器
+    // 请求日志（写入 App Support 目录 http.log，登录/网络问题排查用）
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (o, h) {
+        _logHttp('>>> ${o.method} ${o.uri}\n    body: ${o.data}');
+        h.next(o);
+      },
+      onResponse: (r, h) {
+        final body = r.data is String ? (r.data as String) : (r.data?.toString() ?? '');
+        _logHttp('<<< ${r.statusCode} ${r.requestOptions.uri}\n    body: ${body.length > 400 ? body.substring(0, 400) : body}');
+        h.next(r);
+      },
+      onError: (e, h) {
+        _logHttp('!!! ${e.type} ${e.requestOptions.uri} status=${e.response?.statusCode}\n    err: $e\n    resp: ${e.response?.data}');
+        h.next(e);
+      },
+    ));
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -84,23 +102,36 @@ class ApiClient {
 
   // ---------- Token 存取 ----------
   static Future<String?> readAccessToken() async {
-    if (!persistTokens) return _memAccess;
-    return _storage.read(key: 'access_token');
+    if (_memAccess != null) return _memAccess;
+    if (!persistTokens) return null;
+    try {
+      return await _storage.read(key: 'access_token');
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<String?> readRefreshToken() async {
-    if (!persistTokens) return _memRefresh;
-    return _storage.read(key: 'refresh_token');
+    if (_memRefresh != null) return _memRefresh;
+    if (!persistTokens) return null;
+    try {
+      return await _storage.read(key: 'refresh_token');
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> saveTokens(String access, String refresh) async {
-    if (!persistTokens) {
-      _memAccess = access;
-      _memRefresh = refresh;
-      return;
+    _memAccess = access;
+    _memRefresh = refresh;
+    if (!persistTokens) return;
+    // 存储失败（如 macOS Keychain 异常）不阻塞登录：内存 token 仍可用
+    try {
+      await _storage.write(key: 'access_token', value: access);
+      await _storage.write(key: 'refresh_token', value: refresh);
+    } catch (e) {
+      _logHttp('!!! token 持久化失败（内存兜底）: $e');
     }
-    await _storage.write(key: 'access_token', value: access);
-    await _storage.write(key: 'refresh_token', value: refresh);
   }
 
   static Future<void> clearTokens() async {
@@ -134,6 +165,18 @@ class ApiClient {
     } catch (_) {
       return false;
     }
+  }
+
+  /// 追加一行到 HOME/Library/Application Support/top.moneyfly.app/http.log
+  static void _logHttp(String line) {
+    if (kIsWeb) return;
+    try {
+      final home = Platform.environment['HOME'] ?? '/tmp';
+      final logDir = Directory('$home/Library/Application Support/top.moneyfly.app');
+      if (!logDir.existsSync()) logDir.createSync(recursive: true);
+      final f = File('${logDir.path}/http.log');
+      f.writeAsStringSync('[${DateTime.now().toIso8601String()}] $line\n', mode: FileMode.append);
+    } catch (_) {}
   }
 
   // ---------- 统一解包 ----------
