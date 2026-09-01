@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
+import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
 import 'singbox_config.dart';
 
@@ -122,6 +123,14 @@ class ConnectionController extends ChangeNotifier {
     }
     final epoch = ++_epoch;
     _reconnectTimer?.cancel();
+    // 从设置读取连接行为（设置 → 实际效果）
+    final settings = await SettingsStore.instance.load();
+    autoTest = settings['autoTest'] == true;
+    autoReconnect = settings['autoReconnect'] == true;
+    final dns = settings['dns']?.toString() ?? '223.5.5.5';
+    final defaultMode = settings['defaultMode']?.toString() ?? 'smart';
+    smartMode = defaultMode != 'global';
+
     status = ConnStatus.testing;
     error = null;
     notifyListeners();
@@ -151,6 +160,7 @@ class ConnectionController extends ChangeNotifier {
         nodes: nodes,
         selectedTag: current!.tag,
         smartMode: smartMode,
+        dns: dns,
       );
       await _core.start(cfg);
       if (epoch != _epoch) return;

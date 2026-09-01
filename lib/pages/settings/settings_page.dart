@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/settings_store.dart';
+import '../../core/services/update_service.dart';
 import '../../theme/app_theme.dart';
 import '../auth/change_password_page.dart';
 
@@ -116,7 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
             _row(icon: '⏻', title: '退出登录', danger: true, onTap: () => _toast('请到「我的」页退出登录')),
             _section('关于'),
-            _row(icon: '🔄', title: '检查更新', value: 'v1.0.0 · 最新', onTap: () => _toast('已是最新版本')),
+            _row(icon: '🔄', title: '检查更新', value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
             _row(icon: '📄', title: '用户协议', onTap: () => _toast('《用户协议》将在官网公布')),
             _row(icon: '🛡️', title: '隐私政策', onTap: () => _toast('《隐私政策》将在官网公布')),
             const SizedBox(height: 12),
@@ -230,6 +232,55 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
                       color: selectedLeft ? MFColors.txt3 : Colors.white)),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _checkingUpdate = false;
+
+  /// 软件升级：读后端软件库 → 比对版本 → 弹更新对话框
+  Future<void> _checkUpdate() async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    final info = await UpdateService.instance.check();
+    if (!mounted) return;
+    setState(() => _checkingUpdate = false);
+    if (info == null) {
+      _toast('暂未配置更新源，当前已是最新版本');
+      return;
+    }
+    if (!info.isNewer) {
+      _toast('已是最新版本 v${UpdateInfo.currentVersion}');
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierDismissible: !info.forced,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(info.forced ? '发现新版本（强制更新）' : '发现新版本',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(
+          '当前版本 v${UpdateInfo.currentVersion}\n最新版本 v${info.latestVersion}${info.sizeText != null ? ' · ${info.sizeText}' : ''}\n\n请下载最新安装包体验新功能。',
+          style: const TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7),
+        ),
+        actions: [
+          if (!info.forced)
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('稍后')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final url = info.downloadUrl;
+              if (url == null || url.isEmpty) {
+                _toast('下载链接暂未配置');
+                return;
+              }
+              final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+              if (!ok && mounted) _toast('无法打开下载链接');
+            },
+            child: const Text('立即下载', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

@@ -40,6 +40,7 @@ class Endpoints {
   static const notifications = '/notifications';
   static const notificationsUnread = '/notifications/unread-count';
   static const softwareConfig = '/software-config';
+  static const softwareVersions = '/software/versions';
 
   // 用户扩展
   static const changePassword = '/users/change-password';
