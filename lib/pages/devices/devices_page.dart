@@ -1,0 +1,276 @@
+import 'package:flutter/material.dart';
+
+import '../../core/api/api_client.dart';
+import '../../core/models/models.dart';
+import '../../core/services/device_service.dart';
+import '../../theme/app_theme.dart';
+
+/// 设备管理：列表 / 备注（≤200 字，可清空）/ 删除（踢下线）
+class DevicesPage extends StatefulWidget {
+  const DevicesPage({super.key});
+
+  @override
+  State<DevicesPage> createState() => _DevicesPageState();
+}
+
+class _DevicesPageState extends State<DevicesPage> {
+  List<DeviceInfo> _devices = [];
+  bool _loading = true;
+  int? _deletingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final list = await DeviceService.instance.list();
+      if (mounted) setState(() => _devices = list);
+    } catch (e) {
+      if (mounted) _toast(ApiClient.errorMsg(e));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _editRemark(DeviceInfo device) async {
+    final controller = TextEditingController(text: device.remark);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: const Text('修改备注', style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          maxLength: 200,
+          style: const TextStyle(color: MFColors.txt, fontSize: 14),
+          decoration: const InputDecoration(hintText: '给这台设备起个名字（可清空）'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('保存', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (result == null) return;
+    try {
+      await DeviceService.instance.updateRemark(device.id, result);
+      await _load();
+      if (mounted) _toast('备注已保存');
+    } catch (e) {
+      if (mounted) _toast(ApiClient.errorMsg(e));
+    }
+  }
+
+  Future<void> _deleteDevice(DeviceInfo device) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: const Text('删除设备', style: TextStyle(fontSize: 16)),
+        content: Text('确定删除「${device.displayName}」吗？\n删除后该设备将无法使用当前订阅连接。',
+            style: const TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _deletingId = device.id);
+    try {
+      await DeviceService.instance.delete(device.id);
+      await _load();
+      if (mounted) _toast('设备已删除');
+    } catch (e) {
+      if (mounted) _toast(ApiClient.errorMsg(e));
+    } finally {
+      if (mounted) setState(() => _deletingId = null);
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
+        title: const Text('设备管理'),
+        actions: [
+          TextButton(onPressed: _load, child: const Text('刷新', style: TextStyle(color: MFColors.brandLight))),
+        ],
+      ),
+      body: SafeArea(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
+            : _devices.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text('暂无设备', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                        const SizedBox(height: 8),
+                        const Text('连接一次 VPN 后，这里会显示你的设备', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
+                    itemCount: _devices.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (_, i) => _buildDeviceCard(_devices[i]),
+                  ),
+      ),
+    );
+  }
+
+  Widget _buildDeviceCard(DeviceInfo d) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: MFColors.card, borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: MFColors.line)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(
+                    color: const Color(0xFF1B2233), borderRadius: BorderRadius.circular(11)),
+                alignment: Alignment.center,
+                child: Text(d.osName.isNotEmpty ? d.osName.substring(0, 1).toUpperCase() : '📱',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(d.remark.isNotEmpty ? d.remark : d.displayName,
+                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      [d.osName, d.deviceModel].where((e) => e.isNotEmpty).join(' · '),
+                      style: const TextStyle(fontSize: 11, color: MFColors.txt3),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (d.isActive ? MFColors.green : MFColors.red).withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: (d.isActive ? MFColors.green : MFColors.red).withValues(alpha: .3)),
+                ),
+                child: Text(d.isActive ? '在线' : '离线',
+                    style: TextStyle(fontSize: 10, color: d.isActive ? MFColors.green : MFColors.red, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            children: [
+              if (d.ipAddress.isNotEmpty)
+                _meta('IP', d.ipAddress),
+              if (d.location.isNotEmpty)
+                _meta('位置', d.location),
+              if (d.softwareVersion.isNotEmpty)
+                _meta('版本', d.softwareVersion),
+              _meta('访问', '${d.accessCount} 次'),
+              if (d.lastSeen.isNotEmpty)
+                _meta('最近', d.lastSeen),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _ActionBtn(
+                icon: Icons.edit_outlined,
+                label: d.remark.isEmpty ? '备注' : '改备注',
+                color: MFColors.brandLight,
+                onTap: () => _editRemark(d),
+              ),
+              const SizedBox(width: 10),
+              _ActionBtn(
+                icon: Icons.delete_outline,
+                label: '删除',
+                color: MFColors.red,
+                loading: _deletingId == d.id,
+                onTap: () => _deleteDevice(d),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _meta(String k, String v) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$k ', style: const TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+          Text(v, style: const TextStyle(fontSize: 10.5, color: MFColors.txt2, fontFamily: kNumFont)),
+        ],
+      );
+}
+
+class _ActionBtn extends StatelessWidget {
+  const _ActionBtn({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: loading ? null : onTap,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 13),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: .3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (loading)
+              SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: color))
+            else
+              Icon(icon, size: 14, color: color),
+            const SizedBox(width: 5),
+            Text(label, style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
