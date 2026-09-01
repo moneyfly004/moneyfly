@@ -24,7 +24,6 @@ class ProxyCoreCli extends ProxyCore {
   /// 内核工作目录（配置文件 + 内置规则集落盘处）
   static final String workDir = '${Directory.systemTemp.path}/moneyfly_core';
   static const _readyTimeout = Duration(seconds: 10);
-  static const _statsInterval = Duration(seconds: 1);
 
   final Dio _api = Dio(BaseOptions(
     baseUrl: clashApi,
@@ -56,10 +55,8 @@ class ProxyCoreCli extends ProxyCore {
   set onTraffic(void Function(double upMbps, double downMbps)? cb) =>
       _onTraffic = cb;
 
-  Timer? _statsTimer;
-  int _lastUp = 0;
-  int _lastDown = 0;
-  DateTime? _lastStatsTime;
+  CancelToken? _trafficCancel;
+  final List<int> _trafficBuf = [];
 
   /// 最近内核日志（错误排查用，环形保留末尾 ~40 行）
   final List<String> _logTail = [];
@@ -144,8 +141,7 @@ class ProxyCoreCli extends ProxyCore {
   @override
   Future<void> stop() async {
     _intentionalStop = true;
-    _statsTimer?.cancel();
-    _statsTimer = null;
+    _trafficCancel?.cancel();
     final p = _proc;
     _proc = null;
     if (p == null) return;
@@ -204,53 +200,67 @@ class ProxyCoreCli extends ProxyCore {
     final code = await p.exitCode;
     if (_proc == p && !_intentionalStop) {
       _proc = null;
-      _statsTimer?.cancel();
-      _statsTimer = null;
+      _trafficCancel?.cancel();
       _lastError = '内核进程退出（code $code）：${_tail()}';
       _onUnexpectedExit?.call();
     }
   }
 
-  /// 流量统计：1s 拉一次 /traffic（累计字节 → 增量换算 MB/s）
+  /// 流量统计：sing-box 1.14 的 /traffic 是持续流（每秒推送一行
+  /// {"up":Δ,"down":Δ}，单位字节/秒），流式解析直接换算 MB/s 回调。
+  /// 断开/出错后重连流，直到内核停止。
   void _startStatsTimer() {
-    _statsTimer?.cancel();
-    _lastUp = 0;
-    _lastDown = 0;
-    _lastStatsTime = null;
-    _statsTimer = Timer.periodic(_statsInterval, (_) => _pollTraffic());
+    _trafficCancel?.cancel();
+    _trafficCancel = CancelToken();
+    _trafficBuf.clear();
+    // 流任务自管理生命周期（内核停止/取消令牌时退出），无需持有引用
+    unawaited(_streamTraffic(_trafficCancel!));
   }
 
-  Future<void> _pollTraffic() async {
-    if (_proc == null) return;
-    try {
-      final r = await _api.get('/traffic');
-      final data = r.data;
-      if (data is! Map) return;
-      final up = (data['up'] as num?)?.toInt() ?? 0;
-      final down = (data['down'] as num?)?.toInt() ?? 0;
-      final now = DateTime.now();
-      if (_lastStatsTime != null) {
-        final dt = now.difference(_lastStatsTime!).inMilliseconds / 1000;
-        if (dt > 0) {
-          final upMbps = (up - _lastUp) / dt / 1024 / 1024;
-          final downMbps = (down - _lastDown) / dt / 1024 / 1024;
-          _onTraffic?.call(
-            upMbps < 0 ? 0 : upMbps,
-            downMbps < 0 ? 0 : downMbps,
-          );
+  Future<void> _streamTraffic(CancelToken cancel) async {
+    while (_proc != null && !cancel.isCancelled) {
+      try {
+        final resp = await _api.get(
+          '/traffic',
+          cancelToken: cancel,
+          options: Options(responseType: ResponseType.stream),
+        );
+        final stream = resp.data.stream as Stream<List<int>>;
+        await for (final chunk in stream) {
+          if (cancel.isCancelled || _proc == null) break;
+          _trafficBuf.addAll(chunk);
+          // 按行解析 JSON（流式，跨 chunk 的行由缓冲区拼接）
+          while (true) {
+            final nl = _trafficBuf.indexOf(0x0A); // '\n'
+            if (nl < 0) break;
+            final line = utf8.decode(_trafficBuf.sublist(0, nl)).trim();
+            _trafficBuf.removeRange(0, nl + 1);
+            if (line.isEmpty) continue;
+            try {
+              final obj = jsonDecode(line);
+              if (obj is Map && obj['up'] is num && obj['down'] is num) {
+                // 值即每秒增量字节 → 直接换算 MB/s
+                _onTraffic?.call(
+                  (obj['up'] as num) / 1024 / 1024,
+                  (obj['down'] as num) / 1024 / 1024,
+                );
+              }
+            } catch (_) {
+              // 忽略无法解析的行
+            }
+          }
         }
+      } catch (_) {
+        // 流中断：稍后重连（内核仍在运行则继续尝试）
       }
-      _lastUp = up;
-      _lastDown = down;
-      _lastStatsTime = now;
-    } catch (_) {
-      // 瞬时失败忽略，下个周期重试
+      if (_proc == null || cancel.isCancelled) break;
+      await Future.delayed(const Duration(seconds: 2));
     }
   }
 
   @override
   void dispose() {
-    _statsTimer?.cancel();
+    _trafficCancel?.cancel();
     _api.close(force: true);
     unawaited(stop());
   }

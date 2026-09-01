@@ -51,6 +51,9 @@ Map<String, dynamic> _safeConfig() {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // flutter_test 默认用 mock HttpClient 拦截一切 HTTP（返回 400）；
+  // 本集成测试需要真实访问内核 Clash API，复位为系统实现
+  HttpOverrides.global = null;
 
   final hasBinary = File(binary).existsSync();
   final skip = hasBinary ? null : '未找到 sing-box 内核（tool/fetch_singbox.sh 获取后本地验证）';
@@ -103,11 +106,11 @@ void main() {
     await core.switchMode(false);
     await core.switchMode(true);
 
-    // 流量统计回调不抛（1s 轮询）
+    // 流量统计回调不抛（1s 流式推送）
     var trafficTicks = 0;
     core.onTraffic = (up, down) => trafficTicks++;
     await Future.delayed(const Duration(milliseconds: 2600));
-    expect(trafficTicks, greaterThanOrEqualTo(1), reason: '/traffic 轮询应持续产出');
+    expect(trafficTicks, greaterThanOrEqualTo(1), reason: '/traffic 流应持续产出');
 
     // 异常退出回调（主动停止不应触发）
     var unexpected = 0;

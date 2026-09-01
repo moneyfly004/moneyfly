@@ -57,11 +57,11 @@ jobs:
           flutter analyze
           flutter test
 
-      - name: 构建多 ABI APK（适配不同机型架构）
-        run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols
+      - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
+        run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
 
       - name: 构建 AAB（应用商店备用）
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
 
       - name: 重命名产物
         run: |
@@ -95,22 +95,33 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 测试
+      # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
+      - name: 下载 sing-box 内核
+        shell: bash
         run: |
+          mkdir -p build/sing-box
+          curl -fL --max-time 300 -o sing-box.zip \
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-windows-amd64.zip"
+          unzip -o sing-box.zip -d sb
+          cp sb/sing-box-*/sing-box.exe build/sing-box/sing-box.exe
+          ls -la build/sing-box/
+
+      - name: 测试（含真实内核端到端验证）
+        shell: bash
+        run: |
+          export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box.exe"
           flutter analyze
           flutter test
 
       - name: 构建 Windows release
         run: flutter build windows --release
 
-      # ---- 内置 sing-box 内核（App 启动时从 exe 同目录加载）----
-      - name: 下载并内置 sing-box 内核
+      # ---- 内核放入 exe 同目录（安装包/zip 随 App 分发）----
+      - name: 内置 sing-box 内核
         shell: bash
         run: |
           RELEASE_DIR="build/windows/x64/runner/Release"
-          curl -fL --max-time 300 -o sing-box.zip \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-windows-amd64.zip"
-          unzip -o sing-box.zip -d sb && cp sb/sing-box.exe "$RELEASE_DIR/sing-box.exe"
+          cp build/sing-box/sing-box.exe "$RELEASE_DIR/sing-box.exe"
           ls -la "$RELEASE_DIR/sing-box.exe"
 
       - name: 安装 Inno Setup
@@ -163,8 +174,20 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 测试
+      # ---- 先下载内核（arm64 即可）：让 flutter test 真实启动内核做端到端验证 ----
+      - name: 下载 sing-box 内核（测试用）
         run: |
+          mkdir -p build/sing-box
+          curl -fL --max-time 300 -o sb-arm64.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
+          tar -xzf sb-arm64.tar.gz
+          cp sing-box-*/sing-box build/sing-box/sing-box
+          chmod +x build/sing-box/sing-box
+          ls -la build/sing-box/
+
+      - name: 测试（含真实内核端到端验证）
+        run: |
+          export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box"
           flutter analyze
           flutter test
 
@@ -185,8 +208,9 @@ jobs:
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
           curl -fL --max-time 300 -o sb-amd64.tar.gz \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-amd64.tar.gz"
-          tar -xzf sb-arm64.tar.gz && mv sing-box sing-box-arm64
-          tar -xzf sb-amd64.tar.gz && mv sing-box sing-box-amd64
+          # 官方压缩包解压后是 sing-box-<版本>-darwin-<arch>/sing-box 目录结构
+          tar -xzf sb-arm64.tar.gz && mv sing-box-*-arm64/sing-box sing-box-arm64
+          tar -xzf sb-amd64.tar.gz && mv sing-box-*-amd64/sing-box sing-box-amd64
           lipo -create sing-box-arm64 sing-box-amd64 -output sing-box
           cd ..
           cp sb/sing-box "$APP/Contents/MacOS/sing-box"
