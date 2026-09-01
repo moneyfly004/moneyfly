@@ -149,8 +149,10 @@ class PayMethod {
 
   factory PayMethod.fromJson(Map<String, dynamic> j) => PayMethod(
         id: (j['id'] as num?)?.toInt() ?? 0,
-        payType: j['pay_type']?.toString() ?? '',
-        name: j['name']?.toString() ?? j['pay_type']?.toString() ?? '',
+        // 实测后端返回字段为 key（如 alipay / wechat / yipay_alipay / usdt），
+        // 兼容历史 pay_type 字段
+        payType: j['key']?.toString() ?? j['pay_type']?.toString() ?? '',
+        name: j['name']?.toString() ?? j['key']?.toString() ?? '',
         sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
       );
 

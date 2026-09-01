@@ -10,14 +10,18 @@ import 'endpoints.dart';
 /// 本客户端统一解包：get/post/put/delete 直接返回 data（dynamic），
 /// 无信封时（XBoard 兼容接口）返回整个响应体。
 class ApiClient {
+  /// 测试注入点：在测试中替换为 mock Dio（需在使用 ApiClient 之前设置）
+  static Dio? debugDio;
+
   ApiClient._internal() {
-    _dio = Dio(BaseOptions(
+    _dio = debugDio ?? Dio(BaseOptions(
       baseUrl: Endpoints.baseUrl,
       connectTimeout: const Duration(seconds: 12),
       receiveTimeout: const Duration(seconds: 25),
       sendTimeout: const Duration(seconds: 15),
       headers: {'Accept': 'application/json'},
     ));
+    if (debugDio != null) return; // 测试环境：跳过 JWT 拦截器
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
