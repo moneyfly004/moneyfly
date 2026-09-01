@@ -230,7 +230,10 @@ jobs:
             rm -rf "$STAGE" && mkdir -p "$STAGE"
             cp -R "$1" "$STAGE/MoneyFly.app"
             ln -s /Applications "$STAGE/Applications"
-            codesign --force --deep -s - "$STAGE/MoneyFly.app"
+            # 保留 entitlements（Keychain/网络），否则登录报 -34018
+            codesign --force --deep -s - \
+              --entitlements macos/Runner/Release.entitlements \
+              "$STAGE/MoneyFly.app"
             hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "$2"
           }
 

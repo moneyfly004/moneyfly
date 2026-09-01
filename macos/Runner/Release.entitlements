@@ -8,6 +8,12 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- flutter_secure_storage（token 存储）必需：Keychain 访问组，
+	     缺失会报 -34018（A required entitlement isn't present）导致无法登录 -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
+	</array>
 	<!-- v2 上 Network Extension 时追加（需 Apple Developer 账号）：
 	<key>com.apple.developer.networking.networkextension.packet-tunnel-provider</key>
 	<true/>
