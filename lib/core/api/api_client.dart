@@ -57,7 +57,13 @@ class ApiClient {
     );
   }
 
-  static final ApiClient instance = ApiClient._internal();
+  static ApiClient? _instance;
+
+  static ApiClient get instance => _instance ??= ApiClient._internal();
+
+  /// 测试专用：重置单例，使下一次访问使用新的 debugDio
+  @visibleForTesting
+  static void resetInstance() => _instance = null;
 
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
