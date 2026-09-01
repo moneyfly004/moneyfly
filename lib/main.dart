@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
 import 'core/services/auth_service.dart';
+import 'core/services/settings_store.dart';
 import 'pages/auth/login_page.dart';
 import 'pages/home/home_page.dart';
 import 'pages/nodes/nodes_page.dart';
@@ -54,6 +55,11 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
   void initState() {
     super.initState();
     _session.restore();
+    // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）
+    SettingsStore.instance
+        .load()
+        .then(ConnectionController.instance.applySettings)
+        .catchError((_) {});
     // 会话失效（refresh 失败）→ 强制回登录页
     ApiClient.instance.onSessionExpired(() {
       AuthService.instance.logout();

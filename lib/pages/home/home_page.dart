@@ -390,7 +390,7 @@ class _HomePageState extends State<HomePage>
               const Text('自动测速 · 自动选优', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
               const Spacer(),
               GestureDetector(
-                onTap: () => conn.autoTest = !conn.autoTest,
+                onTap: () => conn.setAutoTest(!conn.autoTest),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                   decoration: BoxDecoration(

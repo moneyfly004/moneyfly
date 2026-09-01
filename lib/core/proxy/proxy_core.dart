@@ -84,6 +84,24 @@ class ConnectionController extends ChangeNotifier {
   double upSpeedMbps = 0;
   double downSpeedMbps = 0;
 
+  /// 从设置项同步连接行为（设置页 / 启动时调用）
+  void applySettings(Map<String, dynamic> s) {
+    if (s['autoTest'] is bool) autoTest = s['autoTest'] as bool;
+    if (s['autoReconnect'] is bool) autoReconnect = s['autoReconnect'] as bool;
+    if (s['defaultMode'] == 'global') {
+      smartMode = false;
+    } else if (s['defaultMode'] == 'smart') {
+      smartMode = true;
+    }
+    notifyListeners();
+  }
+
+  /// 首页自动测速开关（带通知，保证 UI 即时刷新）
+  void setAutoTest(bool v) {
+    autoTest = v;
+    notifyListeners();
+  }
+
   Timer? _reconnectTimer;
   int _reconnectCount = 0;
   int _epoch = 0;

@@ -42,7 +42,9 @@ class OrderService {
       'size': size,
       'status': ?status,
     });
-    if (data is! List) return [];
-    return data.map((e) => OrderItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    // 实测：/orders 返回分页对象 {orders:[...], page, pages, size, total}，兼容裸数组
+    final list = data is List ? data : (data is Map ? data['orders'] : null);
+    if (list is! List) return [];
+    return list.map((e) => OrderItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 }

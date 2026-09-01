@@ -102,7 +102,7 @@ void main() {
   group('设备管理', () {
     testWidgets('空状态', (tester) async {
       ApiClient.debugDio = mockDio((a) {
-        a.onGet('/devices', (s) => s.reply(200, env([])));
+        a.onGet('/subscriptions/devices', (s) => s.reply(200, env({'devices': []})));
       });
       await pumpPage(tester, _wrap(const DevicesPage()));
       expect(find.text('暂无设备'), findsOneWidget);
@@ -110,7 +110,7 @@ void main() {
 
     testWidgets('列表渲染 + 删除确认弹窗', (tester) async {
       ApiClient.debugDio = mockDio((a) {
-        a.onGet('/devices', (s) => s.reply(200, env([
+        a.onGet('/subscriptions/devices', (s) => s.reply(200, env({'devices': [
           {
             'id': 11, 'device_name': 'iPhone 15', 'os_name': 'iOS', 'os_version': '18.0',
             'ip_address': '1.2.3.4', 'location': '广东', 'is_active': true,
@@ -119,7 +119,7 @@ void main() {
             'software_name': 'MoneyFly', 'software_version': '1.0.0', 'is_allowed': true,
             'first_seen': '', 'last_access': '', 'created_at': '', 'subscription_id': 1,
           },
-        ])));
+        ]})));
         a.onDelete('/devices/11', (s) => s.reply(200, env(null)));
       });
       await pumpPage(tester, _wrap(const DevicesPage()));

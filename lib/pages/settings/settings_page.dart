@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/proxy/proxy_core.dart';
 import '../../core/services/settings_store.dart';
 import '../../theme/app_theme.dart';
 import '../auth/change_password_page.dart';
@@ -33,6 +34,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _set(String key, dynamic value) async {
     setState(() => _s[key] = value);
+    // 连接相关设置即时生效到连接控制器（自动测速/断线重连/默认模式）
+    ConnectionController.instance.applySettings(_s);
     await SettingsStore.instance.save(_s);
   }
 

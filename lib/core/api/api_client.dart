@@ -69,20 +69,39 @@ class ApiClient {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
+  /// 测试开关：false 时 token 存内存（避免 flutter test 无插件实现）
+  static bool persistTokens = true;
+  static String? _memAccess;
+  static String? _memRefresh;
+
   late final Dio _dio;
   VoidCallback? _onSessionExpired;
   Future<bool>? _refreshing;
 
   // ---------- Token 存取 ----------
-  static Future<String?> readAccessToken() => _storage.read(key: 'access_token');
-  static Future<String?> readRefreshToken() => _storage.read(key: 'refresh_token');
+  static Future<String?> readAccessToken() async {
+    if (!persistTokens) return _memAccess;
+    return _storage.read(key: 'access_token');
+  }
+
+  static Future<String?> readRefreshToken() async {
+    if (!persistTokens) return _memRefresh;
+    return _storage.read(key: 'refresh_token');
+  }
 
   static Future<void> saveTokens(String access, String refresh) async {
+    if (!persistTokens) {
+      _memAccess = access;
+      _memRefresh = refresh;
+      return;
+    }
     await _storage.write(key: 'access_token', value: access);
     await _storage.write(key: 'refresh_token', value: refresh);
   }
 
   static Future<void> clearTokens() async {
+    _memAccess = null;
+    _memRefresh = null;
     await _storage.delete(key: 'access_token');
     await _storage.delete(key: 'refresh_token');
   }
@@ -152,8 +171,12 @@ class ApiClient {
   }
 
   /// 拉取订阅原文（非 JSON）
+  /// 实测：订阅接口对浏览器 UA 返回空 200，必须用客户端/Clash UA
   Future<String> fetchText(String url) async {
-    final r = await _dio.getUri(Uri.parse(url));
+    final r = await _dio.getUri(
+      Uri.parse(url),
+      options: Options(headers: {'User-Agent': 'clash.meta'}),
+    );
     return r.data?.toString() ?? '';
   }
 

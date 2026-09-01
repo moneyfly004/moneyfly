@@ -299,11 +299,12 @@ class DeviceInfo {
   factory DeviceInfo.fromJson(Map<String, dynamic> j) => DeviceInfo(
         id: (j['id'] as num?)?.toInt() ?? 0,
         subscriptionId: (j['subscription_id'] as num?)?.toInt(),
-        deviceName: j['device_name']?.toString() ?? '',
-        deviceType: j['device_type']?.toString() ?? '',
+        // /subscriptions/devices 有 name/ip/type 冗余别名
+        deviceName: j['device_name']?.toString() ?? j['name']?.toString() ?? '',
+        deviceType: j['device_type']?.toString() ?? j['type']?.toString() ?? '',
         deviceModel: j['device_model']?.toString() ?? '',
         deviceBrand: j['device_brand']?.toString() ?? '',
-        ipAddress: j['ip_address']?.toString() ?? '',
+        ipAddress: j['ip_address']?.toString() ?? j['ip']?.toString() ?? '',
         location: j['location']?.toString() ?? '',
         osName: j['os_name']?.toString() ?? '',
         osVersion: j['os_version']?.toString() ?? '',

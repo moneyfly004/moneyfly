@@ -8,9 +8,11 @@ class DeviceService {
   static final DeviceService instance = DeviceService._();
 
   Future<List<DeviceInfo>> list() async {
-    final data = await ApiClient.instance.get(Endpoints.devices);
-    if (data is! List) return [];
-    return data.map((e) => DeviceInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    // /subscriptions/devices 返回 {devices:[...]}，且 location 有真实地理位置（/devices 为空）
+    final data = await ApiClient.instance.get(Endpoints.subscriptionsDevices);
+    final list = data is List ? data : (data is Map ? data['devices'] : null);
+    if (list is! List) return [];
+    return list.map((e) => DeviceInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
   Future<void> delete(int deviceId) async {

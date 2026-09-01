@@ -175,13 +175,14 @@ class SingBoxConfigBuilder {
         {'rule_set': ['geoip-cn'], 'outbound': 'direct'},
         {'rule_set': ['geosite-cn'], 'outbound': 'direct'},
         {'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'},
-        {'network': 'udp', 'outbound': 'select'},
+        {'network': ['udp'], 'outbound': 'select'},
       ]);
     } else {
       rules.add({'ip_cidr': ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], 'outbound': 'direct'});
     }
     return {
-      'log': {'level': 'info', 'timestamp': true},
+      // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
+      'log': {'level': 'warn', 'timestamp': true},
       // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
       'dns': {
         'servers': [

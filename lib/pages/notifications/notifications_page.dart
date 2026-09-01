@@ -81,6 +81,22 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 
+  /// 兼容后端两种时间格式：RFC3339(带T) 与 "YYYY-MM-DD HH:mm:ss"
+  static String _formatTime(String raw) {
+    if (raw.isEmpty) return '';
+    if (raw.contains('T')) {
+      final dt = DateTime.tryParse(raw);
+      if (dt != null) {
+        final m = dt.month.toString().padLeft(2, '0');
+        final d = dt.day.toString().padLeft(2, '0');
+        final h = dt.hour.toString().padLeft(2, '0');
+        final min = dt.minute.toString().padLeft(2, '0');
+        return '$m-$d $h:$min';
+      }
+    }
+    return raw.length > 16 ? raw.substring(5, 16) : raw;
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -136,7 +152,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                         style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600,
                                             color: n.isRead ? MFColors.txt2 : MFColors.txt)),
                                   ),
-                                  Text(n.createdAt.length > 16 ? n.createdAt.substring(5, 16) : n.createdAt,
+                                  Text(_formatTime(n.createdAt),
                                       style: const TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
                                 ],
                               ),
