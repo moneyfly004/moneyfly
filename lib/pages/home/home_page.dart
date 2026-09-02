@@ -592,8 +592,22 @@ class _HomePageState extends State<HomePage>
               ),
             )
           else
-            Text(AppStrings.t('no_nodes'),
-                style: TextStyle(fontSize: 13, color: MFColors.txt3)),
+            GestureDetector(
+              onTap: () => mainTabIndex.value = 2,
+              child: Column(
+                children: [
+                  Text(AppStrings.t('no_nodes'),
+                      style: TextStyle(fontSize: 13, color: MFColors.txt3)),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+                    child: Text(AppStrings.t('go_purchase'),
+                        style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
           if (connected && conn.realCountry != null) ...[
             const SizedBox(height: 8),
             Row(
@@ -610,6 +624,16 @@ class _HomePageState extends State<HomePage>
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 11, color: MFColors.red)),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () => mainTabIndex.value = 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+                child: Text(AppStrings.t('go_renew'),
+                    style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700)),
+              ),
+            ),
           ],
         ],
       ),
