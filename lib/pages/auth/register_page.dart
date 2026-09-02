@@ -24,7 +24,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final _confirm = TextEditingController();
   final _invite = TextEditingController();
 
-  bool _obscure = true;
+  final bool _obscure = true;
   bool _agreed = true;
   bool _sending = false;
   bool _codeSent = false;
