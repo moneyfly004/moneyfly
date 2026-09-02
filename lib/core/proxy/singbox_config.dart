@@ -218,8 +218,11 @@ class SingBoxConfigBuilder {
       },
       'inbounds': [
         // 设置 → TUN 虚拟网卡：off=仅系统代理 / force=仅 TUN / auto=双通道
+        // 系统代理由 app 全权管理（SystemProxyManager：连接时设置、断开时恢复）。
+        // 不启用 sing-box 的 set_system_proxy，避免双重管理互相覆盖
+        // （sing-box 先设、app 再把 sing-box 的代理误记为原始状态）。
         if (tunMode != 'force')
-          {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080, 'set_system_proxy': true},
+          {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080},
         if (tunMode != 'off')
           {'type': 'tun', 'tag': 'tun-in', 'auto_route': true, 'strict_route': false, 'stack': tunStack},
       ],

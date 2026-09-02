@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 
 import 'proxy_core.dart';
+import 'system_proxy.dart';
 
 /// 方案 A：sing-box CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
 ///
@@ -20,6 +21,10 @@ import 'proxy_core.dart';
 class ProxyCoreCli extends ProxyCore {
   /// Clash API 地址（与 SingBoxConfigBuilder 中 external_controller 一致）
   static const clashApi = 'http://127.0.0.1:9090';
+
+  /// 是否由 app 管理系统代理（连接时设置、断开时恢复）。
+  /// 集成测试置 false，避免改动真实系统代理。
+  static bool manageSystemProxy = true;
 
   /// 内核工作目录（配置文件 + 内置规则集落盘处）
   static final String workDir = '${Directory.systemTemp.path}/moneyfly_core';
@@ -126,6 +131,10 @@ class ProxyCoreCli extends ProxyCore {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
         if (r.statusCode == 200) {
+          // 内核就绪后由 app 统一管理系统代理（连接时设置，断开时恢复）
+          if (manageSystemProxy) {
+            await SystemProxyManager.apply(port: SystemProxyManager.defaultPort);
+          }
           _startStatsTimer();
           return;
         }
@@ -144,12 +153,17 @@ class ProxyCoreCli extends ProxyCore {
     _trafficCancel?.cancel();
     final p = _proc;
     _proc = null;
-    if (p == null) return;
-    try {
-      p.kill(ProcessSignal.sigterm);
-      await p.exitCode.timeout(const Duration(seconds: 3));
-    } catch (_) {
-      p.kill(ProcessSignal.sigkill);
+    if (p != null) {
+      try {
+        p.kill(ProcessSignal.sigterm);
+        await p.exitCode.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        p.kill(ProcessSignal.sigkill);
+      }
+    }
+    // 恢复系统代理（sing-box set_system_proxy 被终止后不会自动恢复）
+    if (manageSystemProxy) {
+      await SystemProxyManager.restore();
     }
   }
 

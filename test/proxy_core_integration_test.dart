@@ -5,7 +5,8 @@
 //   2) 仓库根 build/sing-box/sing-box 存在（tool/fetch_singbox.sh 获取）
 // 不满足条件时自动跳过（CI 上桌面端不装内核二进制，避免误报失败）。
 //
-// 注意：本测试用 tunMode='off' 且关闭 set_system_proxy，不会改动系统代理/虚拟网卡。
+// 注意：本测试用 tunMode='off' 且关闭系统代理管理（manageSystemProxy=false），
+// 不会改动系统代理/虚拟网卡。
 import 'dart:convert';
 import 'dart:io';
 
@@ -41,11 +42,8 @@ Map<String, dynamic> _safeConfig() {
     tunMode: 'off', // 集成测试不创建虚拟网卡（需 root）
     ruleSetDir: ProxyCoreCli.workDir,
   );
-  // 测试期间不动系统代理
-  final inbounds = cfg['inbounds'] as List;
-  for (final ib in inbounds) {
-    (ib as Map<String, dynamic>)['set_system_proxy'] = false;
-  }
+  // 测试期间 app 不管理系统代理，避免改动真实系统代理
+  ProxyCoreCli.manageSystemProxy = false;
   return cfg;
 }
 
@@ -92,40 +90,47 @@ void main() {
     final core = ProxyCoreCli();
     expect(core.isRunning, isFalse);
 
-    // 启动
-    await core.start(_safeConfig());
-    expect(core.isRunning, isTrue);
+    try {
+      // 启动
+      await core.start(_safeConfig());
+      expect(core.isRunning, isTrue);
 
-    // 内置规则集已落盘
-    final workDir = Directory(ProxyCoreCli.workDir);
-    expect(File('${workDir.path}/geoip-cn.srs').existsSync(), isTrue,
-        reason: '智能模式规则集应从 App 资产落盘到工作目录');
-    expect(File('${workDir.path}/config.json').existsSync(), isTrue);
+      // 内置规则集已落盘
+      final workDir = Directory(ProxyCoreCli.workDir);
+      expect(File('${workDir.path}/geoip-cn.srs').existsSync(), isTrue,
+          reason: '智能模式规则集应从 App 资产落盘到工作目录');
+      expect(File('${workDir.path}/config.json').existsSync(), isTrue);
 
-    // 热切模式（Clash API PATCH /configs）——Global ↔ Rule 不应抛错
-    await core.switchMode(false);
-    await core.switchMode(true);
+      // 热切模式（Clash API PATCH /configs）——Global ↔ Rule 不应抛错
+      await core.switchMode(false);
+      await core.switchMode(true);
 
-    // 流量统计回调不抛（1s 流式推送）
-    var trafficTicks = 0;
-    core.onTraffic = (up, down) => trafficTicks++;
-    await Future.delayed(const Duration(milliseconds: 2600));
-    expect(trafficTicks, greaterThanOrEqualTo(1), reason: '/traffic 流应持续产出');
+      // 流量统计回调不抛（1s 流式推送）
+      var trafficTicks = 0;
+      core.onTraffic = (up, down) => trafficTicks++;
+      await Future.delayed(const Duration(milliseconds: 2600));
+      expect(trafficTicks, greaterThanOrEqualTo(1), reason: '/traffic 流应持续产出');
 
-    // 异常退出回调（主动停止不应触发）
-    var unexpected = 0;
-    core.onUnexpectedExit = () => unexpected++;
+      // 异常退出回调（主动停止不应触发）
+      var unexpected = 0;
+      core.onUnexpectedExit = () => unexpected++;
 
-    // 停止：进程干净退出
-    await core.stop();
-    await Future.delayed(const Duration(milliseconds: 600));
-    expect(core.isRunning, isFalse);
-    expect(unexpected, 0, reason: '主动断开不应视为异常退出');
+      // 停止：进程干净退出
+      await core.stop();
+      await Future.delayed(const Duration(milliseconds: 600));
+      expect(core.isRunning, isFalse);
+      expect(unexpected, 0, reason: '主动断开不应视为异常退出');
 
-    // 二次启动（幂等性：停止后可再次连接）
-    await core.start(_safeConfig());
-    expect(core.isRunning, isTrue);
-    await core.stop();
+      // 二次启动（幂等性：停止后可再次连接）
+      await core.start(_safeConfig());
+      expect(core.isRunning, isTrue);
+      await core.stop();
+    } finally {
+      // 断言失败时确保内核停止，避免残留进程占用 2080/9090 污染其他测试
+      if (core.isRunning) {
+        await core.stop();
+      }
+    }
   });
 
   test('配置序列化：JSON 可解析且无动态端口冲突', skip: skip, () {

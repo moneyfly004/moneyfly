@@ -55,7 +55,7 @@ jobs:
       - name: 测试
         run: |
           flutter analyze
-          flutter test
+          flutter test --concurrency=1
 
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
@@ -111,7 +111,7 @@ jobs:
         run: |
           export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box.exe"
           flutter analyze
-          flutter test
+          flutter test --concurrency=1
 
       - name: 构建 Windows release
         run: flutter build windows --release
@@ -189,7 +189,7 @@ jobs:
         run: |
           export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box"
           flutter analyze
-          flutter test
+          flutter test --concurrency=1
 
       # release 默认即 universal（arm64 + x86_64 双架构）
       - name: 构建 macOS universal

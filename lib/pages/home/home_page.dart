@@ -232,7 +232,8 @@ class _HomePageState extends State<HomePage>
       ConnStatus.testing => AppStrings.t('testing'),
       ConnStatus.connecting => AppStrings.t('connecting'),
       ConnStatus.reconnecting => AppStrings.t('reconnecting'),
-      ConnStatus.connected => AppStrings.t('connected'),
+      ConnStatus.connected =>
+        conn.speedTesting ? AppStrings.t('connected_speed_testing') : AppStrings.t('connected'),
       ConnStatus.error => AppStrings.t('error'),
       _ => AppStrings.t('disconnected'),
     };

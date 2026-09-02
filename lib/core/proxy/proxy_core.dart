@@ -119,6 +119,9 @@ class ConnectionController extends ChangeNotifier {
   String? lastSpeedTestTime;
   String protocolFilter = 'all'; // all / vless / trojan
 
+  /// 后台测速中（已连接状态下并行测速；不阻塞连接，仅用于 UI 提示）
+  bool speedTesting = false;
+
   /// 实时速率（MB/s）——由内核 /traffic 1s 推送
   double upSpeedMbps = 0;
   double downSpeedMbps = 0;
@@ -190,7 +193,8 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
-  /// 连接：测速（可选）→ 选最优 → 启动内核
+  /// 连接（Hiddify 模式）：立即启动内核 → 已连接 → 后台自动测速切换最优节点。
+  /// 测速绝不阻塞连接：点连接立刻生效，测速在后台并行，完成后自动切换更优节点。
   /// _epoch 守卫：连接过程中用户断开/再次连接时，旧流程的结果不再覆盖状态
   Future<void> connect({bool runSpeedTest = true}) async {
     if (nodes.isEmpty) {
@@ -212,20 +216,13 @@ class ConnectionController extends ChangeNotifier {
     final intervalMin = (settings['testIntervalMin'] as num?)?.toInt() ?? 30;
     if (epoch != _epoch) return;
 
-    status = ConnStatus.testing;
+    status = ConnStatus.connecting;
     error = null;
     notifyListeners();
 
-    if (runSpeedTest && autoTest) {
-      final tested = await SpeedTester.instance.testAll(nodes);
-      if (epoch != _epoch) return;
-      nodes = tested;
-      final best = SpeedTester.selectBest(tested);
-      if (best != null) current = best;
-      lastSpeedTestTime = _now();
-    } else {
-      current ??= nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
-    }
+    // 立即选定节点：优先当前选中（用户手动选的/上次最优），否则第一个在线节点。
+    // 不做任何测速等待 —— 内核立刻启动，连接即刻生效。
+    current ??= nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
     if (epoch != _epoch) return;
     if (current == null) {
       status = ConnStatus.error;
@@ -234,8 +231,6 @@ class ConnectionController extends ChangeNotifier {
       return;
     }
 
-    status = ConnStatus.connecting;
-    notifyListeners();
     try {
       final cfg = SingBoxConfigBuilder.build(
         nodes: nodes,
@@ -250,6 +245,10 @@ class ConnectionController extends ChangeNotifier {
       if (epoch != _epoch) return;
       status = ConnStatus.connected;
       _reconnectCount = 0;
+      // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
+      if (runSpeedTest && autoTest) {
+        unawaited(_autoSpeedTestAndSwitch(epoch));
+      }
       _startBackgroundTest(intervalMin);
       unawaited(refreshRealCountry()); // 实测真实出口国家
     } catch (e) {
@@ -260,10 +259,45 @@ class ConnectionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 后台测速 + 自动切换最优节点（不阻塞连接；测速中保持已连接状态，
+  /// UI 通过 speedTesting 标记显示「测速中」）
+  Future<void> _autoSpeedTestAndSwitch(int epoch) async {
+    speedTesting = true;
+    notifyListeners();
+    try {
+      final tested = await SpeedTester.instance.testAll(nodes);
+      if (epoch != _epoch) return;
+      nodes = tested;
+      final best = SpeedTester.selectBest(tested);
+      lastSpeedTestTime = _now();
+      if (best != null && status == ConnStatus.connected) {
+        final cur = current;
+        final curOnline =
+            nodes.firstWhere((n) => n.tag == cur?.tag, orElse: () => cur!);
+        // 仅在最优节点明显更好（快 100ms 以上）或当前节点离线时切换，
+        // 避免频繁切换造成抖动。
+        if (cur == null ||
+            !curOnline.online ||
+            (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
+                best.latencyMs < curOnline.latencyMs - 100)) {
+          await switchNode(best);
+        }
+      }
+    } catch (_) {
+      // 测速失败不影响已建立的连接
+    } finally {
+      if (epoch == _epoch) {
+        speedTesting = false;
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> disconnect() async {
     _epoch++; // 使在途的 connect 流程失效（“取消连接”语义）
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
+    speedTesting = false;
     upSpeedMbps = 0;
     downSpeedMbps = 0;
     await _core.stop();
