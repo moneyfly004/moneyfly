@@ -4,7 +4,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
@@ -44,7 +43,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _s[key] = value);
     // 连接相关设置即时生效到连接控制器（自动测速/断线重连/默认模式）
     ConnectionController.instance.applySettings(_s);
-    if (key == 'crashReport') CrashLogger.setEnabled(value == true);
     await SettingsStore.instance.save(_s);
   }
 
@@ -69,12 +67,6 @@ class _SettingsPageState extends State<SettingsPage> {
     await AuthService.instance.logout();
     if (!mounted) return;
     context.read<SessionState>().setLoggedIn(false);
-  }
-
-  /// 打开官网页面（用户协议 / 隐私政策）
-  Future<void> _openUrl(String url) async {
-    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    if (!ok && mounted) _toast('无法打开链接，请检查网络后重试');
   }
 
   @override
@@ -157,24 +149,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
-            _section(AppStrings.t('settings_privacy')),
-            _row(icon: '🔔', title: AppStrings.t('settings_notify'),
-                desc: AppStrings.t('settings_notify_desc'),
-                trailing: _switch(_s['notify'] == true, (v) => _set('notify', v))),
-            _row(icon: '🩹', title: AppStrings.t('settings_crash'),
-                desc: AppStrings.t('settings_crash_desc'),
-                trailing: _switch(_s['crashReport'] == true, (v) => _set('crashReport', v))),
-            _row(icon: '📊', title: AppStrings.t('settings_analytics'),
-                desc: AppStrings.t('settings_analytics_desc'),
-                trailing: _switch(_s['analytics'] == true, (v) => _set('analytics', v))),
             _section(AppStrings.t('settings_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
             _row(icon: '⏻', title: AppStrings.t('logout'), danger: true, onTap: _logout),
             _section(AppStrings.t('settings_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
-            _row(icon: '📄', title: AppStrings.t('settings_tos'), onTap: () => _openUrl('https://dy.moneyfly.top/terms')),
-            _row(icon: '🛡️', title: AppStrings.t('settings_privacy_policy'), onTap: () => _openUrl('https://dy.moneyfly.top/privacy')),
             const SizedBox(height: 12),
              Center(
               child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',

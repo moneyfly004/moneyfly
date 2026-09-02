@@ -432,25 +432,35 @@ class ProxyNode {
     this.online = true,
   }) : raw = raw ?? {};
 
-  String get flag {
-    const flags = {
-      'HK': '🇭🇰', 'TW': '🇹🇼', 'JP': '🇯🇵', 'SG': '🇸🇬', 'KR': '🇰🇷',
-      'US': '🇺🇸', 'GB': '🇬🇧', 'DE': '🇩🇪', 'FR': '🇫🇷', 'AU': '🇦🇺',
-      'CA': '🇨🇦', 'RU': '🇷🇺', 'IN': '🇮🇳', 'TH': '🇹🇭', 'VN': '🇻🇳',
-      'NL': '🇳🇱', 'SE': '🇸🇪', 'FI': '🇫🇮', 'CH': '🇨🇭', 'AE': '🇦🇪',
-    };
-    return flags[countryCode?.toUpperCase()] ?? '🌐';
-  }
+  static const countryNames = {
+    'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
+    'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
+    'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
+    'NL': '荷兰', 'SE': '瑞典', 'FI': '芬兰', 'CH': '瑞士', 'AE': '阿联酋',
+    'PH': '菲律宾', 'MY': '马来西亚', 'ID': '印尼', 'TR': '土耳其',
+    'BR': '巴西', 'AR': '阿根廷', 'IE': '爱尔兰', 'PL': '波兰',
+    'IT': '意大利', 'ES': '西班牙', 'PT': '葡萄牙', 'MX': '墨西哥',
+    'CL': '智利', 'ZA': '南非', 'KZ': '哈萨克斯坦', 'UA': '乌克兰',
+  };
 
-  String get regionName {
-    const names = {
-      'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
-      'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-      'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
-      'NL': '荷兰', 'SE': '瑞典', 'FI': '芬兰', 'CH': '瑞士', 'AE': '阿联酋',
-    };
-    return names[countryCode?.toUpperCase()] ?? '其他';
-  }
+  static const countryFlags = {
+    'HK': '\u{1F1ED}\u{1F1F0}', 'TW': '\u{1F1F9}\u{1F1FC}', 'JP': '\u{1F1EF}\u{1F1F5}',
+    'SG': '\u{1F1F8}\u{1F1EC}', 'KR': '\u{1F1F0}\u{1F1F7}', 'US': '\u{1F1FA}\u{1F1F8}',
+    'GB': '\u{1F1EC}\u{1F1E7}', 'DE': '\u{1F1E9}\u{1F1EA}', 'FR': '\u{1F1EB}\u{1F1F7}',
+    'AU': '\u{1F1E6}\u{1F1FA}', 'CA': '\u{1F1E8}\u{1F1E6}', 'RU': '\u{1F1F7}\u{1F1FA}',
+    'IN': '\u{1F1EE}\u{1F1F3}', 'TH': '\u{1F1F9}\u{1F1ED}', 'VN': '\u{1F1FB}\u{1F1F3}',
+    'NL': '\u{1F1F3}\u{1F1F1}', 'SE': '\u{1F1F8}\u{1F1EA}', 'FI': '\u{1F1EB}\u{1F1EE}',
+    'CH': '\u{1F1E8}\u{1F1ED}', 'AE': '\u{1F1E6}\u{1F1EA}', 'PH': '\u{1F1F5}\u{1F1ED}',
+    'MY': '\u{1F1F2}\u{1F1FE}', 'ID': '\u{1F1EE}\u{1F1E9}', 'TR': '\u{1F1F9}\u{1F1F7}',
+    'BR': '\u{1F1E7}\u{1F1F7}', 'AR': '\u{1F1E6}\u{1F1F7}', 'IE': '\u{1F1EE}\u{1F1EA}',
+    'PL': '\u{1F1F5}\u{1F1F1}', 'IT': '\u{1F1EE}\u{1F1F9}', 'ES': '\u{1F1EA}\u{1F1F8}',
+    'PT': '\u{1F1F5}\u{1F1F9}', 'MX': '\u{1F1F2}\u{1F1FD}', 'CL': '\u{1F1E8}\u{1F1F1}',
+    'ZA': '\u{1F1FF}\u{1F1E6}', 'KZ': '\u{1F1F0}\u{1F1FF}', 'UA': '\u{1F1FA}\u{1F1E6}',
+  };
+
+  String get flag => countryFlags[countryCode?.toUpperCase()] ?? '\u{1F310}';
+
+  String get regionName => countryNames[countryCode?.toUpperCase()] ?? '其他';
 
   /// 由 Clash YAML 节点 map 构造
   factory ProxyNode.fromClashMap(Map<String, dynamic> m) {
@@ -484,23 +494,36 @@ class ProxyNode {
   static String _inferCountry(String tag, String? region) {
     final upper = '$tag $region'.toUpperCase();
     const map = {
-      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK', 'HK-': 'HK',
+      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK', 'HK': 'HK',
       '台湾': 'TW', 'TAIWAN': 'TW', '台北': 'TW',
-      '日本': 'JP', 'JAPAN': 'JP', 'TOKYO': 'JP', '大阪': 'JP', '东京': 'JP',
-      '新加坡': 'SG', 'SINGAPORE': 'SG', 'SIN': 'SG',
-      '韩国': 'KR', 'KOREA': 'KR', 'SEOUL': 'KR',
-      '美国': 'US', 'USA': 'US', 'UNITED STATES': 'US', 'LOS ANGELES': 'US',
-      '英国': 'GB', 'UK': 'GB', 'LONDON': 'GB',
-      '德国': 'DE', 'GERMANY': 'DE', 'FRANKFURT': 'DE',
-      '法国': 'FR', 'FRANCE': 'FR', 'PARIS': 'FR',
-      '澳大利亚': 'AU', 'AUSTRALIA': 'AU', 'SYDNEY': 'AU',
-      '加拿大': 'CA', 'CANADA': 'CA', 'TORONTO': 'CA',
-      '俄罗斯': 'RU', 'RUSSIA': 'RU', 'MOSCOW': 'RU',
-      '印度': 'IN', 'INDIA': 'IN', 'MUMBAI': 'IN',
-      '泰国': 'TH', 'THAILAND': 'TH', 'BANGKOK': 'TH',
+      '日本': 'JP', 'JAPAN': 'JP', 'TOKYO': 'JP', '大阪': 'JP', '东京': 'JP', 'OSAKA': 'JP',
+      '新加坡': 'SG', 'SINGAPORE': 'SG',
+      '韩国': 'KR', 'KOREA': 'KR', 'SEOUL': 'KR', '首尔': 'KR',
+      '美国': 'US', 'USA': 'US', 'UNITED STATES': 'US', 'LOS ANGELES': 'US', 'SEATTLE': 'US', 'SAN JOSE': 'US', 'NEW YORK': 'US', '洛杉矶': 'US', '纽约': 'US', '西雅图': 'US', '硅谷': 'US', 'SILICON': 'US', 'DALLAS': 'US', 'CHICAGO': 'US',
+      '英国': 'GB', 'UK': 'GB', 'LONDON': 'GB', 'UNITED KINGDOM': 'GB', '伦敦': 'GB',
+      '德国': 'DE', 'GERMANY': 'DE', 'FRANKFURT': 'DE', '法兰克福': 'DE',
+      '法国': 'FR', 'FRANCE': 'FR', 'PARIS': 'FR', '巴黎': 'FR',
+      '澳大利亚': 'AU', 'AUSTRALIA': 'AU', 'SYDNEY': 'AU', '悉尼': 'AU',
+      '加拿大': 'CA', 'CANADA': 'CA', 'TORONTO': 'CA', 'VANCOUVER': 'CA',
+      '俄罗斯': 'RU', 'RUSSIA': 'RU', 'MOSCOW': 'RU', '莫斯科': 'RU',
+      '印度': 'IN', 'INDIA': 'IN', 'MUMBAI': 'IN', '孟买': 'IN',
+      '泰国': 'TH', 'THAILAND': 'TH', 'BANGKOK': 'TH', '曼谷': 'TH',
       '越南': 'VN', 'VIETNAM': 'VN',
-      '荷兰': 'NL', 'NETHERLANDS': 'NL', 'AMSTERDAM': 'NL',
-      '阿联酋': 'AE', 'DUBAI': 'AE', 'UAE': 'AE',
+      '荷兰': 'NL', 'NETHERLANDS': 'NL', 'AMSTERDAM': 'NL', '阿姆斯特丹': 'NL',
+      '阿联酋': 'AE', 'DUBAI': 'AE', 'UAE': 'AE', '迪拜': 'AE',
+      '瑞典': 'SE', 'SWEDEN': 'SE',
+      '芬兰': 'FI', 'FINLAND': 'FI',
+      '瑞士': 'CH', 'SWITZERLAND': 'CH', 'ZURICH': 'CH',
+      '菲律宾': 'PH', 'PHILIPPINES': 'PH', 'MANILA': 'PH',
+      '马来西亚': 'MY', 'MALAYSIA': 'MY',
+      '印尼': 'ID', 'INDONESIA': 'ID', 'JAKARTA': 'ID',
+      '土耳其': 'TR', 'TURKEY': 'TR', 'ISTANBUL': 'TR',
+      '巴西': 'BR', 'BRAZIL': 'BR', 'SAO PAULO': 'BR',
+      '阿根廷': 'AR', 'ARGENTINA': 'AR',
+      '爱尔兰': 'IE', 'IRELAND': 'IE', 'DUBLIN': 'IE',
+      '波兰': 'PL', 'POLAND': 'PL', 'WARSAW': 'PL',
+      '意大利': 'IT', 'ITALY': 'IT', 'MILAN': 'IT',
+      '西班牙': 'ES', 'SPAIN': 'ES', 'MADRID': 'ES',
     };
     for (final e in map.entries) {
       if (upper.contains(e.key)) return e.value;

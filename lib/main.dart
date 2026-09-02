@@ -41,8 +41,10 @@ class SessionState extends ChangeNotifier {
   }
 }
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
+  await UpdateService.instance.init();
   runApp(const MoneyFlyApp());
 }
 
@@ -60,8 +62,6 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
   void initState() {
     super.initState();
     _session.restore();
-    // 启动即读取当前版本（供检查更新比对）
-    UpdateService.instance.init();
     // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）+ 恢复主题
     SettingsStore.instance
         .load()

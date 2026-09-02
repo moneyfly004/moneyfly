@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/speed_tester.dart';
+import '../../core/models/models.dart';
 import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
@@ -366,24 +367,10 @@ class _NodeListView extends StatelessWidget {
   }
 }
 
-/// 地区旗标（顶层函数，供懒加载列表与分组排序共用）
-String regionFlag(String code) {
-  const flags = {
-    'HK': '🇭🇰', 'TW': '🇹🇼', 'JP': '🇯🇵', 'SG': '🇸🇬', 'KR': '🇰🇷',
-    'US': '🇺🇸', 'GB': '🇬🇧', 'DE': '🇩🇪', 'FR': '🇫🇷', 'AU': '🇦🇺',
-    'CA': '🇨🇦', 'RU': '🇷🇺', 'IN': '🇮🇳', 'TH': '🇹🇭', 'VN': '🇻🇳',
-    'NL': '🇳🇱', 'SE': '🇸🇪', 'AE': '🇦🇪',
-  };
-  return flags[code] ?? '🌐';
-}
+/// 地区旗标（统一用 ProxyNode.countryFlags）
+String regionFlag(String code) =>
+    ProxyNode.countryFlags[code] ?? '\u{1F310}';
 
-/// 地区名（顶层函数）
-String regionName(String code) {
-  const names = {
-    'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
-    'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-    'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
-    'NL': '荷兰', 'SE': '瑞典', 'AE': '阿联酋', 'XX': '其他',
-  };
-  return names[code] ?? '其他';
-}
+/// 地区名（统一用 ProxyNode.countryNames）
+String regionName(String code) =>
+    ProxyNode.countryNames[code] ?? '其他';

@@ -1,6 +1,7 @@
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
+import 'settings_store.dart';
 
 /// 认证服务：登录 / 注册 / 验证码 / 找回密码 / 改密 / 登出
 class AuthService {
@@ -78,5 +79,11 @@ class AuthService {
           .post(Endpoints.logout, extra: {'_noSessionExpired': true});
     } catch (_) {}
     await ApiClient.clearTokens();
+    // 登出后重置 autoConnect，防止下次登录自动连接
+    try {
+      final s = await SettingsStore.instance.load();
+      s['autoConnect'] = false;
+      await SettingsStore.instance.save(s);
+    } catch (_) {}
   }
 }

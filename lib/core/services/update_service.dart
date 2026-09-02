@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../api/api_client.dart';
+import '../api/user_agent.dart';
 
 /// 软件升级信息
 class UpdateInfo {
@@ -38,12 +39,13 @@ class UpdateService {
   static final UpdateService instance = UpdateService._();
 
   /// 初始化：读取当前应用版本（flutter_test 环境跳过，避免平台通道挂起）
+  /// 并用真实包版本 + OS 特征串刷新 User-Agent
   Future<void> init() async {
     if (Platform.environment.containsKey('FLUTTER_TEST')) return;
     try {
       final info = await PackageInfo.fromPlatform();
       UpdateInfo.currentVersion = info.version;
-      ApiClient.userAgent = 'MoneyFly/${info.version}';
+      ApiClient.userAgent = await UserAgent.resolve(version: info.version);
     } catch (_) {}
   }
 

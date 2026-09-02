@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'endpoints.dart';
+import 'user_agent.dart';
 
 /// 统一 API 客户端
 /// 后端所有接口（除 XBoard 兼容与订阅原文外）返回信封：
@@ -43,6 +44,14 @@ class ApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // UA 每次请求强制覆盖：Dio 构造时会把 UA 快照进 BaseOptions，
+          // 若 UpdateService 在单例创建后才更新 userAgent，直接赋值静态量
+          // 不会生效；这里在发请求前统一刷新（与 Authorization 同机制）。
+          options.headers['User-Agent'] = userAgent;
+          // 注入设备详情头（型号/品牌/OS/类型），后端据此补充 UA 解析不全的设备信息
+          for (final e in UserAgent.deviceHeaders.entries) {
+            options.headers[e.key] = e.value;
+          }
           final t = await readAccessToken();
           if (t != null && t.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $t';
@@ -93,8 +102,10 @@ class ApiClient {
     mOptions: MacOsOptions(useDataProtectionKeyChain: false),
   );
 
-  /// 客户端 User-Agent：MoneyFly/<版本>（后端据此识别为 moneyfly 客户端，
-  /// 设备列表/登录历史会显示 MoneyFly；由 UpdateService.init 在启动时更新）
+  /// 客户端 User-Agent（后端据此识别 moneyfly 客户端与操作系统/设备类型）。
+  /// 规范：`MoneyFly/<版本> (<操作系统特征串>)`，见 user_agent.dart。
+  /// 默认值仅兜底；启动时由 UpdateService.init 用真实包版本 + OS 信息刷新
+  /// （设备列表/登录历史会显示 MoneyFly + Windows/macOS/Android + 版本号）。
   static String userAgent = 'MoneyFly/0.0.1';
 
   /// 测试开关：false 时 token 存内存（避免 flutter test 无插件实现）
