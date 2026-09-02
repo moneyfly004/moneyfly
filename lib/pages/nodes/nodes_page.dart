@@ -23,18 +23,24 @@ class NodesPage extends StatefulWidget {
 class _NodesPageState extends State<NodesPage> {
   bool _autoBest = true;
   bool _testing = false;
+  bool _refreshing = false;
   String _query = '';
   Timer? _debounce; // 搜索防抖
   final _searchCtrl = TextEditingController();
 
   Future<void> _load({bool force = false}) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
     final conn = context.read<ConnectionController>();
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       await conn.loadNodes(nodes);
       if (mounted && nodes.isEmpty) _toast(AppStrings.t('no_nodes_hint'));
+      if (mounted && nodes.isNotEmpty && force) _toast(AppStrings.t('refresh_sub_ok'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
@@ -98,8 +104,18 @@ class _NodesPageState extends State<NodesPage> {
                   Text(AppStrings.t('nodes_title'), style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () => _load(force: true),
-                    child: Text('🔄 ${AppStrings.t('refresh_sub')}', style: const TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                    onTap: _refreshing ? null : () => _load(force: true),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: MFColors.brand.withValues(alpha: .1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: MFColors.brand.withValues(alpha: .3)),
+                      ),
+                      child: _refreshing
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: MFColors.brandLight))
+                          : Text('🔄 ${AppStrings.t('refresh_sub')}', style: const TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                    ),
                   ),
                 ],
               ),

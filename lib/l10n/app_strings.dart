@@ -155,6 +155,7 @@ class AppStrings {
     'notify_disconnected': '连接已断开',
     // 节点页补充
     'refresh_sub': '刷新订阅',
+    'refresh_sub_ok': '订阅已刷新',
     'no_nodes_hint': '订阅中没有可用节点',
     'speed_testing': '测速中…',
     'speed_done': '测速完成，已按延迟排序',
@@ -446,6 +447,7 @@ class AppStrings {
     'notify_disconnected': 'Disconnected',
     // 节点页补充
     'refresh_sub': 'Refresh Subscription',
+    'refresh_sub_ok': 'Subscription refreshed',
     'no_nodes_hint': 'No nodes in subscription',
     'speed_testing': 'Testing…',
     'speed_done': 'Test done, sorted by latency',
