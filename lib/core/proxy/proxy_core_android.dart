@@ -4,10 +4,11 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 
+import '../../l10n/app_strings.dart';
 import 'proxy_core.dart';
 
-/// Android 内核：通过 MethodChannel 驱动 VpnService（内含 sing-box 子进程），
-/// 切模式/切节点走本地 Clash API（与桌面端一致，热更新不断网）。
+/// Android 内核：通过 MethodChannel 驱动 VpnService + libbox（sing-box 共享库），
+/// 切模式/切节点走 Clash API 热更新，流量统计从 /traffic 流拉取。
 class ProxyCoreAndroid extends ProxyCore {
   static const _channel = MethodChannel('top.moneyfly/vpn_core');
   static const clashApi = 'http://127.0.0.1:9090';
@@ -23,58 +24,57 @@ class ProxyCoreAndroid extends ProxyCore {
   VoidCallback? _onUnexpectedExit;
   void Function(double upMbps, double downMbps)? _onTraffic;
   Timer? _watchdog;
+  CancelToken? _trafficCancel;
+  final List<int> _trafficBuf = [];
 
   @override
   bool get isRunning => _running;
-
   @override
   String? get lastError => _lastError;
-
   @override
   VoidCallback? get onUnexpectedExit => _onUnexpectedExit;
-
   @override
   set onUnexpectedExit(VoidCallback? cb) => _onUnexpectedExit = cb;
-
   @override
   void Function(double upMbps, double downMbps)? get onTraffic => _onTraffic;
-
   @override
   set onTraffic(void Function(double upMbps, double downMbps)? cb) => _onTraffic = cb;
 
   @override
   Future<void> start(Map<String, dynamic> config) async {
-    if (_running) throw StateError('内核已在运行');
+    if (_running) throw StateError('already running');
     _lastError = null;
-    // 移除 Flutter 侧元数据（sing-box 不识别，Android TUN 由 VpnService 管理）
     config.remove('_tunMode');
-    // Android 端 TUN 由 VpnService.establish() 创建并传 fd，
-    // 不使用 sing-box 的 auto_route/inet4_address，移除 tun inbound 避免冲突
     final inbounds = config['inbounds'];
     if (inbounds is List) {
-      inbounds.removeWhere((ib) => ib is Map && ib['type'] == 'tun');
+      for (final ib in inbounds) {
+        if (ib is Map && ib['type'] == 'tun') {
+          ib['auto_route'] = false;
+          ib['strict_route'] = false;
+          ib['stack'] = 'gvisor';
+        }
+      }
     }
     try {
-      final configJson = jsonEncode(config);
-      await _channel.invokeMethod('startVpn', {'config': configJson});
+      await _channel.invokeMethod('startVpn', {'config': jsonEncode(config)});
     } catch (e) {
-      _lastError = '启动 VPN 服务失败：$e';
+      _lastError = AppStrings.t('vpn_start_fail', {'err': '$e'});
       throw UnsupportedError(_lastError!);
     }
-    // 等 Clash API 就绪（sing-box 子进程启动完成）
     final sw = Stopwatch()..start();
-    while (sw.elapsed < const Duration(seconds: 12)) {
+    while (sw.elapsed < const Duration(seconds: 15)) {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
         if (r.statusCode == 200) {
           _running = true;
           _startWatchdog();
+          _startTrafficStream();
           return;
         }
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 300));
     }
-    _lastError = '内核启动超时（12s）';
+    _lastError = AppStrings.t('kernel_timeout');
     throw UnsupportedError(_lastError!);
   }
 
@@ -82,6 +82,8 @@ class ProxyCoreAndroid extends ProxyCore {
   Future<void> stop() async {
     _watchdog?.cancel();
     _watchdog = null;
+    _trafficCancel?.cancel();
+    _trafficCancel = null;
     try {
       await _channel.invokeMethod('stopVpn');
     } catch (_) {}
@@ -99,35 +101,76 @@ class ProxyCoreAndroid extends ProxyCore {
   }
 
   Future<void> _clash(String method, String path, Object body) async {
-    if (!_running) throw StateError('内核未运行');
+    if (!_running) throw StateError('not running');
     await _api.request(path,
         data: body,
         options: Options(method: method, validateStatus: (s) => s != null && s >= 200 && s < 300));
   }
 
-  /// 看门狗：每 3s 探活 Clash API，内核异常退出时触发重连回调
   void _startWatchdog() {
     _watchdog?.cancel();
-    _watchdog = Timer.periodic(const Duration(seconds: 3), (_) async {
+    _watchdog = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!_running) return;
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
-        if (r.statusCode != 200) {
-          _running = false;
-          _lastError = '内核异常退出';
-          _onUnexpectedExit?.call();
-        }
+        if (r.statusCode != 200) _onKernelDead();
       } catch (_) {
-        _running = false;
-        _lastError = '内核异常退出';
-        _onUnexpectedExit?.call();
+        _onKernelDead();
       }
     });
+  }
+
+  void _onKernelDead() {
+    _running = false;
+    _lastError = AppStrings.t('kernel_exit');
+    _trafficCancel?.cancel();
+    _onUnexpectedExit?.call();
+  }
+
+  void _startTrafficStream() {
+    _trafficCancel?.cancel();
+    _trafficCancel = CancelToken();
+    _trafficBuf.clear();
+    unawaited(_streamTraffic(_trafficCancel!));
+  }
+
+  Future<void> _streamTraffic(CancelToken cancel) async {
+    while (_running && !cancel.isCancelled) {
+      try {
+        final resp = await _api.get('/traffic',
+            cancelToken: cancel,
+            options: Options(responseType: ResponseType.stream));
+        final stream = resp.data.stream as Stream<List<int>>;
+        await for (final chunk in stream) {
+          if (cancel.isCancelled || !_running) break;
+          _trafficBuf.addAll(chunk);
+          while (true) {
+            final nl = _trafficBuf.indexOf(0x0A);
+            if (nl < 0) break;
+            final line = utf8.decode(_trafficBuf.sublist(0, nl)).trim();
+            _trafficBuf.removeRange(0, nl + 1);
+            if (line.isEmpty) continue;
+            try {
+              final obj = jsonDecode(line);
+              if (obj is Map && obj['up'] is num && obj['down'] is num) {
+                _onTraffic?.call(
+                  (obj['up'] as num) / 1024 / 1024,
+                  (obj['down'] as num) / 1024 / 1024,
+                );
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      if (!_running || cancel.isCancelled) break;
+      await Future.delayed(const Duration(seconds: 2));
+    }
   }
 
   @override
   void dispose() {
     _watchdog?.cancel();
+    _trafficCancel?.cancel();
     _api.close(force: true);
     unawaited(stop());
   }

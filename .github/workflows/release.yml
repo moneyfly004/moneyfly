@@ -52,20 +52,12 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 下载 sing-box Android 内核
+      - name: 下载 libbox.aar
         run: |
-          V=$SING_BOX_VERSION
-          BASE="https://github.com/SagerNet/sing-box/releases/download/v$V"
-          for ABI in arm64 armv7 amd64; do
-            curl -fL --max-time 300 -o "sb-$ABI.tar.gz" "$BASE/sing-box-$V-android-$ABI.tar.gz"
-            tar -xzf "sb-$ABI.tar.gz"
-          done
-          mkdir -p android/app/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}
-          cp sing-box-*-android-arm64/sing-box  android/app/src/main/jniLibs/arm64-v8a/libsingbox.so
-          cp sing-box-*-android-armv7/sing-box  android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so
-          cp sing-box-*-android-amd64/sing-box  android/app/src/main/jniLibs/x86_64/libsingbox.so
-          chmod +x android/app/src/main/jniLibs/*/libsingbox.so
-          ls -la android/app/src/main/jniLibs/*/libsingbox.so
+          mkdir -p android/app/libs
+          curl -fL --max-time 300 -o android/app/libs/libbox.aar \
+            "https://github.com/moneyfly004/sing-box-lib/releases/download/v$SING_BOX_VERSION/libbox-$SING_BOX_VERSION.aar"
+          ls -lh android/app/libs/libbox.aar
 
       - name: 测试
         run: |
