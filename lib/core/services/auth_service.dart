@@ -72,7 +72,10 @@ class AuthService {
   /// 登出（尽力而为：本地清 token，后台调用失败不阻塞）
   Future<void> logout() async {
     try {
-      await ApiClient.instance.post(Endpoints.logout);
+      // _noSessionExpired：logout 自身 401 不触发会话过期回调，
+      // 避免「401→refresh失败→logout→401」无限递归循环
+      await ApiClient.instance
+          .post(Endpoints.logout, extra: {'_noSessionExpired': true});
     } catch (_) {}
     await ApiClient.clearTokens();
   }

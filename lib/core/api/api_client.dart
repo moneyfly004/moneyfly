@@ -51,7 +51,9 @@ class ApiClient {
         },
         onError: (e, handler) async {
           final resp = e.response;
-          if (resp?.statusCode == 401 && e.requestOptions.extra['_retried'] != true) {
+          final noSession = e.requestOptions.extra['_noSessionExpired'] == true;
+          if (resp?.statusCode == 401 && !noSession &&
+              e.requestOptions.extra['_retried'] != true) {
             e.requestOptions.extra['_retried'] = true;
             final ok = await _tryRefresh();
             if (ok) {
@@ -200,14 +202,20 @@ class ApiClient {
   }
 
   /// GET：返回解包后的 data
-  Future<dynamic> get(String path, {Map<String, dynamic>? query}) async {
-    final r = await _dio.get(path, queryParameters: query);
+  Future<dynamic> get(String path,
+      {Map<String, dynamic>? query, Map<String, dynamic>? extra}) async {
+    final r = await _dio.get(path,
+        queryParameters: query, options: Options(extra: extra));
     return _unwrap(r.data);
   }
 
-  /// POST：返回解包后的 data；raw=true 时返回原始响应体
-  Future<dynamic> post(String path, {Object? data, bool raw = false}) async {
-    final r = await _dio.post(path, data: data);
+  /// POST：返回解包后的 data；raw=true 时返回原始响应体。
+  /// [extra] 传 {'_noSessionExpired': true} 可跳过 401 会话过期触发
+  /// （logout 用：避免 token 失效后 logout 自身 401 → onSessionExpired →
+  /// 再次 logout → 无限递归循环）。
+  Future<dynamic> post(String path,
+      {Object? data, bool raw = false, Map<String, dynamic>? extra}) async {
+    final r = await _dio.post(path, data: data, options: Options(extra: extra));
     return raw ? r.data : _unwrap(r.data);
   }
 
