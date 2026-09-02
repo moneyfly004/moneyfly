@@ -53,7 +53,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
   void _startPolling() {
     _timer = Timer.periodic(const Duration(milliseconds: 2500), (_) async {
       if (!_polling || !mounted) return;
-      setState(() => _elapsed += 3);
+      setState(() => _elapsed += 2);
       if (_elapsed >= 900) {
         _timer?.cancel();
         setState(() => _polling = false);

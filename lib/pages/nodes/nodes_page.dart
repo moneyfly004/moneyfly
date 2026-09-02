@@ -24,6 +24,7 @@ class _NodesPageState extends State<NodesPage> {
   bool _testing = false;
   String _query = '';
   Timer? _debounce; // 搜索防抖
+  final _searchCtrl = TextEditingController();
 
   Future<void> _load({bool force = false}) async {
     final conn = context.read<ConnectionController>();
@@ -37,6 +38,7 @@ class _NodesPageState extends State<NodesPage> {
   }
 
   Future<void> _runSpeedTest() async {
+    if (_testing) return; // 防并发
     final conn = context.read<ConnectionController>();
     if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
@@ -45,7 +47,7 @@ class _NodesPageState extends State<NodesPage> {
     setState(() => _testing = true);
     try {
       final tested = await SpeedTester.instance.testAll(conn.nodes);
-      await conn.loadNodes(tested);
+      conn.updateTestedNodes(tested);
       if (mounted) {
         _toast(AppStrings.t('speed_done'));
         if (_autoBest) {
@@ -113,8 +115,8 @@ class _NodesPageState extends State<NodesPage> {
                           color: MFColors.card, borderRadius: BorderRadius.circular(13),
                           border: Border.all(color: MFColors.line2)),
                       child: TextField(
+                        controller: _searchCtrl,
                         onChanged: (v) {
-                          // 300ms 防抖：输入时不做全量过滤，滚动更流畅
                           _debounce?.cancel();
                           _debounce = Timer(const Duration(milliseconds: 300), () {
                             if (mounted) setState(() => _query = v.trim());
@@ -125,11 +127,16 @@ class _NodesPageState extends State<NodesPage> {
                           hintText: AppStrings.t('search_hint'),
                           hintStyle:  TextStyle(fontSize: 13, color: MFColors.txt3),
                           border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
                           prefixIcon:  Icon(Icons.search, size: 17, color: MFColors.txt3),
                           suffixIcon: _query.isEmpty
                               ? null
                               : GestureDetector(
                                   onTap: () {
+                                    _searchCtrl.clear();
                                     _debounce?.cancel();
                                     setState(() => _query = '');
                                   },
@@ -261,7 +268,7 @@ class _NodesPageState extends State<NodesPage> {
             Container(
               width: 34,
               height: 34,
-              decoration: BoxDecoration(color: const Color(0xFF1B2233), borderRadius: BorderRadius.circular(11)),
+              decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(11)),
               alignment: Alignment.center,
               child: CountryFlag(n.countryCode, size: 17),
             ),

@@ -143,6 +143,28 @@ class _MainShellState extends State<MainShell> {
     ProfilePage(),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    mainTabIndex.addListener(_onExternalTabSwitch);
+  }
+
+  @override
+  void dispose() {
+    mainTabIndex.removeListener(_onExternalTabSwitch);
+    super.dispose();
+  }
+
+  void _onExternalTabSwitch() {
+    final i = mainTabIndex.value;
+    if (i != _index && i >= 0 && i < _pages.length) {
+      setState(() {
+        _index = i;
+        _visited.add(i);
+      });
+    }
+  }
+
   void _onTap(int i) {
     mainTabIndex.value = i;
     setState(() {

@@ -121,7 +121,7 @@ class _DevicesPageState extends State<DevicesPage> {
               Container(
                 width: 38, height: 38,
                 decoration: BoxDecoration(
-                    color: const Color(0xFF1B2233), borderRadius: BorderRadius.circular(11)),
+                    color: MFColors.card2, borderRadius: BorderRadius.circular(11)),
                 alignment: Alignment.center,
                 child: Text(d.osName.isNotEmpty ? d.osName.substring(0, 1).toUpperCase() : '📱',
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),

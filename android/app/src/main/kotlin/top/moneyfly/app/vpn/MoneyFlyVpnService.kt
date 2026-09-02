@@ -107,10 +107,12 @@ class MoneyFlyVpnService : VpnService() {
         }.start()
     }
 
+    @Synchronized
     private fun stopCore() {
-        try { process?.destroy() } catch (_: Exception) {}
+        val p = process ?: return
         process = null
         isRunning = false
+        try { p.destroy() } catch (_: Exception) {}
         try { fd?.close() } catch (_: Exception) {}
         fd = null
         fdFile.delete()
@@ -152,9 +154,15 @@ class MoneyFlyVpnService : VpnService() {
                     PendingIntent.FLAG_IMMUTABLE))
                 .addAddress("10.8.0.2", 32)
                 .addRoute("0.0.0.0", 0)
+                // IPv6 全路由（否则 IPv6 流量绕过 VPN）
+                .addAddress("fd00::2", 128)
+                .addRoute("::", 0)
                 .addDnsServer("223.5.5.5")
                 .addDnsServer("1.1.1.1")
                 .setMtu(1500)
+            // 排除自身：sing-box 子进程继承本 App 的 UID，
+            // 不排除会导致出站被 TUN 捕获 → 路由死循环（连接永远不通）
+            builder.addDisallowedApplication(packageName)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 builder.setBlocking(true)
             }

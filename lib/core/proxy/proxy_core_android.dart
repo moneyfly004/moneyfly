@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
@@ -9,7 +8,7 @@ import 'proxy_core.dart';
 /// Android 内核：通过 MethodChannel 驱动 VpnService（内含 sing-box 子进程），
 /// 切模式/切节点走本地 Clash API（与桌面端一致，热更新不断网）。
 class ProxyCoreAndroid extends ProxyCore {
-  static const _channel = MethodChannel('top.moneyfly/vpn_core');
+  static const _channel = MethodChannel('top.moneyfly.app/vpn');
   static const clashApi = 'http://127.0.0.1:9090';
 
   final Dio _api = Dio(BaseOptions(
@@ -47,7 +46,7 @@ class ProxyCoreAndroid extends ProxyCore {
     if (_running) throw StateError('内核已在运行');
     _lastError = null;
     try {
-      await _channel.invokeMethod('startVpn', {'config': jsonEncode(config)});
+      await _channel.invokeMethod('startVpn', {'config': config});
     } catch (e) {
       _lastError = '启动 VPN 服务失败：$e';
       throw UnsupportedError(_lastError!);

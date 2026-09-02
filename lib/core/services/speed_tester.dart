@@ -18,13 +18,17 @@ class SpeedTester {
     final samples = <int>[];
     for (var i = 0; i < _probeCount; i++) {
       final sw = Stopwatch()..start();
+      Socket? socket;
       try {
-        final socket = await Socket.connect(node.server, node.port, timeout: connectTimeout);
-        await socket.close();
+        socket = await Socket.connect(node.server, node.port, timeout: connectTimeout);
         sw.stop();
         samples.add(sw.elapsedMilliseconds);
       } catch (_) {
         return -1; // 一次失败即判定不可用（避免慢节点拖时间）
+      } finally {
+        // 关键：destroy() 立即释放 native FD（close() 只做优雅关闭、等待对端 FIN，
+        // 大量节点测速时 FD 会堆积 → 'Too many open files' → 后续连接全部失败）
+        socket?.destroy();
       }
     }
     samples.sort();

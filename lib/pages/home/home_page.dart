@@ -595,14 +595,20 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildStats(ConnectionController conn) {
-    // 实时速率由内核接入后提供（阶段 3）；当前展示占位，避免伪造数据误导用户
-    final up = conn.upSpeedMbps, down = conn.downSpeedMbps;
-    return Row(
-      children: [
-        Expanded(child: _StatCard(label: AppStrings.t('up_speed'), value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
-        const SizedBox(width: 12),
-        Expanded(child: _StatCard(label: AppStrings.t('down_speed'), value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
-      ],
+    // 实时速率由内核 1s 推送；用 ValueListenableBuilder 只刷新速率卡片，
+    // 避免每秒重建整个首页（流畅度）
+    return ValueListenableBuilder<SpeedSnapshot>(
+      valueListenable: conn.speedNotifier,
+      builder: (context, snap, _) {
+        final up = snap.upMbps, down = snap.downMbps;
+        return Row(
+          children: [
+            Expanded(child: _StatCard(label: AppStrings.t('up_speed'), value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
+            const SizedBox(width: 12),
+            Expanded(child: _StatCard(label: AppStrings.t('down_speed'), value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
+          ],
+        );
+      },
     );
   }
 

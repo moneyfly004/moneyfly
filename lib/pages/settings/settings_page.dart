@@ -220,7 +220,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Container(
               width: 28, height: 28,
               decoration: BoxDecoration(
-                  color: danger ? MFColors.red.withValues(alpha: .12) : const Color(0xFF1B2233),
+                  color: danger ? MFColors.red.withValues(alpha: .12) : MFColors.card2,
                   borderRadius: BorderRadius.circular(9)),
               alignment: Alignment.center,
               child: Text(icon, style: const TextStyle(fontSize: 12)),
@@ -259,7 +259,7 @@ class _SettingsPageState extends State<SettingsPage> {
       required VoidCallback onLeft, required VoidCallback onRight}) {
     return Container(
       padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(color: const Color(0xFF1B2233), borderRadius: BorderRadius.circular(9)),
+      decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(9)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

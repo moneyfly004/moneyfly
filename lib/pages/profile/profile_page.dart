@@ -235,7 +235,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   if (badge != null)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: const Color(0xFF232B3D), borderRadius: BorderRadius.circular(12)),
+                      decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(12)),
                       child: Text(badge, style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                     ),
                   const SizedBox(width: 4),
