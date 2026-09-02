@@ -13,11 +13,6 @@ import top.moneyfly.app.MainActivity
 import top.moneyfly.app.R
 import java.io.File
 
-/**
- * MoneyFly VPN 前台服务：系统级 VPN 通道 + 内置 sing-box 内核
- * 连接：解压二进制 → establish() 建 TUN → 注入 tun.fd → 跑 sing-box；
- * 断开：destroy 进程 + 关 fd + 移除 tunfd。
- */
 class MoneyFlyVpnService : VpnService() {
     companion object {
         const val ACTION_START = "top.moneyfly.vpn.START"
@@ -33,7 +28,6 @@ class MoneyFlyVpnService : VpnService() {
 
     private var process: Process? = null
     private var fd: ParcelFileDescriptor? = null
-    private val fdFile: File get() = File(filesDir, "tunfd")
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -55,23 +49,19 @@ class MoneyFlyVpnService : VpnService() {
         Thread {
             try {
                 val binary = extractBinary()
-                val pfd = establishTun() ?: throw IllegalStateException("建立 TUN 失败")
+                val pfd = establishTun() ?: throw IllegalStateException("TUN failed")
                 fd = pfd
-                fdFile.writeText(pfd.fd.toString())
 
                 val cfg = JSONObject(configJson)
-                val inbounds = cfg.optJSONArray("inbounds")
-                if (inbounds != null) {
-                    for (i in 0 until inbounds.length()) {
-                        val ib = inbounds.getJSONObject(i)
-                        if (ib.optString("type") == "tun") {
-                            ib.put("fd", fdFile.absolutePath)
-                            ib.put("auto_route", false)
-                            ib.put("strict_route", false)
-                        }
-                    }
-                }
-                // 内置规则集落盘，并把远程 rule_set 替换为本地路径（国内直连 GitHub 被墙）
+                val inbounds = org.json.JSONArray()
+                inbounds.put(JSONObject().apply {
+                    put("type", "mixed")
+                    put("tag", "mixed-in")
+                    put("listen", "127.0.0.1")
+                    put("listen_port", 2080)
+                })
+                cfg.put("inbounds", inbounds)
+
                 extractRuleAssets()
                 val route = cfg.optJSONObject("route")
                 val ruleSets = route?.optJSONArray("rule_set")
@@ -97,7 +87,7 @@ class MoneyFlyVpnService : VpnService() {
                     .start()
                 isRunning = true
 
-                val code = process!!.waitFor()
+                process!!.waitFor()
                 isRunning = false
                 process = null
             } catch (e: Exception) {
@@ -115,10 +105,8 @@ class MoneyFlyVpnService : VpnService() {
         try { p.destroy() } catch (_: Exception) {}
         try { fd?.close() } catch (_: Exception) {}
         fd = null
-        fdFile.delete()
     }
 
-    /** 从 assets 解压内置 geoip/geosite 规则集到 filesDir（幂等） */
     private fun extractRuleAssets() {
         for (name in listOf("geoip-cn.srs", "geosite-cn.srs")) {
             val target = File(filesDir, name)
@@ -127,18 +115,15 @@ class MoneyFlyVpnService : VpnService() {
                 assets.open("flutter_assets/assets/rules/$name").use { input ->
                     target.outputStream().use { output -> input.copyTo(output) }
                 }
-            } catch (_: Exception) {
-                // 资产缺失时保留远程 url（builder 回退远程），不阻塞
-            }
+            } catch (_: Exception) {}
         }
     }
 
     private fun extractBinary(): String {
         val out = File(filesDir, "sing-box")
         if (!out.exists() || out.length() == 0L) {
-            // 内核通过 jniLibs 按 ABI 打包（split-per-abi 时每个 APK 只含自己的二进制）
             val src = File(applicationInfo.nativeLibraryDir, "libsingbox.so")
-            if (!src.exists()) throw IllegalStateException("未找到内置内核 libsingbox.so")
+            if (!src.exists()) throw IllegalStateException("libsingbox.so not found")
             src.copyTo(out, overwrite = true)
             out.setExecutable(true, false)
         }
@@ -148,20 +133,17 @@ class MoneyFlyVpnService : VpnService() {
     private fun establishTun(): ParcelFileDescriptor? {
         return try {
             val builder = Builder()
-                .setSession("MoneyFly 安全连接")
+                .setSession("MoneyFly")
                 .setConfigureIntent(PendingIntent.getActivity(
                     this, 0, Intent(this, MainActivity::class.java),
                     PendingIntent.FLAG_IMMUTABLE))
                 .addAddress("10.8.0.2", 32)
                 .addRoute("0.0.0.0", 0)
-                // IPv6 全路由（否则 IPv6 流量绕过 VPN）
                 .addAddress("fd00::2", 128)
                 .addRoute("::", 0)
                 .addDnsServer("223.5.5.5")
                 .addDnsServer("1.1.1.1")
                 .setMtu(1500)
-            // 排除自身：sing-box 子进程继承本 App 的 UID，
-            // 不排除会导致出站被 TUN 捕获 → 路由死循环（连接永远不通）
             builder.addDisallowedApplication(packageName)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 builder.setBlocking(true)
@@ -183,8 +165,8 @@ class MoneyFlyVpnService : VpnService() {
             Notification.Builder(this)
         }
         return builder
-            .setContentTitle("MoneyFly 正在保护您的连接")
-            .setContentText("已开启安全加速，点击查看详情")
+            .setContentTitle("MoneyFly")
+            .setContentText("Secure connection active")
             .setSmallIcon(R.drawable.ic_stat_vpn)
             .setContentIntent(pi)
             .setOngoing(true)

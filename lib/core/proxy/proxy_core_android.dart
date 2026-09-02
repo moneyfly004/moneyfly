@@ -46,8 +46,15 @@ class ProxyCoreAndroid extends ProxyCore {
   Future<void> start(Map<String, dynamic> config) async {
     if (_running) throw StateError('内核已在运行');
     _lastError = null;
+    // 移除 Flutter 侧元数据（sing-box 不识别，Android TUN 由 VpnService 管理）
+    config.remove('_tunMode');
+    // Android 端 TUN 由 VpnService.establish() 创建并传 fd，
+    // 不使用 sing-box 的 auto_route/inet4_address，移除 tun inbound 避免冲突
+    final inbounds = config['inbounds'];
+    if (inbounds is List) {
+      inbounds.removeWhere((ib) => ib is Map && ib['type'] == 'tun');
+    }
     try {
-      // Android 原生端期望 JSON 字符串（非 Map），写入文件后传给 sing-box
       final configJson = jsonEncode(config);
       await _channel.invokeMethod('startVpn', {'config': configJson});
     } catch (e) {
