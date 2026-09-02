@@ -140,7 +140,7 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface, CommandServerHandler
         if (iter == null) return
         while (iter.hasNext()) {
             val prefix = iter.next()
-            block(prefix.address, prefix.prefix)
+            block(prefix.address(), prefix.prefix())
         }
     }
 
