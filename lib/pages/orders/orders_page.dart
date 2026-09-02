@@ -90,7 +90,7 @@ class _OrdersPageState extends State<OrdersPage> {
         title: Text(AppStrings.t('cancel_order'), style: TextStyle(fontSize: 16)),
         content: Text(AppStrings.t('order_cancel_confirm'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('再想想')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('rethink'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(AppStrings.t('cancel_order'), style: const TextStyle(color: MFColors.red)),
@@ -119,7 +119,7 @@ class _OrdersPageState extends State<OrdersPage> {
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
         title: Text(AppStrings.t('my_orders')),
-        actions: [TextButton(onPressed: _load, child: const Text('刷新', style: TextStyle(color: MFColors.brandLight)))],
+        actions: [TextButton(onPressed: _load, child: Text(AppStrings.t('refresh'), style: TextStyle(color: MFColors.brandLight)))],
       ),
       body: SafeArea(
         child: _loading
@@ -129,9 +129,9 @@ class _OrdersPageState extends State<OrdersPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                         Text('暂无订单', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                         Text(AppStrings.t('no_orders'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
                         const SizedBox(height: 8),
-                         Text('购买套餐后订单会显示在这里', style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                         Text(AppStrings.t('no_orders_hint'), style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                       ],
                     ),
                   )

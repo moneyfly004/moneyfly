@@ -114,7 +114,7 @@ class _HomePageState extends State<HomePage>
         conn.status == ConnStatus.connecting ||
         conn.status == ConnStatus.reconnecting) {
       unawaited(conn.disconnect());
-      _toast('已取消连接');
+      _toast(AppStrings.t('cancel_connect'));
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
     } else {
@@ -613,7 +613,7 @@ class _HomePageState extends State<HomePage>
               children: [
                 CountryFlag(conn.realCountry, size: 13, rounded: true),
                 const SizedBox(width: 5),
-                Text('真实出口 · ${GeoLookupService.countryName(conn.realCountry)}',
+                Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
                     style: const TextStyle(fontSize: 11, color: MFColors.green)),
               ],
             ),

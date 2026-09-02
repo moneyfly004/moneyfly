@@ -121,7 +121,7 @@ class _ProfilePageState extends State<ProfilePage> {
             children: [
               Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              Text(email.isEmpty ? '未登录邮箱' : email,
+              Text(email.isEmpty ? AppStrings.t('no_email_hint') : email,
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
             ],
@@ -310,7 +310,7 @@ class _ProfilePageState extends State<ProfilePage> {
         content: Text('MoneyFly v${UpdateInfo.currentVersion}\n\n${AppStrings.t('slogan')}\ndy.moneyfly.top',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('好的'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('ok_btn')))],
       ),
     );
   }

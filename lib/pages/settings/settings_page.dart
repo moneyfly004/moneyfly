@@ -55,12 +55,12 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: Text(AppStrings.t('logout'), style: const TextStyle(fontSize: 16)),
-        content: Text('确定要退出当前账号吗？', style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+        content: Text(AppStrings.t('logout_body'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel_text'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('退出', style: TextStyle(color: MFColors.red)),
+            child: Text(AppStrings.t('logout_btn'), style: TextStyle(color: MFColors.red)),
           ),
         ],
       ),
@@ -79,7 +79,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
-        title: const Text('设置'),
+        title: Text(AppStrings.t('settings_title')),
         actions: [
           TextButton(
             onPressed: () async {
@@ -278,8 +278,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final mode = _s['tunMode']?.toString() ?? 'off';
     if (mode == 'off') return null;
     if (Platform.isAndroid || Platform.isIOS) return null;
-    if (Platform.isWindows) return '需要以管理员身份运行';
-    if (Platform.isMacOS) return '需要管理员权限';
+    if (Platform.isWindows) return AppStrings.t('tun_need_admin');
+    if (Platform.isMacOS) return AppStrings.t('tun_need_root');
     return null;
   }
 
@@ -290,7 +290,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) => SimpleDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('TUN 虚拟网卡', style: TextStyle(fontSize: 15)),
+        title: Text(AppStrings.t('tun_title'), style: TextStyle(fontSize: 15)),
         children: [
           if (isDesktop)
             Padding(
@@ -304,8 +304,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 child: Text(
                   Platform.isWindows
-                      ? '⚠️ 自动/强制模式需要以管理员身份运行软件。\n右键 MoneyFly → 以管理员身份运行。\n普通模式建议选择「关闭」（使用系统代理）。'
-                      : '⚠️ 自动/强制模式需要管理员权限。\nmacOS 暂建议使用「关闭」（系统代理模式），\n后续版本将支持特权助手。',
+                      ? AppStrings.t('tun_win_hint')
+                      : AppStrings.t('tun_mac_hint'),
                   style: TextStyle(fontSize: 11, color: MFColors.txt2, height: 1.6),
                 ),
               ),
@@ -318,7 +318,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   Text(o, style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
                   const Spacer(),
                   Text(
-                    o == AppStrings.t('tun_off') ? '仅系统代理' : (o == AppStrings.t('tun_force') ? '全局接管' : 'TUN+代理'),
+                    o == AppStrings.t('tun_off') ? AppStrings.t('tun_only_proxy') : (o == AppStrings.t('tun_force') ? AppStrings.t('tun_full_intercept') : AppStrings.t('tun_dual')),
                     style: TextStyle(fontSize: 10.5, color: MFColors.txt3),
                   ),
                 ],
@@ -379,11 +379,11 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() => _checkingUpdate = false);
     if (info == null) {
-      _toast('当前已是最新版本 v${UpdateInfo.currentVersion}');
+      _toast(AppStrings.t('latest_version', {'ver': UpdateInfo.currentVersion}));
       return;
     }
     if (!info.isNewer) {
-      _toast('已是最新版本 v${UpdateInfo.currentVersion}');
+      _toast(AppStrings.t('latest_version', {'ver': UpdateInfo.currentVersion}));
       return;
     }
     showDialog<void>(
@@ -391,7 +391,7 @@ class _SettingsPageState extends State<SettingsPage> {
       barrierDismissible: !info.forced,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: Text(info.forced ? '发现新版本（强制更新）' : '发现新版本',
+        title: Text(info.forced ? AppStrings.t('new_version_forced') : AppStrings.t('new_version'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         content: Text(
           '当前版本 v${UpdateInfo.currentVersion}\n最新版本 v${info.latestVersion}${info.sizeText != null ? ' · ${info.sizeText}' : ''}\n\n请下载最新安装包体验新功能。',
@@ -399,19 +399,19 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         actions: [
           if (!info.forced)
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('稍后')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('later'))),
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
               final url = info.downloadUrl;
               if (url == null || url.isEmpty) {
-                _toast('下载链接暂未配置');
+                _toast(AppStrings.t('no_download_url'));
                 return;
               }
               final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-              if (!ok && mounted) _toast('无法打开下载链接');
+              if (!ok && mounted) _toast(AppStrings.t('cannot_open_url'));
             },
-            child: const Text('立即下载', style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+            child: Text(AppStrings.t('download_now'), style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -423,7 +423,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) => SimpleDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('请选择', style: TextStyle(fontSize: 15)),
+        title: Text(AppStrings.t('pick_option'), style: TextStyle(fontSize: 15)),
         children: [
           for (final o in options)
             SimpleDialogOption(

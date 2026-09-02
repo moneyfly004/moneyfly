@@ -11,6 +11,7 @@ import 'proxy_core_android.dart';
 import 'proxy_core_cli.dart';
 import 'singbox_config.dart';
 import 'system_proxy.dart';
+import '../../l10n/app_strings.dart';
 
 /// 连接状态
 enum ConnStatus { disconnected, testing, connecting, connected, reconnecting, error }
@@ -227,7 +228,7 @@ class ConnectionController extends ChangeNotifier {
   /// _epoch 守卫：连接过程中用户断开/再次连接时，旧流程的结果不再覆盖状态
   Future<void> connect({bool runSpeedTest = true, bool fromReconnect = false}) async {
     if (nodes.isEmpty) {
-      error = '没有可用节点，请先刷新订阅';
+      error = AppStrings.t('no_available_nodes');
       notifyListeners();
       return;
     }
@@ -264,7 +265,7 @@ class ConnectionController extends ChangeNotifier {
     if (epoch != _epoch) return;
     if (current == null) {
       status = ConnStatus.error;
-      error = '所有节点均不可用';
+      error = AppStrings.t('all_nodes_offline');
       notifyListeners();
       return;
     }
@@ -299,8 +300,8 @@ class ConnectionController extends ChangeNotifier {
         if (errLower.contains('permission') || errLower.contains('operation not permitted') ||
             errLower.contains('access') || errLower.contains('tun')) {
           errMsg = Platform.isMacOS
-              ? 'TUN 模式需要管理员权限。请在设置中切换为「仅系统代理」，或使用 sudo 启动应用。'
-              : 'TUN 模式需要管理员权限。请在设置中切换为「关闭」（仅系统代理），或以管理员身份运行。';
+              ? AppStrings.t('tun_need_admin_mac')
+              : AppStrings.t('tun_need_admin_win');
         }
       }
       error = errMsg;
@@ -387,7 +388,7 @@ class ConnectionController extends ChangeNotifier {
         realCountry = null;
         unawaited(refreshRealCountry());
       } catch (e) {
-        error = '节点热切换失败：$e';
+        error = AppStrings.t('node_switch_fail', {'err': '$e'});
         notifyListeners();
       }
     }
@@ -402,7 +403,7 @@ class ConnectionController extends ChangeNotifier {
       try {
         await _core.switchMode(smart);
       } catch (e) {
-        error = '模式切换失败：$e';
+        error = AppStrings.t('mode_switch_fail', {'err': '$e'});
         notifyListeners();
       }
     }
@@ -416,7 +417,7 @@ class ConnectionController extends ChangeNotifier {
     }
     if (!autoReconnect || _reconnectCount >= 3) {
       status = ConnStatus.disconnected;
-      error = autoReconnect ? '重连 3 次仍失败，已断开' : '连接已断开';
+      error = autoReconnect ? AppStrings.t('reconnect_exhausted') : AppStrings.t('disconnected_hint');
       // 内核已死且不再重连 → 必须恢复系统代理，否则残留指向死端口，
       // 整个系统流量中断（设置页「断线自动重连」关闭或重连超限时必现）
       unawaited(SystemProxyManager.restore());

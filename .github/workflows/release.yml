@@ -277,5 +277,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/**
-          generate_release_notes: true
+          body: "Bug fixes and improvements."
+          generate_release_notes: false
           fail_on_unmatched_files: true

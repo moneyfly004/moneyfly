@@ -47,7 +47,7 @@ class _DevicesPageState extends State<DevicesPage> {
         content: Text(AppStrings.t('delete_device_body', {'name': device.displayName}),
             style:  TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel_text'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(AppStrings.t('delete'), style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
@@ -80,7 +80,7 @@ class _DevicesPageState extends State<DevicesPage> {
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
         title: Text(AppStrings.t('device_manage')),
         actions: [
-          TextButton(onPressed: _load, child: const Text('刷新', style: TextStyle(color: MFColors.brandLight))),
+          TextButton(onPressed: _load, child: Text(AppStrings.t('refresh'), style: TextStyle(color: MFColors.brandLight))),
         ],
       ),
       body: SafeArea(

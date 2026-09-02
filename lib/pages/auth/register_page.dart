@@ -51,7 +51,7 @@ class _RegisterPageState extends State<RegisterPage> {
     try {
       await ApiClient.instance.post(Endpoints.sendCode, data: {'type': 'email', 'email': email});
       if (!mounted) return; // 等待期间页面已退出
-      _toast('验证码已发送到邮箱，5 分钟内有效');
+      _toast(AppStrings.t('code_sent_email'));
       setState(() {
         _codeSent = true;
         _countdown = 60;
@@ -145,7 +145,7 @@ class _RegisterPageState extends State<RegisterPage> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: MFColors.line2),
                             ),
-                            child: Text('${_countdown}s 后重发',
+                            child: Text('$_countdown${AppStrings.t('resend_in')}',
                                 style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
                           )
                         : GestureDetector(

@@ -44,7 +44,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     try {
       await ApiClient.instance.post(Endpoints.forgotPassword, data: {'email': email});
       if (!mounted) return; // 等待期间页面已退出
-      _toast('重置验证码已发送到邮箱');
+      _toast(AppStrings.t('reset_code_sent'));
       setState(() {
         _codeSent = true;
         _countdown = 60;
@@ -137,7 +137,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: MFColors.line2),
                             ),
-                            child: Text('${_countdown}s 后重发',
+                            child: Text('$_countdown${AppStrings.t('resend_in')}',
                                 style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
                           )
                         : GestureDetector(
