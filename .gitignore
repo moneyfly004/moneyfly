@@ -44,3 +44,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 dist/
+
+# sing-box 内核二进制（CI 构建时从 GitHub Releases 下载，不入库）
+android/app/src/main/jniLibs/*/libsingbox.so
