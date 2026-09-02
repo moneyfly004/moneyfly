@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -119,13 +121,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 )),
             _section(AppStrings.t('settings_network')),
             _row(icon: '🚀', title: AppStrings.t('settings_tun'),
+                desc: _tunDesc(),
                 value: switch (_s['tunMode']?.toString()) {
                   'off' => AppStrings.t('tun_off'),
                   'force' => AppStrings.t('tun_force'),
                   _ => AppStrings.t('tun_auto'),
                 },
-                onTap: () => _picker([AppStrings.t('tun_auto'), AppStrings.t('tun_force'), AppStrings.t('tun_off')], (v) => _set('tunMode',
-                    v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto')))),
+                onTap: _pickTunMode),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _section(AppStrings.t('settings_appearance')),
@@ -270,6 +272,65 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  String? _tunDesc() {
+    final mode = _s['tunMode']?.toString() ?? 'off';
+    if (mode == 'off') return null;
+    if (Platform.isAndroid || Platform.isIOS) return null;
+    if (Platform.isWindows) return '需要以管理员身份运行';
+    if (Platform.isMacOS) return '需要管理员权限';
+    return null;
+  }
+
+  Future<void> _pickTunMode() async {
+    final isDesktop = Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+    final options = [AppStrings.t('tun_auto'), AppStrings.t('tun_force'), AppStrings.t('tun_off')];
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        backgroundColor: MFColors.card2,
+        title: const Text('TUN 虚拟网卡', style: TextStyle(fontSize: 15)),
+        children: [
+          if (isDesktop)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: MFColors.amber.withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: MFColors.amber.withValues(alpha: .3)),
+                ),
+                child: Text(
+                  Platform.isWindows
+                      ? '⚠️ 自动/强制模式需要以管理员身份运行软件。\n右键 MoneyFly → 以管理员身份运行。\n普通模式建议选择「关闭」（使用系统代理）。'
+                      : '⚠️ 自动/强制模式需要管理员权限。\nmacOS 暂建议使用「关闭」（系统代理模式），\n后续版本将支持特权助手。',
+                  style: TextStyle(fontSize: 11, color: MFColors.txt2, height: 1.6),
+                ),
+              ),
+            ),
+          for (final o in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, o),
+              child: Row(
+                children: [
+                  Text(o, style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
+                  const Spacer(),
+                  Text(
+                    o == AppStrings.t('tun_off') ? '仅系统代理' : (o == AppStrings.t('tun_force') ? '全局接管' : 'TUN+代理'),
+                    style: TextStyle(fontSize: 10.5, color: MFColors.txt3),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (v != null) {
+      final mode = v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto');
+      _set('tunMode', mode);
+    }
   }
 
   /// 语言切换：简体中文 / English（立即生效）
