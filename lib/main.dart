@@ -136,14 +136,13 @@ class _MainShellState extends State<MainShell> {
   /// 已访问过的 tab（懒构建 + 保活：切 tab 不重建、不动画闪烁）
   final Set<int> _visited = {0};
 
-  /// 每次 build 重建页面 widget（类型稳定 → IndexedStack 保活 state）；
-  /// 主题/语言切换时整树随新 widget 重建，颜色即时刷新
-  List<Widget> _buildPages() => <Widget>[
-        HomePage(),
-        NodesPage(),
-        PackagePage(),
-        ProfilePage(),
-      ];
+  static const _pageCount = 4;
+  late final _pages = <Widget>[
+    const HomePage(),
+    const NodesPage(),
+    const PackagePage(),
+    const ProfilePage(),
+  ];
 
   @override
   void initState() {
@@ -159,7 +158,7 @@ class _MainShellState extends State<MainShell> {
 
   void _onExternalTabSwitch() {
     final i = mainTabIndex.value;
-    if (i != _index && i >= 0 && i < _buildPages().length) {
+    if (i != _index && i >= 0 && i < _pageCount) {
       setState(() {
         _index = i;
         _visited.add(i);
@@ -182,8 +181,8 @@ class _MainShellState extends State<MainShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          for (var i = 0; i < _buildPages().length; i++)
-            _visited.contains(i) ? _buildPages()[i] : const SizedBox.shrink(),
+          for (var i = 0; i < _pageCount; i++)
+            _visited.contains(i) ? _pages[i] : const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar: Container(

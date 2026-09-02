@@ -491,16 +491,29 @@ class ProxyNode {
     );
   }
 
+  static final _prefixCodeRe = RegExp(
+    r'(?:^|[^A-Z])('
+    r'HK|TW|JP|SG|KR|US|UK|GB|DE|FR|AU|CA|RU|IN|TH|VN|NL|SE|FI|CH|AE'
+    r'|PH|MY|ID|TR|BR|AR|IE|PL|IT|ES|PT|MX|CL|ZA|KZ|UA'
+    r')(?:$|[^A-Z])',
+  );
+
+  static const _codeMap = {
+    'UK': 'GB',
+  };
+
   static String _inferCountry(String tag, String? region) {
     final upper = '$tag $region'.toUpperCase();
-    const map = {
-      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK', 'HK': 'HK',
+
+    // 1) 中文/全称/城市名匹配（精确子串）
+    const nameMap = {
+      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK',
       '台湾': 'TW', 'TAIWAN': 'TW', '台北': 'TW',
       '日本': 'JP', 'JAPAN': 'JP', 'TOKYO': 'JP', '大阪': 'JP', '东京': 'JP', 'OSAKA': 'JP',
       '新加坡': 'SG', 'SINGAPORE': 'SG',
       '韩国': 'KR', 'KOREA': 'KR', 'SEOUL': 'KR', '首尔': 'KR',
       '美国': 'US', 'USA': 'US', 'UNITED STATES': 'US', 'LOS ANGELES': 'US', 'SEATTLE': 'US', 'SAN JOSE': 'US', 'NEW YORK': 'US', '洛杉矶': 'US', '纽约': 'US', '西雅图': 'US', '硅谷': 'US', 'SILICON': 'US', 'DALLAS': 'US', 'CHICAGO': 'US',
-      '英国': 'GB', 'UK': 'GB', 'LONDON': 'GB', 'UNITED KINGDOM': 'GB', '伦敦': 'GB',
+      '英国': 'GB', 'UNITED KINGDOM': 'GB', 'LONDON': 'GB', '伦敦': 'GB',
       '德国': 'DE', 'GERMANY': 'DE', 'FRANKFURT': 'DE', '法兰克福': 'DE',
       '法国': 'FR', 'FRANCE': 'FR', 'PARIS': 'FR', '巴黎': 'FR',
       '澳大利亚': 'AU', 'AUSTRALIA': 'AU', 'SYDNEY': 'AU', '悉尼': 'AU',
@@ -525,9 +538,18 @@ class ProxyNode {
       '意大利': 'IT', 'ITALY': 'IT', 'MILAN': 'IT',
       '西班牙': 'ES', 'SPAIN': 'ES', 'MADRID': 'ES',
     };
-    for (final e in map.entries) {
+    for (final e in nameMap.entries) {
       if (upper.contains(e.key)) return e.value;
     }
+
+    // 2) 短国家代码匹配（jp-1, US_02, hk01, sg-premium 等）
+    //    用正则确保代码两侧不是字母，避免 "CHINA" 误匹配 "IN"
+    final m = _prefixCodeRe.firstMatch(upper);
+    if (m != null) {
+      final code = m.group(1)!;
+      return _codeMap[code] ?? code;
+    }
+
     return 'XX';
   }
 }

@@ -107,15 +107,13 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _toggleConnect(ConnectionController conn) async {
-    // 触感反馈（Android）
     unawaited(HapticFeedback.mediumImpact());
     if (conn.status == ConnStatus.connected) {
-      await conn.disconnect();
+      unawaited(conn.disconnect());
     } else if (conn.status == ConnStatus.testing ||
         conn.status == ConnStatus.connecting ||
         conn.status == ConnStatus.reconnecting) {
-      // 连接/测速进行中再点一次 = 取消本次连接
-      await conn.disconnect();
+      unawaited(conn.disconnect());
       _toast('已取消连接');
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
@@ -132,7 +130,7 @@ class _HomePageState extends State<HomePage>
         _toast(AppStrings.t('vpn_permission_needed'));
         return;
       }
-      await conn.connect();
+      unawaited(conn.connect());
     }
   }
 
