@@ -292,7 +292,18 @@ class ConnectionController extends ChangeNotifier {
     } catch (e) {
       if (epoch != _epoch) return;
       status = ConnStatus.error;
-      error = e is UnsupportedError ? _core.lastError ?? e.message : e.toString();
+      var errMsg = e is UnsupportedError ? _core.lastError ?? e.message : e.toString();
+      // TUN 模式需要管理员权限（macOS/Windows），给出明确提示
+      if (tunMode == 'force' || tunMode == 'auto') {
+        final errLower = errMsg?.toLowerCase() ?? '';
+        if (errLower.contains('permission') || errLower.contains('operation not permitted') ||
+            errLower.contains('access') || errLower.contains('tun')) {
+          errMsg = Platform.isMacOS
+              ? 'TUN 模式需要管理员权限。请在设置中切换为「仅系统代理」，或使用 sudo 启动应用。'
+              : 'TUN 模式需要管理员权限。请在设置中切换为「关闭」（仅系统代理），或以管理员身份运行。';
+        }
+      }
+      error = errMsg;
       // 内核启动失败但系统代理可能已设置 → 恢复，避免残留指向死端口
       if (SystemProxyManager.isApplied) {
         unawaited(SystemProxyManager.restore());

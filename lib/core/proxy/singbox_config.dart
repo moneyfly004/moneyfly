@@ -206,6 +206,8 @@ class SingBoxConfigBuilder {
       {'clash_mode': 'Rule', 'network': ['udp'], 'outbound': 'select'},
     ];
     return {
+      // 元数据：告知 ProxyCoreCli 是否需要管理系统代理
+      '_tunMode': tunMode,
       // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
       'log': {'level': 'warn', 'timestamp': true},
       // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
@@ -224,7 +226,11 @@ class SingBoxConfigBuilder {
         if (tunMode != 'force')
           {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080},
         if (tunMode != 'off')
-          {'type': 'tun', 'tag': 'tun-in', 'auto_route': true, 'strict_route': false, 'stack': tunStack},
+          {
+            'type': 'tun', 'tag': 'tun-in',
+            'inet4_address': '172.19.0.1/30',
+            'auto_route': true, 'strict_route': false, 'stack': tunStack,
+          },
       ],
       'outbounds': outbounds,
       'route': {

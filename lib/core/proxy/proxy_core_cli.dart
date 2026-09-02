@@ -96,12 +96,17 @@ class ProxyCoreCli extends ProxyCore {
     );
   }
 
+  bool _tunForceMode = false;
+
   @override
   Future<void> start(Map<String, dynamic> config) async {
     if (_proc != null) throw StateError('内核已在运行');
     _intentionalStop = false;
     _lastError = null;
     _logTail.clear();
+
+    // tunMode='force' 时无 mixed 端口，不管理系统代理
+    _tunForceMode = config.remove('_tunMode') == 'force';
 
     final binary = resolveBinary();
     final dir = Directory(workDir);
@@ -131,8 +136,8 @@ class ProxyCoreCli extends ProxyCore {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
         if (r.statusCode == 200) {
-          // 内核就绪后由 app 统一管理系统代理（连接时设置，断开时恢复）
-          if (manageSystemProxy) {
+          // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
+          if (manageSystemProxy && !_tunForceMode) {
             await SystemProxyManager.apply(port: SystemProxyManager.defaultPort);
           }
           _startStatsTimer();
