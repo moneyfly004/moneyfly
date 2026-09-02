@@ -8,14 +8,27 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import io.nekohasekai.libbox.Libbox
-import io.nekohasekai.libbox.PlatformInterface
-import io.nekohasekai.libbox.TunOptions
+import com.hiddify.core.libbox.CommandServer
+import com.hiddify.core.libbox.CommandServerHandler
+import com.hiddify.core.libbox.InterfaceUpdateListener
+import com.hiddify.core.libbox.Libbox
+import com.hiddify.core.libbox.LocalDNSTransport
+import com.hiddify.core.libbox.NetworkInterfaceIterator
+import com.hiddify.core.libbox.Notification as BoxNotification
+import com.hiddify.core.libbox.OverrideOptions
+import com.hiddify.core.libbox.PlatformInterface
+import com.hiddify.core.libbox.ConnectionOwner
+import com.hiddify.core.libbox.RoutePrefixIterator
+import com.hiddify.core.libbox.SetupOptions
+import com.hiddify.core.libbox.StringIterator
+import com.hiddify.core.libbox.SystemProxyStatus
+import com.hiddify.core.libbox.TunOptions
+import com.hiddify.core.libbox.WIFIState
 import top.moneyfly.app.MainActivity
 import top.moneyfly.app.R
 import java.io.File
 
-class MoneyFlyVpnService : VpnService(), PlatformInterface {
+class MoneyFlyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     companion object {
         const val ACTION_START = "top.moneyfly.vpn.START"
         const val ACTION_STOP = "top.moneyfly.vpn.STOP"
@@ -28,7 +41,7 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface {
             private set
     }
 
-    private var boxService: Any? = null
+    private var commandServer: CommandServer? = null
     private var tunFd: ParcelFileDescriptor? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -41,7 +54,7 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface {
         }
         startForeground(NOTIFY_ID, buildNotification())
         val configJson = intent?.getStringExtra(EXTRA_CONFIG)
-        if (configJson != null && boxService == null) {
+        if (configJson != null && commandServer == null) {
             startBox(configJson)
         }
         return START_STICKY
@@ -49,31 +62,37 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface {
 
     private fun startBox(configJson: String) {
         try {
-            extractRuleAssets()
-            val svc = Libbox.newService(filesDir.absolutePath, configJson, this)
-            svc.start()
-            boxService = svc
+            val opts = SetupOptions().apply {
+                basePath = filesDir.absolutePath
+                workingPath = File(filesDir, "work").also { it.mkdirs() }.absolutePath
+                tempPath = cacheDir.absolutePath
+            }
+            Libbox.setup(opts)
+
+            val server = CommandServer(this, this)
+            server.startOrReloadService(configJson, OverrideOptions())
+            server.start()
+            commandServer = server
             isRunning = true
         } catch (e: Exception) {
             isRunning = false
-            boxService = null
+            commandServer = null
         }
     }
 
     @Synchronized
     private fun stopBox() {
         isRunning = false
-        try { boxService?.close() } catch (_: Exception) {}
-        boxService = null
+        try { commandServer?.closeService() } catch (_: Exception) {}
+        try { commandServer?.close() } catch (_: Exception) {}
+        commandServer = null
         try { tunFd?.close() } catch (_: Exception) {}
         tunFd = null
     }
 
     // ---- PlatformInterface ----
 
-    override fun autoDetectInterfaceControl(fd: Int) {
-        protect(fd)
-    }
+    override fun autoDetectInterfaceControl(fd: Int) { protect(fd) }
 
     override fun openTun(options: TunOptions): Int {
         val builder = Builder()
@@ -83,80 +102,92 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface {
                 PendingIntent.FLAG_IMMUTABLE))
             .setMtu(options.mtu)
 
-        for (addr in options.inet4Address) {
-            val parts = addr.split("/")
-            builder.addAddress(parts[0], parts.getOrElse(1) { "32" }.toInt())
+        iterateAddresses(options.inet4Address) { addr, prefix ->
+            builder.addAddress(addr, prefix)
         }
-        for (addr in options.inet6Address) {
-            val parts = addr.split("/")
-            builder.addAddress(parts[0], parts.getOrElse(1) { "128" }.toInt())
+        iterateAddresses(options.inet6Address) { addr, prefix ->
+            builder.addAddress(addr, prefix)
         }
 
-        builder.addRoute("0.0.0.0", 0)
-        builder.addRoute("::", 0)
+        if (options.autoRoute) {
+            iterateAddresses(options.inet4RouteAddress) { addr, prefix ->
+                builder.addRoute(addr, prefix)
+            }
+            iterateAddresses(options.inet6RouteAddress) { addr, prefix ->
+                builder.addRoute(addr, prefix)
+            }
+        } else {
+            builder.addRoute("0.0.0.0", 0)
+            builder.addRoute("::", 0)
+        }
 
-        for (dns in options.dnsServer) {
-            try { builder.addDnsServer(dns) } catch (_: Exception) {}
+        try {
+            val dns = options.getDNSServerAddress()
+            if (dns != null && dns.value.isNotEmpty()) {
+                builder.addDnsServer(dns.value)
+            }
+        } catch (_: Exception) {
+            builder.addDnsServer("223.5.5.5")
         }
 
         builder.addDisallowedApplication(packageName)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            builder.setBlocking(true)
-        }
-
         val pfd = builder.establish() ?: throw IllegalStateException("TUN establish failed")
         tunFd = pfd
-        return pfd.fd
+        return pfd.detachFd()
     }
 
-    override fun writeLog(message: String) {}
-    override fun useProcFS(): Boolean = false
-    override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String, sourcePort: Int, destinationAddress: String, destinationPort: Int): Int = -1
-    override fun packageNameByUid(uid: Int): String = ""
-    override fun uidByPackageName(packageName: String): Int = -1
-
-    private fun extractRuleAssets() {
-        for (name in listOf("geoip-cn.srs", "geosite-cn.srs")) {
-            val target = File(filesDir, name)
-            if (target.exists() && target.length() > 0L) continue
-            try {
-                assets.open("flutter_assets/assets/rules/$name").use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                }
-            } catch (_: Exception) {}
+    private fun iterateAddresses(iter: RoutePrefixIterator?, block: (String, Int) -> Unit) {
+        if (iter == null) return
+        while (iter.hasNext()) {
+            val prefix = iter.next()
+            block(prefix.address, prefix.prefix)
         }
     }
+
+    override fun useProcFS(): Boolean = false
+    override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
+    override fun underNetworkExtension(): Boolean = false
+    override fun includeAllNetworks(): Boolean = false
+    override fun clearDNSCache() {}
+    override fun readWIFIState(): WIFIState? = null
+    override fun localDNSTransport(): LocalDNSTransport? = null
+    override fun systemCertificates(): StringIterator? = null
+    override fun getInterfaces(): NetworkInterfaceIterator? = null
+    override fun sendNotification(notification: BoxNotification) {}
+    override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
+    override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
+    override fun findConnectionOwner(ipProtocol: Int, sourceAddress: String, sourcePort: Int, destinationAddress: String, destinationPort: Int): ConnectionOwner? = null
+
+    // ---- CommandServerHandler ----
+
+    override fun serviceReload() {}
+    override fun serviceStop() { stopBox(); stopSelf() }
+    override fun getSystemProxyStatus(): SystemProxyStatus? = null
+    override fun setSystemProxyEnabled(enabled: Boolean) {}
+    override fun writeDebugMessage(message: String) {}
+
+    // ---- Notification ----
 
     private fun buildNotification(): Notification {
         createChannel()
-        val intent = Intent(this, MainActivity::class.java)
-        val pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        return builder
-            .setContentTitle("MoneyFly")
+        val pi = PendingIntent.getActivity(this, 0,
+            Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            Notification.Builder(this, CHANNEL_ID) else
+            @Suppress("DEPRECATION") Notification.Builder(this)
+        return b.setContentTitle("MoneyFly")
             .setContentText("Secure connection active")
             .setSmallIcon(R.drawable.ic_stat_vpn)
-            .setContentIntent(pi)
-            .setOngoing(true)
-            .build()
+            .setContentIntent(pi).setOngoing(true).build()
     }
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID, "MoneyFly VPN", NotificationManager.IMPORTANCE_LOW)
             val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+            nm.createNotificationChannel(NotificationChannel(
+                CHANNEL_ID, "MoneyFly VPN", NotificationManager.IMPORTANCE_LOW))
         }
     }
 
-    override fun onDestroy() {
-        stopBox()
-        super.onDestroy()
-    }
+    override fun onDestroy() { stopBox(); super.onDestroy() }
 }

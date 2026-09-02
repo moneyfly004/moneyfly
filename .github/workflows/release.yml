@@ -29,6 +29,7 @@ on:
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
   SING_BOX_VERSION: '1.14.0' # 代理内核版本（随配置格式同步升级）
+  HIDDIFY_CORE_VERSION: '4.1.0' # hiddify-core libbox.aar（Android 专用）
 
 jobs:
   # ================= Android：多 ABI 分版本 =================
@@ -55,9 +56,11 @@ jobs:
       - name: 下载 libbox.aar
         run: |
           mkdir -p android/app/libs
-          curl -fL --max-time 300 -o android/app/libs/libbox.aar \
-            "https://github.com/moneyfly004/sing-box-lib/releases/download/v$SING_BOX_VERSION/libbox-$SING_BOX_VERSION.aar"
-          ls -lh android/app/libs/libbox.aar
+          curl -fL --max-time 300 -o hiddify-lib.tar.gz \
+            "https://github.com/hiddify/hiddify-core/releases/download/v$HIDDIFY_CORE_VERSION/hiddify-lib-android.tar.gz"
+          tar xzf hiddify-lib.tar.gz
+          mv hiddify-core.aar android/app/libs/hiddify-core.aar
+          ls -lh android/app/libs/hiddify-core.aar
 
       - name: 测试
         run: |
