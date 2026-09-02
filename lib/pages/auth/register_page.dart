@@ -102,6 +102,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.of(context).size.height < 820;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
@@ -115,7 +116,7 @@ class _RegisterPageState extends State<RegisterPage> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+          padding: EdgeInsets.fromLTRB(24, compact ? 4 : 8, 24, compact ? 16 : 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -124,7 +125,7 @@ class _RegisterPageState extends State<RegisterPage> {
               const SizedBox(height: 4),
                Text(AppStrings.t('join_tip'),
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
-              const SizedBox(height: 24),
+              SizedBox(height: compact ? 14 : 24),
               _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_hint')),
               const SizedBox(height: 12),
               _field('验证码', _code,

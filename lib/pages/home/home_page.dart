@@ -183,6 +183,7 @@ class _HomePageState extends State<HomePage>
     final conn = context.watch<ConnectionController>();
     final connected = conn.status == ConnStatus.connected;
     final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting;
+    final compact = MediaQuery.of(context).size.height < 820;
 
     return Scaffold(
       body: SafeArea(
@@ -190,27 +191,26 @@ class _HomePageState extends State<HomePage>
           onRefresh: () => _ensureNodes(force: true),
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 22),
+            padding: EdgeInsets.symmetric(horizontal: compact ? 16 : 22),
             children: [
               _buildHeader(),
-              const SizedBox(height: 6),
-              // #3 顶部订阅信息条（到期/设备/剩余天数 一行三格，浅色）
+              SizedBox(height: compact ? 4 : 6),
               _buildSubInfoBar(),
-              const SizedBox(height: 12),
+              SizedBox(height: compact ? 8 : 12),
               if (conn.nodes.isEmpty) ...[
                 _buildNoSubscriptionBanner(),
-                const SizedBox(height: 12),
+                SizedBox(height: compact ? 8 : 12),
               ],
-              _buildConnectCard(conn, connected, busy),
-              const SizedBox(height: 12),
+              _buildConnectCard(conn, connected, busy, compact),
+              SizedBox(height: compact ? 8 : 12),
               _buildModeSwitch(conn),
-              const SizedBox(height: 14),
+              SizedBox(height: compact ? 8 : 14),
               _buildStats(conn),
-              const SizedBox(height: 14),
+              SizedBox(height: compact ? 8 : 14),
               _buildQuickCountries(conn),
-              const SizedBox(height: 14),
+              SizedBox(height: compact ? 8 : 14),
               _buildAutoTestCard(conn),
-              const SizedBox(height: 16),
+              SizedBox(height: compact ? 10 : 16),
             ],
           ),
         ),
@@ -438,7 +438,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildConnectCard(ConnectionController conn, bool connected, bool busy) {
+  Widget _buildConnectCard(ConnectionController conn, bool connected, bool busy, bool compact) {
     final node = conn.current;
     final statusColor = busy
         ? MFColors.amber
@@ -453,7 +453,7 @@ class _HomePageState extends State<HomePage>
       _ => AppStrings.t('disconnected'),
     };
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+      padding: EdgeInsets.fromLTRB(16, compact ? 12 : 20, 16, compact ? 10 : 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         // #1 背景浅化：品牌蓝紫柔光渐变（不再深黑难辨）
@@ -467,7 +467,7 @@ class _HomePageState extends State<HomePage>
         children: [
           Text(statusLabel,
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: statusColor)),
-          const SizedBox(height: 14),
+          SizedBox(height: compact ? 8 : 14),
           GestureDetector(
             onTap: () => _toggleConnect(conn),
             child: RepaintBoundary(
@@ -476,8 +476,8 @@ class _HomePageState extends State<HomePage>
                 builder: (context, child) {
                   final glow = connected ? _pulse.value : 1.0;
                   return Container(
-                    width: 108,
-                    height: 108,
+                    width: compact ? 80 : 108,
+                    height: compact ? 80 : 108,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
@@ -515,7 +515,7 @@ class _HomePageState extends State<HomePage>
                           )
                         : Icon(
                             Icons.power_settings_new_rounded,
-                            size: 44,
+                            size: compact ? 34 : 44,
                             color: connected ? MFColors.green : MFColors.txt2,
                           ),
                   ),
@@ -523,7 +523,7 @@ class _HomePageState extends State<HomePage>
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 10 : 16),
           if (node != null)
             GestureDetector(
               onTap: () => _openNodePicker(conn),

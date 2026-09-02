@@ -91,6 +91,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.of(context).size.height < 820;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.pop(context)),
@@ -104,7 +105,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+          padding: EdgeInsets.fromLTRB(24, compact ? 6 : 12, 24, compact ? 16 : 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -120,7 +121,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                   _Step(done: false, no: '2', label: AppStrings.t('step_new_pwd')),
                 ],
               ),
-              const SizedBox(height: 26),
+              SizedBox(height: compact ? 16 : 26),
               _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_reg_hint')),
               const SizedBox(height: 12),
               _field('验证码', _code,

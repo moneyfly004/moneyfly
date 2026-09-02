@@ -74,6 +74,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.of(context).size.height < 820;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -81,11 +82,11 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 70),
+              SizedBox(height: compact ? 32 : 70),
               Center(
                 child: Container(
-                  width: 76,
-                  height: 76,
+                  width: compact ? 60 : 76,
+                  height: compact ? 60 : 76,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
@@ -94,21 +95,21 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    child: Image.asset('assets/moneyfly-logo.png', width: 76, height: 76),
+                    child: Image.asset('assets/moneyfly-logo.png', width: compact ? 60 : 76, height: compact ? 60 : 76),
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
+              SizedBox(height: compact ? 12 : 18),
               Center(
                 child: Text(AppStrings.t('app_name'),
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 1.6)),
+                    style: TextStyle(fontSize: compact ? 24 : 28, fontWeight: FontWeight.w700, letterSpacing: 1.6)),
               ),
               const SizedBox(height: 6),
                Center(
                 child: Text(AppStrings.t('slogan'),
                     style: TextStyle(fontSize: 12.5, color: MFColors.txt3, letterSpacing: 3)),
               ),
-              const SizedBox(height: 44),
+              SizedBox(height: compact ? 24 : 44),
               _Field(
                 label: AppStrings.t('account_label'),
                 controller: _account,
@@ -144,9 +145,9 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: compact ? 10 : 16),
               MFPrimaryButton(label: AppStrings.t('login_button'), loading: _loading, onPressed: _loading ? null : _login),
-              const SizedBox(height: 26),
+              SizedBox(height: compact ? 16 : 26),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -166,7 +167,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 40),
+              SizedBox(height: compact ? 16 : 40),
             ],
           ),
         ),
