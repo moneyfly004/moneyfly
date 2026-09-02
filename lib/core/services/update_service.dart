@@ -30,7 +30,7 @@ class UpdateInfo {
         '${int.parse(m.group(3)!).toString().padLeft(3, '0')}';
   }
 
-  static String currentVersion = '1.0.0';
+  static String currentVersion = '0.0.1';
 }
 
 /// 软件升级服务：读 /software/versions，扫描 MoneyFly 平台条目比对版本

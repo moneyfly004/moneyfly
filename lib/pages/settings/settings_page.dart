@@ -179,7 +179,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🛡️', title: AppStrings.t('settings_privacy_policy'), onTap: () => _openUrl('https://dy.moneyfly.top/privacy')),
             const SizedBox(height: 12),
              Center(
-              child: Text('MoneyFly v1.0.0 · dy.moneyfly.top',
+              child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
                   style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
             ),
           ],

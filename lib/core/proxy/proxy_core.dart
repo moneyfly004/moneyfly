@@ -212,7 +212,11 @@ class ConnectionController extends ChangeNotifier {
     final dns = settings['dns']?.toString() ?? '223.5.5.5';
     final defaultMode = settings['defaultMode']?.toString() ?? 'smart';
     smartMode = defaultMode != 'global';
-    final tunMode = settings['tunMode']?.toString() ?? 'auto';
+    // 桌面端（macOS/Windows）默认「仅系统代理」：TUN 需要 root 权限，
+    // 默认开启会导致用户一点连接就失败（operation not permitted）；
+    // Android 默认「TUN + 系统代理双通道」：VpnService 授权后 TUN 接管全部流量。
+    final defaultTunMode = (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off';
+    final tunMode = settings['tunMode']?.toString() ?? defaultTunMode;
     final bypassLan = settings['bypassLan'] != false;
     final intervalMin = (settings['testIntervalMin'] as num?)?.toInt() ?? 30;
     if (epoch != _epoch) return;
