@@ -101,7 +101,9 @@ class _HomePageState extends State<HomePage>
   Future<void> _toggleConnect(ConnectionController conn) async {
     unawaited(HapticFeedback.mediumImpact());
     final acc = AccountService.instance;
-    if (conn.status == ConnStatus.connected) {
+    if (conn.status == ConnStatus.disconnecting) {
+      return; // 正在断开，忽略点击
+    } else if (conn.status == ConnStatus.connected) {
       unawaited(conn.disconnect());
     } else if (conn.status == ConnStatus.testing ||
         conn.status == ConnStatus.connecting ||
@@ -208,7 +210,7 @@ class _HomePageState extends State<HomePage>
     final conn = context.watch<ConnectionController>();
     final acc = context.watch<AccountService>();
     final connected = conn.status == ConnStatus.connected;
-    final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting;
+    final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting || conn.status == ConnStatus.disconnecting;
     final compact = MediaQuery.of(context).size.height < 820;
 
     return Scaffold(
@@ -534,6 +536,7 @@ class _HomePageState extends State<HomePage>
     final statusLabel = switch (conn.status) {
       ConnStatus.testing => AppStrings.t('testing'),
       ConnStatus.connecting => AppStrings.t('connecting'),
+      ConnStatus.disconnecting => AppStrings.t('disconnecting_status'),
       ConnStatus.reconnecting => AppStrings.t('reconnecting'),
       ConnStatus.connected =>
         conn.speedTesting ? AppStrings.t('connected_speed_testing') : AppStrings.t('connected'),

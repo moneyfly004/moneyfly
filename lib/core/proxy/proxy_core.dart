@@ -15,7 +15,7 @@ import 'system_proxy.dart';
 import '../../l10n/app_strings.dart';
 
 /// 连接状态
-enum ConnStatus { disconnected, testing, connecting, connected, reconnecting, error }
+enum ConnStatus { disconnected, disconnecting, testing, connecting, connected, reconnecting, error }
 
 /// 速率快照（流量统计 1s 一次，独立于 ConnectionController 的通知）
 class SpeedSnapshot {
@@ -295,6 +295,7 @@ class ConnectionController extends ChangeNotifier {
       if (epoch != _epoch) return;
       status = ConnStatus.connected;
       _reconnectCount = 0;
+      AccountService.instance.startExpiryWatch();
       // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
       if (runSpeedTest && autoTest) {
         unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: true));
@@ -375,9 +376,12 @@ class ConnectionController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    _epoch++; // 使在途的 connect 流程失效（“取消连接”语义）
+    _epoch++;
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
+    AccountService.instance.stopExpiryWatch();
+    status = ConnStatus.disconnecting;
+    notifyListeners();
     speedTesting = false;
     upSpeedMbps = 0;
     downSpeedMbps = 0;
