@@ -125,8 +125,6 @@ class ConnectionController extends ChangeNotifier {
   bool autoTest = true;
   bool autoReconnect = true;
   String? lastSpeedTestTime;
-  String protocolFilter = 'all'; // all / vless / trojan
-
   /// 用户是否手动切换过模式（智能/全局）。
   /// true 后 applySettings 不再用设置里的 defaultMode 覆盖（首页选择优先）。
   bool _modeUserSet = false;
@@ -172,12 +170,6 @@ class ConnectionController extends ChangeNotifier {
         smartMode = true;
       }
     }
-    final pf = s['protocolFilter']?.toString() ?? 'all';
-    if ((pf == 'vless' || pf == 'trojan' || pf == 'all') && pf != protocolFilter) {
-      protocolFilter = pf;
-      // 过滤条件变化 → 从全量节点重建展示列表（切回「全部」立即恢复，无需重刷订阅）
-      _applyProtocolFilter();
-    }
     notifyListeners();
   }
 
@@ -201,39 +193,21 @@ class ConnectionController extends ChangeNotifier {
   int _epoch = 0;
   bool _autoConnectTried = false;
 
-  /// 订阅拉取到的全量节点（协议过滤的源；切回「全部」时无需重新拉订阅）
-  List<ProxyNode> _allNodes = [];
-
   Future<void> loadNodes(List<ProxyNode> list) {
-    _allNodes = list;
-    _applyProtocolFilter();
+    nodes = list;
+    if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
+      current = null;
+    }
     notifyListeners();
     return Future.value();
   }
 
-  /// 按协议过滤出展示节点（_allNodes 原始列表保留，过滤可逆）
-  void _applyProtocolFilter() {
-    nodes = protocolFilter == 'all'
-        ? _allNodes
-        : _allNodes.where((n) => n.type == protocolFilter).toList();
+  /// 更新测速结果（节点页独立测速后调用，替换当前展示列表）
+  void updateTestedNodes(List<ProxyNode> tested) {
+    nodes = tested;
     if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
       current = null;
     }
-  }
-
-  /// 更新测速结果（合并回全量列表，不覆盖被过滤掉的节点）。
-  /// 节点页独立测速后调用此方法，而非 loadNodes（后者会把过滤子集当作全量）。
-  void updateTestedNodes(List<ProxyNode> tested) {
-    if (protocolFilter == 'all') {
-      _allNodes = tested;
-    } else {
-      final testedTags = {for (final n in tested) n.tag: n};
-      _allNodes = [
-        for (final n in _allNodes)
-          testedTags[n.tag] ?? n,
-      ];
-    }
-    _applyProtocolFilter();
     notifyListeners();
   }
 

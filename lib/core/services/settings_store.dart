@@ -10,13 +10,13 @@ class SettingsStore {
   static const _p = 'moneyfly_settings_v1';
 
   Map<String, dynamic> _defaults() => {
-        'autoConnect': true,
+        // #10：启动自动连接 / 断线自动重连 默认关闭（手动点击连接）
+        'autoConnect': false,
         'autoTest': true,
-        'autoReconnect': true,
+        'autoReconnect': false,
         'reconnectTimes': 3,
         'testIntervalMin': 30,
         'dns': '223.5.5.5',
-        'protocolFilter': 'all',
         'defaultMode': 'smart', // smart / global
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）

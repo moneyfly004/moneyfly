@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
 import '../../core/models/models.dart';
-import '../../core/services/coupon_service.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
@@ -13,8 +12,8 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../payment/payment_dialog.dart';
 
-/// 购买套餐（设计稿 04）：套餐 + 优惠码 + 支付方式（跟随官网设置，默认支付宝）
-/// 真实链路：选套餐 → 输优惠码验证 → 下单 → 发起支付 → 二维码轮询 → paid 后刷新订阅
+/// 购买套餐：上下列表模式（每行 = 名称/说明/价格/购买）＋ 支付方式。
+/// 真实链路：选套餐 → 下单 → 发起支付 → 二维码轮询 → paid 后刷新订阅
 class PackagePage extends StatefulWidget {
   const PackagePage({super.key});
 
@@ -28,10 +27,7 @@ class _PackagePageState extends State<PackagePage> {
   bool _loading = true;
   int? _selectedPlan;
   int? _selectedMethod;
-  final _coupon = TextEditingController();
   bool _paying = false;
-  double? _discountedAmount;
-  String? _couponStatus;
 
   @override
   void initState() {
@@ -39,20 +35,9 @@ class _PackagePageState extends State<PackagePage> {
     _load();
   }
 
-  @override
-  void dispose() {
-    _coupon.dispose();
-    super.dispose();
-  }
-
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      // 重新加载时清掉优惠状态，避免引用旧套餐价格
-      _discountedAmount = null;
-      _couponStatus = null;
-    });
+    setState(() => _loading = true);
     try {
       final plans = await ApiClient.instance.get(Endpoints.packages);
       final methods = await PaymentService.instance.methods();
@@ -80,46 +65,8 @@ class _PackagePageState extends State<PackagePage> {
     }
   }
 
-  double get _amount {
-    final base = _selectedPlan == null ? 0.0 : _plans[_selectedPlan!].price;
-    return _discountedAmount ?? base;
-  }
-
-  /// 校验优惠码（金额 + 套餐）
-  Future<void> _verifyCoupon() async {
-    final code = _coupon.text.trim();
-    if (_selectedPlan == null) return _toast('请先选择套餐');
-    if (code.isEmpty) {
-      setState(() {
-        _discountedAmount = null;
-        _couponStatus = null;
-      });
-      return;
-    }
-    try {
-      final result = await CouponService.instance.verify(
-        code: code,
-        amount: _plans[_selectedPlan!].price,
-        packageId: _plans[_selectedPlan!].id,
-      );
-      final finalAmount = (result['final_amount'] as num?)?.toDouble()
-          ?? (result['discounted_amount'] as num?)?.toDouble();
-      if (mounted) {
-        setState(() {
-          _discountedAmount = finalAmount;
-          _couponStatus = AppStrings.t('coupon_ok');
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _discountedAmount = null;
-          _couponStatus = null;
-        });
-        _toast(ApiClient.errorMsg(e));
-      }
-    }
-  }
+  double get _amount =>
+      _selectedPlan == null ? 0.0 : _plans[_selectedPlan!].price;
 
   /// 下单 → 支付 → 二维码 → 轮询 → 开通
   Future<void> _pay() async {
@@ -129,10 +76,7 @@ class _PackagePageState extends State<PackagePage> {
     if (method == null) return _toast(AppStrings.t('select_pay'));
     setState(() => _paying = true);
     try {
-      final order = await OrderService.instance.create(
-        packageId: plan.id,
-        couponCode: _coupon.text.trim().isEmpty ? null : _coupon.text.trim(),
-      );
+      final order = await OrderService.instance.create(packageId: plan.id);
       final orderId = (order['id'] as num?)?.toInt() ?? 0;
       final orderNo = order['order_no']?.toString() ?? '';
       if (orderId == 0) throw Exception(AppStrings.t('order_failed'));
@@ -149,15 +93,11 @@ class _PackagePageState extends State<PackagePage> {
           orderNo: pay.orderNo.isEmpty ? orderNo : pay.orderNo,
           amount: _amount,
           methodName: method.name,
-          onPaid: () {
-            // 支付成功：节点刷新统一由弹窗关闭后的 _pay 流程处理，
-            // 这里不清空节点，避免与刷新请求竞态导致列表停留在空状态
-          },
+          onPaid: () {},
         ),
       );
       if (paid == true && mounted) {
         _toast(AppStrings.t('activated'));
-        // 重新拉取订阅
         try {
           final nodes = await SubscriptionService.instance.fetchNodes(force: true);
           if (mounted) {
@@ -177,6 +117,28 @@ class _PackagePageState extends State<PackagePage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  String _periodLabel(Plan p) {
+    if (p.durationDays >= 365) return '/年';
+    if (p.durationDays >= 90) return '/季';
+    return '/月';
+  }
+
+  String _desc(Plan p) {
+    final parts = <String>[
+      '${p.durationDays} 天',
+      '${p.deviceLimit} 设备',
+      AppStrings.t('unlimited'),
+    ];
+    if (p.description != null && p.description!.isNotEmpty) {
+      final manual = p.description!
+          .replaceAll('有效期 ', '')
+          .replaceAll('天 | ', ' 天 · ')
+          .replaceAll(' | ', ' · ');
+      return manual;
+    }
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -187,58 +149,62 @@ class _PackagePageState extends State<PackagePage> {
                 onRefresh: _load,
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 24),
+                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
                   children: [
-                    Text(AppStrings.t('purchase_title'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                    Text(AppStrings.t('purchase_title'),
+                        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 3),
-                     Text(AppStrings.t('purchase_sub'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
-                    const SizedBox(height: 18),
-                    if (_plans.isNotEmpty) _buildPlans(),
-                    if (_plans.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      _buildDetail(_plans[_selectedPlan ?? 0]),
-                    ],
-                    const SizedBox(height: 14),
-                    _buildCoupon(),
-                    const SizedBox(height: 18),
-                     Text(AppStrings.t('pay_methods'), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
-                    const SizedBox(height: 10),
-                    if (_methods.isEmpty)
-                       Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Text(AppStrings.t('no_pay_methods'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+                    Text(AppStrings.t('purchase_sub'),
+                        style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                    const SizedBox(height: 16),
+                    if (_plans.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 30),
+                        child: Center(
+                            child: Text(AppStrings.t('no_plans'),
+                                style: TextStyle(fontSize: 13, color: MFColors.txt3))),
                       )
-                    else
-                      for (var i = 0; i < _methods.length; i++) _buildMethod(i, _methods[i]),
-                    const SizedBox(height: 10),
-                     Text(AppStrings.t('pay_hint'),
-                        style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.6)),
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                          color: MFColors.card, borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: MFColors.line)),
-                      child: Row(
-                        children: [
-                          Text('${AppStrings.t('total')}（${_plans.isEmpty ? '' : _plans[_selectedPlan ?? 0].name}）',
-                              style:  TextStyle(fontSize: 12.5, color: MFColors.txt2)),
-                          const Spacer(),
-                          if (_discountedAmount != null && _discountedAmount != _plans[_selectedPlan ?? 0].price) ...[
-                            Text('¥${_plans[_selectedPlan ?? 0].price.toStringAsFixed(1)}',
-                                style:  TextStyle(fontSize: 13, color: MFColors.txt3, decoration: TextDecoration.lineThrough)),
-                            const SizedBox(width: 6),
+                    else ...[
+                      // #6 上下列表模式
+                      for (var i = 0; i < _plans.length; i++) _buildPlanRow(i, _plans[i]),
+                      const SizedBox(height: 6),
+                      Text(AppStrings.t('pay_methods'),
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: MFColors.txt2)),
+                      const SizedBox(height: 10),
+                      if (_methods.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(AppStrings.t('no_pay_methods'),
+                              style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+                        )
+                      else
+                        for (var i = 0; i < _methods.length; i++) _buildMethod(i, _methods[i]),
+                      const SizedBox(height: 10),
+                      Text(AppStrings.t('pay_hint'),
+                          style: TextStyle(fontSize: 10.5, color: MFColors.txt3, height: 1.6)),
+                      const SizedBox(height: 18),
+                      // 合计 + 支付
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                            color: MFColors.card, borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: MFColors.line)),
+                        child: Row(
+                          children: [
+                            Text(AppStrings.t('total'),
+                                style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+                            const Spacer(),
+                            Text.rich(TextSpan(children: [
+                              TextSpan(text: '¥', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                              TextSpan(text: _amount.toStringAsFixed(1),
+                                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
+                            ])),
                           ],
-                          Text.rich(TextSpan(children: [
-                             TextSpan(text: '¥', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                            TextSpan(text: _amount.toStringAsFixed(1),
-                                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
-                          ])),
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    MFPrimaryButton(label: AppStrings.t('pay_now'), loading: _paying, onPressed: _paying ? null : _pay),
+                      const SizedBox(height: 14),
+                      MFPrimaryButton(label: AppStrings.t('pay_now'), loading: _paying, onPressed: _paying ? null : _pay),
+                    ],
                   ],
                 ),
               ),
@@ -246,133 +212,92 @@ class _PackagePageState extends State<PackagePage> {
     );
   }
 
-  Widget _buildPlans() {
-    return SizedBox(
-      height: 118,
-      child: Row(
-        children: [
-          for (var i = 0; i < _plans.length; i++)
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(left: i == 0 ? 0 : 9),
-                child: GestureDetector(
-                  onTap: () => setState(() {
-                    _selectedPlan = i;
-                    _discountedAmount = null;
-                    _couponStatus = null;
-                  }),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: _selectedPlan == i
-                              ?  LinearGradient(colors: [Color(0x33455FE9), MFColors.card])
-                              : null,
-                          color: _selectedPlan == i ? null : MFColors.card,
-                          borderRadius: BorderRadius.circular(17),
-                          border: Border.all(
-                              color: _selectedPlan == i ? MFColors.brand : MFColors.line,
-                              width: _selectedPlan == i ? 1.4 : 1),
-                          boxShadow: _selectedPlan == i
-                              ? [BoxShadow(color: MFColors.brand.withValues(alpha: .25), blurRadius: 26)]
-                              : null,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        child: Column(
-                          children: [
-                            Text(_plans[i].name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 7),
-                            Text.rich(TextSpan(children: [
-                              TextSpan(
-                                  text: '¥${_plans[i].price.toStringAsFixed(0)}',
-                                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont,
-                                      color: _selectedPlan == i ? MFColors.brandLight : MFColors.txt)),
-                              TextSpan(text: '/${_plans[i].durationDays >= 365 ? '年' : (_plans[i].durationDays >= 90 ? '季' : '月')}',
-                                  style:  TextStyle(fontSize: 11, color: MFColors.txt3)),
-                            ])),
-                            const SizedBox(height: 5),
-                            Text(AppStrings.t('days_devices', {'days': '${_plans[i].durationDays}', 'devices': '${_plans[i].deviceLimit}'}),
-                                style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
-                          ],
-                        ),
-                      ),
-                      if (_plans[i].isRecommended)
-                        Positioned(
-                          top: -9, left: 0, right: 0,
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(20)),
-                              child: Text(AppStrings.t('recommended'), style: TextStyle(fontSize: 9.5, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetail(Plan p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 13),
-      decoration: BoxDecoration(
-          color: MFColors.card, borderRadius: BorderRadius.circular(15), border: Border.all(color: MFColors.line)),
-      child: Row(
-        children: [
-          _DetailItem(value: '${p.durationDays} 天', label: AppStrings.t('plan_duration')),
-          const _DetailDivider(),
-          _DetailItem(value: '${p.deviceLimit} 台', label: AppStrings.t('plan_devices')),
-          const _DetailDivider(),
-          _DetailItem(value: AppStrings.t('unlimited'), label: AppStrings.t('plan_traffic')),
-          const _DetailDivider(),
-          _DetailItem(value: '680+', label: AppStrings.t('plan_nodes')),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCoupon() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+  /// 上下列表：整行可点选中，含名称/说明/价格/购买按钮
+  Widget _buildPlanRow(int index, Plan p) {
+    final selected = _selectedPlan == index;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedPlan = index),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+        decoration: BoxDecoration(
+          gradient: selected
+              ? const LinearGradient(colors: [Color(0x2E455FE9), Color(0x0F455FE9)])
+              : null,
+          color: selected ? null : MFColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+              color: selected ? MFColors.brand.withValues(alpha: .7) : MFColors.line,
+              width: selected ? 1.3 : 1),
+          boxShadow: selected
+              ? [BoxShadow(color: MFColors.brand.withValues(alpha: .18), blurRadius: 22)]
+              : null,
+        ),
+        child: Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _coupon,
-                style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
-                decoration: InputDecoration(
-                  hintText: AppStrings.t('coupon_hint'),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(p.name,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                      ),
+                      if (p.isRecommended) ...[
+                        const SizedBox(width: 7),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(99)),
+                          child: Text(AppStrings.t('recommended'),
+                              style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: .5)),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(_desc(p),
+                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10.5, color: MFColors.txt2, height: 1.45)),
+                ],
               ),
             ),
-            const SizedBox(width: 10),
-            GestureDetector(
-              onTap: _verifyCoupon,
-              child: Container(
-                height: 52,
-                padding: const EdgeInsets.symmetric(horizontal: 17),
-                decoration: BoxDecoration(
-                    color: MFColors.card, borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: MFColors.line2)),
-                alignment: Alignment.center,
-                child: Text(AppStrings.t('verify'), style: TextStyle(fontSize: 13, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-              ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text.rich(TextSpan(children: [
+                  TextSpan(text: '¥${p.price.toStringAsFixed(0)}',
+                      style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                          fontFamily: kNumFont,
+                          color: selected ? MFColors.brandLight : MFColors.txt)),
+                  TextSpan(text: _periodLabel(p), style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+                ])),
+                const SizedBox(height: 7),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedPlan = index);
+                    _pay();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 6),
+                    decoration: BoxDecoration(
+                      gradient: MFColors.brandGradient,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Text(AppStrings.t('buy_now'),
+                        style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        if (_couponStatus != null) ...[
-          const SizedBox(height: 6),
-          Text('✓ $_couponStatus', style: const TextStyle(fontSize: 10.5, color: MFColors.green, fontWeight: FontWeight.w600)),
-        ],
-      ],
+      ),
     );
   }
 
@@ -409,7 +334,7 @@ class _PackagePageState extends State<PackagePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text(sub, style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+                  Text(sub, style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
                 ],
               ),
             ),
@@ -430,33 +355,5 @@ class _PackagePageState extends State<PackagePage> {
         ),
       ),
     );
-  }
-}
-
-class _DetailItem extends StatelessWidget {
-  const _DetailItem({required this.value, required this.label});
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text(value, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 3),
-          Text(label, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailDivider extends StatelessWidget {
-  const _DetailDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(width: 1, height: 26, color: MFColors.line);
   }
 }

@@ -72,31 +72,45 @@ void main() {
   });
 
   group('首页', () {
+    Map<String, dynamic> stubSubInfo() => {
+          'subscribe_url':
+              'https://dy.moneyfly.top/api/v1/client/subscribe?token=t&type=clash',
+          'expire_time': '2032-06-06 08:00:00',
+          'device_limit': 600,
+          'current_devices': 3,
+          'remaining_days': 2104,
+          'is_expired': false,
+          'status': 'active',
+        };
+
     testWidgets('渲染连接卡/模式/速率统计', (tester) async {
+      ApiClient.debugDio = mockDio((a) {
+        a.onGet('/user/subscribe', (s) => s.reply(200, stubSubInfo()));
+      });
       final conn = ConnectionController.instance;
       await conn.loadNodes([
         ProxyNode(tag: '香港-01', type: 'vless', server: '1.2.3.4', port: 443, countryCode: 'HK', latencyMs: 35),
         ProxyNode(tag: '日本东京', type: 'trojan', server: '5.6.7.8', port: 443, countryCode: 'JP', latencyMs: 88),
       ]);
       conn.current = conn.nodes.first;
-      await tester.pumpWidget(_wrap(const HomePage()));
-      await tester.pump();
+      await pumpPage(tester, _wrap(const HomePage()));
       expect(find.text('智能模式'), findsOneWidget);
       expect(find.text('全局模式'), findsOneWidget);
       expect(find.text('上行'), findsOneWidget);
       expect(find.text('下行'), findsOneWidget);
-      expect(find.text('当前线路'), findsOneWidget);
       expect(find.text('香港-01'), findsOneWidget);
+      // #3 订阅信息条
+      expect(find.text('2104 天'), findsOneWidget);
     });
 
     testWidgets('模式切换点击生效', (tester) async {
-      await tester.pumpWidget(_wrap(const HomePage()));
-      await tester.pump();
-      await tester.tap(find.text('全局模式'));
-      await tester.pump();
+      ApiClient.debugDio = mockDio((a) {
+        a.onGet('/user/subscribe', (s) => s.reply(200, stubSubInfo()));
+      });
+      await pumpPage(tester, _wrap(const HomePage()));
+      await tapSettle(tester, find.text('全局模式'));
       expect(ConnectionController.instance.smartMode, isFalse);
-      await tester.tap(find.text('智能模式'));
-      await tester.pump();
+      await tapSettle(tester, find.text('智能模式'));
       expect(ConnectionController.instance.smartMode, isTrue);
     });
   });

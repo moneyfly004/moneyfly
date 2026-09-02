@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoneyFly v0.2 UI 重设计稿 — 请确认</title>
+<style>
+  :root{
+    --bg:#0B0E14; --card:#141926; --card2:#1A2132; --line:#1E2739;
+    --brand:#455FE9; --brand2:#7B8CFF; --green:#34C77B; --amber:#F5A623;
+    --red:#FF5A5F; --txt:#F5F7FF; --txt2:#9AA3B5; --txt3:#5E6778;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+  body{background:#0a0c12;color:var(--txt);padding:40px 24px;}
+  .page-title{text-align:center;margin-bottom:8px;font-size:26px;font-weight:800;letter-spacing:1px;}
+  .page-sub{text-align:center;color:var(--txt2);margin-bottom:36px;font-size:14px;}
+  .note{background:#11162a;border:1px solid var(--line);border-radius:14px;padding:14px 20px;margin:0 auto 36px;max-width:1100px;font-size:13px;color:#cdd5ff;line-height:1.9;}
+  .note b{color:#fff;}
+  .note .chg{color:#7bffb0;}
+  .note .rm{color:#ff8b8f;}
+  .section{margin:40px auto 16px;max-width:1100px;display:flex;align-items:center;gap:12px;}
+  .section h2{font-size:20px;font-weight:800;}
+  .section .tag{font-size:11px;color:var(--brand2);background:rgba(69,95,233,.15);border:1px solid rgba(69,95,233,.4);padding:3px 10px;border-radius:99px;}
+  .devices{display:flex;gap:32px;justify-content:center;flex-wrap:wrap;max-width:1200px;margin:0 auto;}
+  /* ---------- 桌面窗口 ---------- */
+  .desk{width:860px;border:1px solid #262f45;border-radius:18px;overflow:hidden;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.5);}
+  .dtitle{height:46px;background:#0f1420;display:flex;align-items:center;padding:0 16px;gap:8px;border-bottom:1px solid #1c2436;}
+  .dots{display:flex;gap:7px;}
+  .dots span{width:12px;height:12px;border-radius:50%;}
+  .dots span:nth-child(1){background:#FF5F57}.dots span:nth-child(2){background:#FEBC2E}.dots span:nth-child(3){background:#28C840}
+  .dtitle .name{margin-left:14px;font-size:12.5px;color:var(--txt2);}
+  .appbody{height:600px;display:flex;flex-direction:column;}
+  .nav{display:flex;border-top:1px solid var(--line);background:#0f1420;padding:6px 0 2px;}
+  .nav .it{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 8px;color:var(--txt3);font-size:10.5px;cursor:pointer;}
+  .nav .it.on{color:var(--brand2);}
+  .nav .it .ic{font-size:17px;line-height:1;}
+  .content{flex:1;overflow-y:auto;padding:14px 16px;}
+  /* 手机 */
+  .phone{width:300px;border:8px solid #1b2233;border-radius:34px;overflow:hidden;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.5);}
+  .phone .bar{height:28px;background:#0f1420;}
+  .pbody{height:620px;display:flex;flex-direction:column;}
+  .phone .content{flex:1;padding:12px;overflow-y:auto;}
+  .pnav{display:flex;border-top:1px solid var(--line);background:#0f1420;padding:4px 0 2px;}
+  .pnav .it{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 0 7px;color:var(--txt3);font-size:9px;}
+  .pnav .it.on{color:var(--brand2);}
+  .pnav .it .ic{font-size:15px;}
+  /* 通用组件 */
+  .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .hdr .logo{display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px;}
+  .logo .m{width:24px;height:24px;background:linear-gradient(135deg,var(--brand),#7a5cf0);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#fff;}
+  .hdr .right{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--txt2);}
+  .hdr .bell{font-size:15px;cursor:pointer;}
+  /* 用户信息条 —— 浅色玻璃卡 */
+  .info3{display:flex;background:rgba(69,95,233,.10);border:1px solid rgba(105,130,255,.28);border-radius:14px;padding:10px 4px;margin-bottom:12px;}
+  .info3 .cell{flex:1;text-align:center;border-right:1px solid rgba(123,140,255,.16);}
+  .info3 .cell:last-child{border-right:none;}
+  .info3 .lbl{font-size:10px;color:var(--txt2);margin-bottom:3px;}
+  .info3 .val{font-size:14.5px;font-weight:800;letter-spacing:.3px;}
+  .info3 .val.green{color:var(--green);}
+  .info3 .val.red{color:var(--red);}
+  /* 连接大卡 —— 背景变浅 */
+  .conncard{background:linear-gradient(160deg,#1a2138,#121828);border:1px solid #2a3552;border-radius:18px;padding:18px;margin-bottom:12px;position:relative;overflow:hidden;}
+  .conncard::before{content:'';position:absolute;top:-60px;right:-60px;width:200px;height:200px;background:radial-gradient(circle,rgba(69,95,233,.25),transparent 70%);}
+  .cc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .cc-status{font-size:13px;font-weight:700;}
+  .cc-status .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--green);margin-right:6px;box-shadow:0 0 10px var(--green);}
+  .cc-mode{display:flex;background:rgba(255,255,255,.06);border-radius:9px;padding:3px;font-size:11px;}
+  .cc-mode span{padding:4px 12px;border-radius:7px;color:var(--txt2);}
+  .cc-mode span.on{background:var(--brand);color:#fff;font-weight:700;}
+  .cc-main{display:flex;align-items:center;gap:16px;}
+  .power{width:74px;height:74px;border-radius:50%;background:conic-gradient(var(--green) 0deg 360deg);display:flex;align-items:center;justify-content:center;box-shadow:0 0 26px rgba(52,199,123,.4);}
+  .power.in{background:conic-gradient(#2c3350 0deg 360deg);box-shadow:none;}
+  .power .inner{width:60px;height:60px;border-radius:50%;background:#121828;display:flex;align-items:center;justify-content:center;font-size:24px;}
+  .cc-info{flex:1;}
+  .cc-node{display:flex;align-items:center;gap:8px;padding:9px 12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:11px;cursor:pointer;}
+  .cc-node .flag{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#ff6b6b,#f06595);display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .cc-node .nn{flex:1;}
+  .cc-node .nn .t{font-size:13px;font-weight:700;}
+  .cc-node .nn .s{font-size:10px;color:var(--txt2);}
+  .cc-node .lat{font-size:12px;color:var(--green);font-weight:700;font-variant-numeric:tabular-nums;}
+  .cc-node .arrow{color:var(--txt2);font-size:16px;opacity:.9;}
+  .cc-node .arrow.on{color:var(--brand2);}
+  .cc-rate{display:flex;gap:10px;margin-top:14px;}
+  .cc-rate .rc{flex:1;background:rgba(255,255,255,.05);border-radius:11px;padding:8px;text-align:center;}
+  .cc-rate .rc .t{font-size:9.5px;color:var(--txt2);}
+  .cc-rate .rc .v{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+  /* 到期警示卡 */
+  .expired{background:linear-gradient(160deg,rgba(255,90,95,.16),rgba(255,90,95,.05));border:1px solid rgba(255,90,95,.4);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px;}
+  .expired .ic{font-size:22px;}
+  .expired .tx{flex:1;}
+  .expired .tx .t{font-size:12.5px;font-weight:700;color:#ffb3b5;}
+  .expired .tx .s{font-size:10.5px;color:var(--txt2);}
+  .expired .go{background:linear-gradient(135deg,#ff5a5f,#ff8b5e);color:#fff;font-size:11.5px;font-weight:700;padding:7px 14px;border-radius:9px;cursor:pointer;border:none;}
+  /* 快速国家 */
+  .quick{margin-top:12px;}
+  .quick .qt{font-size:11.5px;color:var(--txt2);margin-bottom:8px;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;}
+  .chip{display:flex;align-items:center;gap:5px;padding:5px 11px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:99px;font-size:11px;cursor:pointer;}
+  .chip.on{border-color:var(--brand);color:var(--brand2);background:rgba(69,95,233,.15);}
+  .chip .cf{font-size:12px;}
+  /* 自动测速 */
+  .autocard{margin-top:12px;background:rgba(69,95,233,.08);border:1px solid rgba(69,95,233,.25);border-radius:14px;padding:11px 13px;display:flex;align-items:center;gap:10px;}
+  .autocard .bolt{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--brand),#7a5cf0);display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .autocard .tx{flex:1;font-size:12px;font-weight:600;}
+  .autocard .sw{width:36px;height:20px;border-radius:99px;background:var(--green);position:relative;cursor:pointer;}
+  .autocard .sw::after{content:'';position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:#fff;}
+  .autocard .sw.off{background:#2c3350;}
+  .autocard .sw.off::after{right:auto;left:2px;}
+  /* 套餐列表 */
+  .plan-list{display:flex;flex-direction:column;gap:10px;}
+  .plan{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;}
+  .plan.rec{border-color:var(--brand);background:linear-gradient(90deg,rgba(69,95,233,.14),var(--card));}
+  .plan .name{flex:1;}
+  .plan .name .t{font-size:14px;font-weight:800;}
+  .plan .name .s{font-size:10.5px;color:var(--txt2);margin-top:3px;line-height:1.5;}
+  .plan .price{font-size:16px;font-weight:900;color:var(--brand2);}
+  .plan .price small{font-size:10px;color:var(--txt3);font-weight:600;}
+  .plan .buy{background:linear-gradient(135deg,var(--brand),#7a5cf0);border:none;color:#fff;font-size:11.5px;font-weight:700;padding:7px 15px;border-radius:9px;cursor:pointer;}
+  .plan .rec-badge{position:relative;}
+  .rec-tag{font-size:9px;background:var(--brand);color:#fff;padding:2px 7px;border-radius:99px;font-weight:700;}
+  /* 我的页 */
+  .profile-card{background:rgba(69,95,233,.10);border:1px solid rgba(105,130,255,.25);border-radius:16px;padding:16px;display:flex;align-items:center;gap:14px;}
+  .avatar{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--brand),#7a5cf0);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;}
+  .pinfo .mail{font-size:14px;font-weight:800;}
+  .pinfo .plan-name{font-size:11px;color:var(--brand2);margin-top:2px;}
+  .stats3{display:flex;margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 2px;}
+  .stats3 .cell{flex:1;text-align:center;border-right:1px solid var(--line);}
+  .stats3 .cell:last-child{border-right:none;}
+  .stats3 .lbl{font-size:10px;color:var(--txt2);}
+  .stats3 .val{font-size:17px;font-weight:900;margin-top:3px;font-variant-numeric:tabular-nums;}
+  .stats3 .val.green{color:var(--green);}
+  .menu{display:flex;flex-direction:column;gap:2px;margin-top:12px;}
+  .mit{display:flex;align-items:center;gap:11px;padding:13px 4px;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;cursor:pointer;}
+  .mit:last-child{border:none;}
+  .mit .mi{font-size:15px;}
+  .mit .sp{flex:1;}
+  .mit .chev{color:var(--txt3);font-size:13px;}
+  .mit .badge{font-size:10px;color:var(--txt2);}
+  /* 设置 */
+  .sec-label{font-size:10.5px;color:var(--txt3);letter-spacing:2px;margin:14px 2px 4px;}
+  .setting-row{display:flex;align-items:center;gap:11px;padding:12px 2px;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;}
+  .setting-row .ic{font-size:15px;}
+  .setting-row .tx{flex:1;}
+  .setting-row .tx .s{font-size:10.5px;color:var(--txt3);margin-top:1px;}
+  .setting-row .val{font-size:11.5px;color:var(--txt2);}
+  .row-sw{width:34px;height:19px;border-radius:99px;background:var(--green);position:relative;flex-shrink:0;}
+  .row-sw::after{content:'';position:absolute;top:2px;right:2px;width:15px;height:15px;border-radius:50%;background:#fff;}
+  .row-sw.off{background:#2c3350;}
+  .row-sw.off::after{right:auto;left:2px;}
+  .del{color:#ff8b8f;text-decoration:line-through;opacity:.55;}
+  .newtip{font-size:10px;color:var(--txt2);background:rgba(255,255,255,.06);padding:1px 7px;border-radius:5px;font-weight:600;}
+  .legend{margin:30px auto 0;max-width:1100px;display:flex;gap:22px;flex-wrap:wrap;background:#0f1420;border:1px solid var(--line);border-radius:14px;padding:16px 22px;font-size:12px;color:var(--txt2);}
+  .legend b{color:#fff;}
+  .legend .ok{color:#7bffb0;font-weight:800;}
+  .legend .ko{color:#ff8b8f;font-weight:800;}
+</style>
+</head>
+<body>
+<div class="page-title">MoneyFly · 界面重设计稿 v0.2</div>
+<div class="page-sub">覆盖 macOS / Windows（桌面窗口）与 Android（手机）—— 请逐项确认后我再改代码</div>
+
+<div class="note">
+  <b>本稿对应你提的 16 点：</b><br>
+  <span class="chg">✅ 已改</span> #1 开关/连接卡背景变浅（深→中等透明渐变）&nbsp;·&nbsp; #2 当前节点行右侧新增明显「切换 ▸」箭头（整行可点）&nbsp;·&nbsp; #3 主页新增「到期/设备/剩余天数」一行三格浅色信息条 &nbsp;·&nbsp; #4 连接必须手动点（去掉自动连接）&nbsp;·&nbsp; #5 到期账户：点连接弹「套餐已到期」警示条 + 「去续费」按钮直达套餐页 &nbsp;·&nbsp; #6 套餐改<b>上下列表</b>（每行：名称/说明/价格/购买），<b>删除优惠码输入</b> &nbsp;·&nbsp; #7 「我的」顶部信息卡改浅色玻璃卡（文字清晰）&nbsp;·&nbsp; #8 设置删除「优惠券」入口 &nbsp;·&nbsp; #9 「我的」页改为本地缓存 + 下拉刷新，进入不再自动刷新 &nbsp;·&nbsp; #10 设置「启动自动连接」「断线自动重连」<b>默认关闭</b> &nbsp;·&nbsp; #11 删除「协议过滤」 &nbsp;·&nbsp; #12 主题切换修复为三态即时生效 &nbsp;·&nbsp; #13 「检查更新」→ 接入 GitHub Releases 自动检测新版本 &nbsp;·&nbsp; #14 统一 UA `MoneyFly/0.0.1` 识别 + 设备备注（后端如支持则加）&nbsp;·&nbsp; #15 桌面端 TUN 保留「关闭/开启」选项并实测 &nbsp;·&nbsp; #16 桌面窗口默认 <b>720×520 方正居中</b>，三端响应式不溢出。
+  <span class="rm">❌ 删除</span> 优惠码（#6/#8）、协议过滤（#11）。
+</div>
+
+<!-- ================= 桌面：主页 ================= -->
+<div class="section"><h2>① 主页（桌面 · macOS/Windows）</h2><span class="tag">#1 #2 #3 #4 #5 #16</span></div>
+<div class="devices">
+<div class="desk">
+  <div class="dtitle"><div class="dots"><span></span><span></span><span></span></div><div class="name">MoneyFly — 主页</div></div>
+  <div class="appbody">
+    <div class="content">
+      <div class="hdr">
+        <div class="logo"><div class="m">M</div>MoneyFly</div>
+        <div class="right"><span class="bell">🔔</span><span>454487210@qq.com</span></div>
+      </div>
+      <!-- #3 用户信息条 -->
+      <div class="info3">
+        <div class="cell"><div class="lbl">到期时间</div><div class="val">2032-06-06</div></div>
+        <div class="cell"><div class="lbl">设备</div><div class="val">53 / 600</div></div>
+        <div class="cell"><div class="lbl">剩余天数</div><div class="val green">2104 天</div></div>
+      </div>
+      <!-- #1 连接卡（背景浅化）+ #2 节点行箭头 + #4 手动连接 -->
+      <div class="conncard">
+        <div class="cc-top">
+          <div class="cc-status"><span class="dot"></span>已连接</div>
+          <div class="cc-mode"><span class="on">智能</span><span>全局</span></div>
+        </div>
+        <div class="cc-main">
+          <div class="power"><div class="inner">⏻</div></div>
+          <div class="cc-info">
+            <div style="font-size:10.5px;color:var(--txt2);margin-bottom:7px;">当前节点 · 点击卡片可切换</div>
+            <div class="cc-node">
+              <div class="flag">🇸🇬</div>
+              <div class="nn"><div class="t">新加坡优质 · 移动电信优选</div><div class="s">vless · 自动选择组</div></div>
+              <div class="lat">33 ms</div>
+              <div class="arrow on">▸ 切换</div>
+            </div>
+          </div>
+        </div>
+        <div class="cc-rate">
+          <div class="rc"><div class="t">⬆ 上行</div><div class="v">0.4 MB/s</div></div>
+          <div class="rc"><div class="t">⬇ 下行</div><div class="v">2.1 MB/s</div></div>
+        </div>
+      </div>
+      <!-- #5 到期警示（示例：仅到期账户显示）-->
+      <div class="expired" style="display:none;">
+        <div class="ic">⚠️</div>
+        <div class="tx"><div class="t">您的套餐已到期</div><div class="s">连接前需先购买套餐</div></div>
+        <button class="go">去续费 →</button>
+      </div>
+      <div class="quick">
+        <div class="qt">快速切换国家 · 自动选最优</div>
+        <div class="chips">
+          <div class="chip on"><span class="cf">🇭🇰</span>香港</div><div class="chip"><span class="cf">🇯🇵</span>日本</div><div class="chip"><span class="cf">🇸🇬</span>新加坡</div><div class="chip"><span class="cf">🇺🇸</span>美国</div><div class="chip"><span class="cf">🇰🇷</span>韩国</div>
+        </div>
+      </div>
+      <div class="autocard">
+        <div class="bolt">⚡</div>
+        <div class="tx">自动测速 · 连接后后台选最优节点（不影响连接）</div>
+        <div class="sw"></div>
+      </div>
+    </div>
+    <div class="nav"><div class="it on"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点列表</div><div class="it"><div class="ic">🛒</div>购买套餐</div><div class="it"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 桌面：套餐页（列表模式） ================= -->
+<div class="section"><h2>② 购买套餐（桌面）</h2><span class="tag">#6 上下列表 · 无优惠码</span></div>
+<div class="devices">
+<div class="desk">
+  <div class="dtitle"><div class="dots"><span></span><span></span><span></span></div><div class="name">MoneyFly — 购买套餐</div></div>
+  <div class="appbody">
+    <div class="content">
+      <div style="font-size:12.5px;color:var(--txt2);margin-bottom:12px;">选择套餐，付款后立即开通 · 支付方式随官网实时同步</div>
+      <div class="plan-list">
+        <div class="plan rec">
+          <div class="name">
+            <div class="t">包月 · 旗舰套餐 <span class="rec-tag">推荐</span></div>
+            <div class="s">30 天 · 5 设备 · 无限流量 · 解锁流媒体 · 全节点</div>
+          </div>
+          <div class="price">¥200 <small>/月</small></div>
+          <button class="buy">购买</button>
+        </div>
+        <div class="plan">
+          <div class="name"><div class="t">包季 · 旗舰套餐</div><div class="s">90 天 · 5 设备 · 无限流量 · 解锁流媒体</div></div>
+          <div class="price">¥550 <small>/季</small></div>
+          <button class="buy">购买</button>
+        </div>
+        <div class="plan">
+          <div class="name"><div class="t">包年 · 旗舰套餐</div><div class="s">365 天 · 15 设备 · 无限流量 · 7×24 技术支持</div></div>
+          <div class="price">¥600 <small>/年</small></div>
+          <button class="buy">购买</button>
+        </div>
+        <div class="plan">
+          <div class="name"><div class="t">迷你月卡</div><div class="s">30 天 · 2 设备 · 基础线路</div></div>
+          <div class="price">¥100 <small>/月</small></div>
+          <button class="buy">购买</button>
+        </div>
+      </div>
+      <div style="margin-top:12px;font-size:10.5px;color:var(--txt3);">合计：¥200 · 支付方式：<b style="color:var(--txt2)">支付宝</b></div>
+    </div>
+    <div class="nav"><div class="it"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点列表</div><div class="it on"><div class="ic">🛒</div>购买套餐</div><div class="it"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 桌面：我的 + 设置 ================= -->
+<div class="section"><h2>③ 我的（桌面）＋ 设置页精简</h2><span class="tag">#7 #8 #9 #10 #11 #13</span></div>
+<div class="devices">
+<div class="desk">
+  <div class="dtitle"><div class="dots"><span></span><span></span><span></span></div><div class="name">MoneyFly — 我的</div></div>
+  <div class="appbody">
+    <div class="content">
+      <!-- #7 浅色信息卡 -->
+      <div class="profile-card">
+        <div class="avatar">M</div>
+        <div class="pinfo">
+          <div class="mail">454487210@qq.com</div>
+          <div class="plan-name">包年旗舰 · 至 2032-06-06</div>
+        </div>
+      </div>
+      <!-- 三格数据（浅色同 #3） -->
+      <div class="stats3">
+        <div class="cell"><div class="lbl">到期时间</div><div class="val">2032-06-06</div></div>
+        <div class="cell"><div class="lbl">设备数量</div><div class="val">53 / 600</div></div>
+        <div class="cell"><div class="lbl">剩余天数</div><div class="val green">2104 天</div></div>
+      </div>
+      <!-- 数据本地缓存 + 手动刷新：进入不自动刷新 -->
+      <div class="menu">
+        <div class="mit"><span class="mi">📦</span>我的订单 <span class="sp"></span><span class="badge">39 笔</span><span class="chev">›</span></div>
+        <div class="mit"><span class="mi">📱</span>设备管理 <span class="sp"></span><span class="badge">53 台</span><span class="chev">›</span></div>
+        <div class="mit"><span class="mi">🔔</span>通知中心 <span class="sp"></span><span class="badge">未读 0</span><span class="chev">›</span></div>
+        <div class="mit"><span class="mi">🔑</span>修改密码 <span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit"><span class="mi">⚙️</span>设置 <span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit"><span class="mi" style="color:#ff8b8f;">⏻</span><span style="color:#ff8b8f;">退出登录</span><span class="sp"></span><span class="chev">›</span></div>
+      </div>
+    </div>
+    <div class="nav"><div class="it"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点列表</div><div class="it"><div class="ic">🛒</div>购买套餐</div><div class="it on"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+
+<div class="desk" style="width:480px;">
+  <div class="dtitle"><div class="dots"><span></span><span></span><span></span></div><div class="name">设置（精简后）</div></div>
+  <div class="appbody" style="height:600px;">
+    <div class="content">
+      <div class="sec-label">连接</div>
+      <!-- #10 默认关闭 -->
+      <div class="setting-row"><span class="ic">🔌</span><div class="tx">启动时自动连接<div class="s">默认关闭</div></div><div class="row-sw off"></div></div>
+      <div class="setting-row"><span class="ic">🔁</span><div class="tx">断线自动重连<div class="s">默认关闭</div></div><div class="row-sw off"></div></div>
+      <div class="setting-row"><span class="ic">⚡</span><div class="tx">自动测速选优<div class="s">连接后后台测速</div></div><div class="row-sw"></div></div>
+      <div class="setting-row"><span class="ic">🌐</span><div class="tx">DNS</div><div class="val">223.5.5.5</div></div>
+      <div class="setting-row"><span class="ic">📡</span><div class="tx">TUN 虚拟网卡<div class="s">#15 桌面端可选</div></div><div class="val">关闭</div></div>
+      <div class="sec-label">外观</div>
+      <div class="setting-row"><span class="ic">🎨</span><div class="tx">主题</div><div class="val">跟随系统 ›</div></div>
+      <div class="setting-row"><span class="ic">🌏</span><div class="tx">语言</div><div class="val">简体中文 ›</div></div>
+      <div class="sec-label">账号与隐私</div>
+      <div class="setting-row"><span class="ic">🔔</span><div class="tx">通知</div><div class="row-sw"></div></div>
+      <div class="setting-row"><span class="ic">🩹</span><div class="tx">崩溃上报</div><div class="row-sw off"></div></div>
+      <div class="setting-row"><span class="ic">📊</span><div class="tx">匿名统计</div><div class="row-sw off"></div></div>
+      <div class="setting-row"><span class="ic">🔑</span><div class="tx">修改密码</div><div class="val">›</div></div>
+      <div class="setting-row"><span class="ic">⏻</span><div class="tx" style="color:#ff8b8f;">退出登录</div></div>
+      <div class="sec-label">关于</div>
+      <div class="setting-row"><span class="ic">🔄</span><div class="tx">检查更新</div><div class="val">v0.0.1 · 有新版本可更新 ›</div></div>
+      <div style="margin-top:6px;font-size:10px;color:var(--txt3);">MoneyFly v0.0.1 · dy.moneyfly.top</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 手机：主页（新版：连接居中 · 节点独立整行） ================= -->
+<div class="section"><h2>④ 主页（Android 手机 · 新版）</h2><span class="tag">连接按钮居中 · 节点切换单独整行 · 下方不空</span></div>
+<div class="devices">
+<div class="phone">
+  <div class="bar"></div>
+  <div class="pbody">
+    <div class="content" style="display:flex;flex-direction:column;gap:0;">
+      <!-- 顶部 -->
+      <div class="hdr" style="margin-bottom:10px;">
+        <div class="logo"><div class="m">M</div>MoneyFly</div>
+        <div class="right">🔔</div>
+      </div>
+      <!-- 用户信息 3 格（#3） -->
+      <div class="info3" style="padding:9px 2px;">
+        <div class="cell"><div class="lbl" style="font-size:9px;">到期时间</div><div class="val" style="font-size:12.5px;">2032-06-06</div></div>
+        <div class="cell"><div class="lbl" style="font-size:9px;">设备数量</div><div class="val" style="font-size:12.5px;">53 / 600</div></div>
+        <div class="cell"><div class="lbl" style="font-size:9px;">剩余天数</div><div class="val green" style="font-size:12.5px;">2104 天</div></div>
+      </div>
+      <!-- 连接区：状态 + 大按钮 居中（占满中间空间） -->
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:172px;gap:10px;">
+        <div style="font-size:11.5px;color:var(--green);font-weight:700;letter-spacing:.5px;">已连接 · 新加坡</div>
+        <div class="power" style="width:96px;height:96px;"><div class="inner" style="width:76px;height:76px;font-size:32px;">⏻</div></div>
+        <div style="font-size:9.5px;color:var(--txt3);">点按连接 · 再次点按断开</div>
+      </div>
+      <!-- 模式切换 -->
+      <div style="display:flex;justify-content:center;margin-bottom:12px;">
+        <div class="cc-mode" style="font-size:10.5px;"><span class="on">智能模式</span><span>全局模式</span></div>
+      </div>
+      <!-- 节点切换：单独一整行，留足空间（#2） -->
+      <div style="font-size:10px;color:var(--txt2);margin-bottom:6px;">当前节点 · 点按切换</div>
+      <div class="cc-node" style="padding:14px 13px;border-radius:14px;">
+        <div class="flag" style="width:30px;height:30px;font-size:16px;">🇸🇬</div>
+        <div class="nn">
+          <div class="t" style="font-size:13px;">新加坡优质 · 移动电信优选</div>
+          <div class="s" style="font-size:9.5px;">vless-reality · 自动选择组</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="lat" style="font-size:12px;margin-bottom:2px;">33 ms</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:2px;background:rgba(69,95,233,.22);border:1px solid rgba(123,140,255,.4);color:var(--brand2);font-size:10.5px;font-weight:700;padding:6px 10px;border-radius:8px;margin-left:8px;">▸ 切换</div>
+      </div>
+      <!-- 速率 -->
+      <div class="cc-rate" style="margin-top:12px;gap:8px;">
+        <div class="rc"><div class="t" style="font-size:9px;">⬆ 上行</div><div class="v" style="font-size:13px;">0.4 MB/s</div></div>
+        <div class="rc"><div class="t" style="font-size:9px;">⬇ 下行</div><div class="v" style="font-size:13px;">2.1 MB/s</div></div>
+      </div>
+      <!-- 快速切换国家 -->
+      <div class="quick" style="margin-top:12px;">
+        <div class="qt" style="font-size:10px;">快速切换国家 · 点按即切该国最优节点</div>
+        <div class="chips" style="gap:6px;margin-top:2px;">
+          <div class="chip on" style="font-size:10px;padding:5px 9px;"><span class="cf">🇭🇰</span>香港</div><div class="chip" style="font-size:10px;padding:5px 9px;"><span class="cf">🇯🇵</span>日本</div><div class="chip" style="font-size:10px;padding:5px 9px;"><span class="cf">🇸🇬</span>新加坡</div><div class="chip" style="font-size:10px;padding:5px 9px;"><span class="cf">🇺🇸</span>美国</div><div class="chip" style="font-size:10px;padding:5px 9px;"><span class="cf">🇰🇷</span>韩国</div><div class="chip" style="font-size:10px;padding:5px 9px;"><span class="cf">🇹🇭</span>泰国</div>
+        </div>
+      </div>
+      <!-- 自动测速开关 -->
+      <div class="autocard" style="margin-top:12px;padding:10px 12px;">
+        <div class="bolt" style="width:23px;height:23px;font-size:12px;">⚡</div>
+        <div class="tx" style="font-size:11px;">自动测速 · 选最优</div>
+        <div class="sw"></div>
+      </div>
+      <!-- 到期警示（仅到期账户显示） -->
+      <div class="expired" style="margin-top:10px;display:none;">
+        <div class="ic">⚠️</div>
+        <div class="tx"><div class="t" style="font-size:11px;">套餐已到期，无法连接</div></div>
+        <button class="go" style="font-size:10px;padding:6px 11px;">去续费</button>
+      </div>
+    </div>
+    <div class="pnav"><div class="it on"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点</div><div class="it"><div class="ic">🛒</div>套餐</div><div class="it"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 手机：套餐 + 我的 ================= -->
+<div class="section"><h2>⑤ 套餐（列表）＋ 我的（手机）</h2><span class="tag">#6 #7 #9</span></div>
+<div class="devices">
+<div class="phone">
+  <div class="bar"></div>
+  <div class="pbody">
+    <div class="content">
+      <div style="font-size:11px;color:var(--txt2);margin-bottom:10px;">选择套餐，付款后立即开通</div>
+      <div class="plan-list" style="gap:8px;">
+        <div class="plan rec" style="padding:11px;">
+          <div class="name"><div class="t" style="font-size:12.5px;">包月旗舰 <span class="rec-tag">推荐</span></div><div class="s" style="font-size:9px;">30天·5设备·无限流量</div></div>
+          <div class="price" style="font-size:14px;">¥200<small>/月</small></div>
+          <button class="buy" style="font-size:10px;padding:6px 11px;">购买</button>
+        </div>
+        <div class="plan" style="padding:11px;">
+          <div class="name"><div class="t" style="font-size:12.5px;">包季旗舰</div><div class="s" style="font-size:9px;">90天·5设备</div></div>
+          <div class="price" style="font-size:14px;">¥550<small>/季</small></div>
+          <button class="buy" style="font-size:10px;padding:6px 11px;">购买</button>
+        </div>
+        <div class="plan" style="padding:11px;">
+          <div class="name"><div class="t" style="font-size:12.5px;">包年旗舰</div><div class="s" style="font-size:9px;">365天·15设备</div></div>
+          <div class="price" style="font-size:14px;">¥600<small>/年</small></div>
+          <button class="buy" style="font-size:10px;padding:6px 11px;">购买</button>
+        </div>
+      </div>
+    </div>
+    <div class="pnav"><div class="it"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点</div><div class="it on"><div class="ic">🛒</div>套餐</div><div class="it"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+<div class="phone">
+  <div class="bar"></div>
+  <div class="pbody">
+    <div class="content">
+      <div class="profile-card" style="padding:12px;">
+        <div class="avatar" style="width:38px;height:38px;font-size:15px;">M</div>
+        <div class="pinfo"><div class="mail" style="font-size:12.5px;">454487210@qq.com</div><div class="plan-name" style="font-size:9.5px;">包年旗舰 · 至 2032-06-06</div></div>
+      </div>
+      <div class="stats3" style="padding:10px 2px;">
+        <div class="cell"><div class="lbl" style="font-size:9px;">到期</div><div class="val" style="font-size:13px;">2032-06-06</div></div>
+        <div class="cell"><div class="lbl" style="font-size:9px;">设备</div><div class="val" style="font-size:13px;">53/600</div></div>
+        <div class="cell"><div class="lbl" style="font-size:9px;">剩余</div><div class="val green" style="font-size:13px;">2104天</div></div>
+      </div>
+      <div class="menu" style="margin-top:8px;">
+        <div class="mit" style="font-size:12px;"><span class="mi">📦</span>我的订单<span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit" style="font-size:12px;"><span class="mi">📱</span>设备管理<span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit" style="font-size:12px;"><span class="mi">🔔</span>通知中心<span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit" style="font-size:12px;"><span class="mi">⚙️</span>设置<span class="sp"></span><span class="chev">›</span></div>
+        <div class="mit" style="font-size:12px;"><span class="mi" style="color:#ff8b8f;">⏻</span><span style="color:#ff8b8f;">退出登录</span><span class="sp"></span><span class="chev">›</span></div>
+      </div>
+    </div>
+    <div class="pnav"><div class="it"><div class="ic">🏠</div>首页</div><div class="it"><div class="ic">🌐</div>节点</div><div class="it"><div class="ic">🛒</div>套餐</div><div class="it on"><div class="ic">👤</div>我的</div></div>
+  </div>
+</div>
+</div>
+
+<div class="legend">
+  <div><b>✅ 已在本稿落实：</b> <span class="ok">#1 #2 #3 #4 #5 #6 #7 #8 #10 #11 #16</span></div>
+  <div><b>功能修复（视觉同稿）：</b> <span class="ok">#9 #12 #13 #14</span>（#12 主题三态、#13 GitHub 自动检测更新、#14 UA+设备备注）</div>
+  <div><b>需实测：</b> #15 TUN 生效验证（保留设置项，连接时实测）</div>
+</div>
+
+<div style="text-align:center;margin-top:30px;color:var(--txt3);font-size:12px;">— 以上为设计稿，确认后开始修改三端代码 —</div>
+</body>
+</html>

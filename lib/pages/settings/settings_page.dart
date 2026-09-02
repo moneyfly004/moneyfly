@@ -117,14 +117,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
             _row(icon: '🌐', title: AppStrings.t('settings_dns'), value: _s['dns']?.toString() ?? '223.5.5.5',
                 onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
-            _row(icon: '📡', title: AppStrings.t('settings_protocol'),
-                value: switch (_s['protocolFilter']?.toString()) {
-                  'vless' => AppStrings.t('only_vless'),
-                  'trojan' => AppStrings.t('only_trojan'),
-                  _ => AppStrings.t('all_protocols'),
-                },
-                onTap: () => _picker([AppStrings.t('all_protocols'), AppStrings.t('only_vless'), AppStrings.t('only_trojan')], (v) => _set('protocolFilter',
-                    v == AppStrings.t('only_vless') ? 'vless' : (v == AppStrings.t('only_trojan') ? 'trojan' : 'all')))),
             _section(AppStrings.t('settings_mode')),
             _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
                 trailing: _seg2(
@@ -148,11 +140,17 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🎨', title: AppStrings.t('settings_theme'),
                 value: switch (_s['theme']?.toString()) {
                   'light' => AppStrings.t('theme_light'),
-                  'dark' => '深色',
-                  _ => '跟随系统',
+                  'dark' => AppStrings.t('theme_dark'),
+                  _ => AppStrings.t('theme_follow'),
                 },
-                onTap: () => _picker(['跟随系统', '深色', '浅色'], (v) {
-                  final t = v == '深色' ? 'dark' : (v == '浅色' ? 'light' : 'system');
+                onTap: () => _picker([
+                  AppStrings.t('theme_follow'),
+                  AppStrings.t('theme_dark'),
+                  AppStrings.t('theme_light'),
+                ], (v) {
+                  final t = v == AppStrings.t('theme_dark')
+                      ? 'dark'
+                      : (v == AppStrings.t('theme_light') ? 'light' : 'system');
                   ThemeController.instance.setTheme(t); // 立即生效
                   _set('theme', t);
                 })),
@@ -340,7 +338,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() => _checkingUpdate = false);
     if (info == null) {
-      _toast('暂未配置更新源，当前已是最新版本');
+      _toast('当前已是最新版本 v${UpdateInfo.currentVersion}');
       return;
     }
     if (!info.isNewer) {

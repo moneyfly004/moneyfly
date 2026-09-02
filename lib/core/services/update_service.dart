@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../api/api_client.dart';
-import '../api/endpoints.dart';
 
 /// 软件升级信息
 class UpdateInfo {
@@ -33,22 +32,10 @@ class UpdateInfo {
   static String currentVersion = '0.0.1';
 }
 
-/// 软件升级服务：读 /software/versions，扫描 MoneyFly 平台条目比对版本
-/// 后端发布安装包后，在软件库添加 key 形如 moneyfly_android_url / moneyfly_macos_url 即可生效
+/// 软件升级服务（#13）：检测 GitHub Releases 最新版并下载对应平台安装包
 class UpdateService {
   UpdateService._();
   static final UpdateService instance = UpdateService._();
-
-  static String get _platformKey {
-    if (kIsWeb) return 'web';
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => 'android',
-      TargetPlatform.iOS => 'ios',
-      TargetPlatform.macOS => 'macos',
-      TargetPlatform.windows => 'windows',
-      _ => 'other',
-    };
-  }
 
   /// 初始化：读取当前应用版本（flutter_test 环境跳过，避免平台通道挂起）
   Future<void> init() async {
@@ -60,31 +47,89 @@ class UpdateService {
     } catch (_) {}
   }
 
-  /// 检查更新；无更新源配置时返回 null
+  /// GitHub Releases 最新版本信息（缓存 5 分钟）
+  static UpdateInfo? _cacheInfo;
+  static DateTime _cacheAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  static const githubRepo = 'moneyfly004/moneyfly';
+
+  /// 检查更新（#13）：读取 GitHub Releases 最新版 → 比对 → 返回更新信息。
+  /// 网络异常返回 null（UI 提示已是最新或稍后再试）。
   Future<UpdateInfo?> check() async {
+    // 5 分钟缓存，避免重复请求限流
+    if (_cacheInfo != null &&
+        DateTime.now().difference(_cacheAt) < const Duration(minutes: 5)) {
+      return _cacheInfo;
+    }
     try {
-      final data = await ApiClient.instance.get(Endpoints.softwareVersions);
-      if (data is! Map || data['list'] is! List) return null;
-      final list = data['list'] as List;
-      Map<String, dynamic>? match;
-      for (final e in list) {
-        if (e is! Map) continue;
-        final key = e['key']?.toString() ?? '';
-        if (key.contains('moneyfly') && key.contains(_platformKey)) {
-          match = Map<String, dynamic>.from(e);
-          break;
-        }
-      }
-      if (match == null) return null;
-      final urlKey = 'moneyfly_${_platformKey}_url';
-      return UpdateInfo(
-        latestVersion: match['version']?.toString() ?? '0.0.0',
-        downloadUrl: match['download_url']?.toString() ?? match[urlKey]?.toString(),
-        sizeText: match['size_text']?.toString(),
-        forced: match['forced'] == true || match['force_update'] == true,
+      final data = await ApiClient.instance
+          .get('https://api.github.com/repos/$githubRepo/releases/latest');
+      if (data is! Map) return null;
+      final tag = data['tag_name']?.toString() ?? '';
+      final version = tag.startsWith('v') ? tag.substring(1) : tag;
+      if (version.isEmpty) return null;
+
+      // 按平台匹配资产
+      final assets = (data['assets'] as List? ?? const [])
+          .whereType<Map>()
+          .toList();
+      final url = _pickAssetUrl(assets);
+      final sizeText = _sizeText(assets);
+      if (url == null) return null;
+
+      _cacheInfo = UpdateInfo(
+        latestVersion: version,
+        downloadUrl: url,
+        sizeText: sizeText,
       );
+      _cacheAt = DateTime.now();
+      return _cacheInfo;
     } catch (_) {
       return null;
     }
+  }
+
+  /// 选择本平台安装包资产
+  static String? _pickAssetUrl(List<Map> assets) {
+    final names = assets
+        .map((a) => (a['name']?.toString() ?? '', a['browser_download_url']?.toString() ?? ''))
+        .toList();
+    String prefix;
+    if (kIsWeb) return null;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        prefix = 'MoneyFly-android-arm64-v8a-';
+        break;
+      case TargetPlatform.iOS:
+        return null;
+      case TargetPlatform.macOS:
+        prefix = 'MoneyFly-macos-arm64-';
+        break;
+      case TargetPlatform.windows:
+        prefix = 'MoneyFly-setup-';
+        break;
+      default:
+        prefix = '';
+    }
+    for (final (n, u) in names) {
+      if (n.startsWith(prefix) && u.isNotEmpty) return u;
+    }
+    // 兜底：任意本平台资产
+    for (final (n, u) in names) {
+      if (u.isNotEmpty && n.contains('MoneyFly-')) return u;
+    }
+    return null;
+  }
+
+  static String? _sizeText(List<Map> assets) {
+    for (final a in assets) {
+      final size = (a['size'] as num?)?.toInt() ?? 0;
+      if (size > 0) {
+        if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GB';
+        if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(0)} MB';
+        return '${(size / 1024).toStringAsFixed(0)} KB';
+      }
+    }
+    return null;
   }
 }

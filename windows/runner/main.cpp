@@ -25,8 +25,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
+  // #16 默认方正居中（720×520）
+  Win32Window::Size size(720, 520);
+  const int screen_w = GetSystemMetrics(SM_CXSCREEN);
+  const int screen_h = GetSystemMetrics(SM_CYSCREEN);
+  Win32Window::Point origin((screen_w - size.width) / 2,
+                            (screen_h - size.height) / 2);
   if (!window.Create(L"MoneyFly", origin, size)) {
     return EXIT_FAILURE;
   }

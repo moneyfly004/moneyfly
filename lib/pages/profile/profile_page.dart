@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/models/models.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/update_service.dart';
 import '../../core/services/user_service.dart';
 import '../../main.dart';
 import '../../l10n/app_strings.dart';
@@ -12,7 +14,7 @@ import '../notifications/notifications_page.dart';
 import '../orders/orders_page.dart';
 import '../settings/settings_page.dart';
 
-/// 我的页（设计稿 06）：真实仪表盘数据 + 各功能入口
+/// 我的页：真实仪表盘数据（本地缓存，进入不重复刷新）+ 各功能入口
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
@@ -20,40 +22,34 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
-  dynamic _dashboard;
-  bool _loading = true;
+class _ProfilePageState extends State<ProfilePage> {
+  /// #9 本地缓存：首次加载后切回本页不再自动刷新（下拉可手动刷新）
+  static DashboardInfo? _cache;
+  DashboardInfo? get _dashboard => _cache;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    _load();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 回前台刷新仪表盘（保活页面避免数据过期）
-    if (state == AppLifecycleState.resumed && mounted) _load();
+    // 无缓存才加载；已有缓存直接展示（切 tab 不再闪烁刷新）
+    if (_cache == null) _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final d = await UserService.instance.dashboard();
-      if (mounted) setState(() => _dashboard = d);
+      _cache = d;
+      if (mounted) setState(() {});
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  /// 退出登录时清缓存，下次进入重新加载
+  static void invalidateCache() => _cache = null;
 
   void _toast(String msg) {
     if (!mounted) return;
@@ -62,14 +58,19 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final name = _dashboard?.username ?? '—';
-    final email = _dashboard?.email ?? '';
-    final balance = (_dashboard?.balance as num?)?.toDouble() ?? 0;
-    final remaining = (_dashboard?.remainingDays as num?)?.toInt() ?? 0;
-    final expire = _dashboard?.expireTime?.toString() ?? AppStrings.t('expire_na');
-    final online = (_dashboard?.onlineDevices as num?)?.toInt() ?? 0;
-    final total = (_dashboard?.totalDevices as num?)?.toInt() ?? 0;
-    final hasSub = _dashboard?.hasSubscription == true;
+    final dash = _dashboard;
+    final name = dash?.username ?? '—';
+    final email = dash?.email ?? '';
+    final balance = dash?.balance ?? 0;
+    final remaining = dash?.remainingDays ?? 0;
+    final expire = (dash?.expireTime ?? '').toString().isEmpty
+        ? AppStrings.t('expire_na')
+        : dash!.expireTime.toString();
+    final online = dash?.onlineDevices ?? 0;
+    final total = dash?.totalDevices ?? 0;
+    final hasSub = dash?.hasSubscription == true;
+    // 到期展示取日期部分
+    final expireShort = expire.length > 10 ? expire.substring(0, 10) : expire;
 
     return Scaffold(
       body: SafeArea(
@@ -81,7 +82,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             children: [
               _buildHeader(name, email, balance),
               const SizedBox(height: 16),
-              if (_loading)
+              if (_loading && _dashboard == null)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
@@ -91,7 +92,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   _buildExpiringBanner(remaining),
                   const SizedBox(height: 12),
                 ],
-                _buildSubscriptionCard(hasSub, remaining, expire, online, total),
+                // #7 浅色玻璃信息卡（不再深色看不清）
+                _buildInfoCard(hasSub, remaining, expireShort, online, total),
                 const SizedBox(height: 18),
                 _buildMenu(context, online, total),
                 const SizedBox(height: 18),
@@ -108,25 +110,30 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     return Row(
       children: [
         Container(
-          width: 54, height: 54,
-          decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16)),
-          child: const Icon(Icons.flight_takeoff, color: MFColors.brand, size: 28),
+          width: 50, height: 50,
+          decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(15)),
+          child: const Icon(Icons.flight_takeoff, color: MFColors.brand, size: 26),
         ),
-        const SizedBox(width: 14),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-            Text(email.isEmpty ? '未登录邮箱' : email, style:  TextStyle(fontSize: 12, color: MFColors.txt3)),
-          ],
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              Text(email.isEmpty ? '未登录邮箱' : email,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
+            ],
+          ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text('¥${balance.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
-             Text(AppStrings.t('balance'), style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
+            Text(AppStrings.t('balance'), style: TextStyle(fontSize: 9.5, color: MFColors.txt3)),
           ],
         ),
       ],
@@ -148,7 +155,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           const SizedBox(width: 9),
           Expanded(
             child: Text(AppStrings.t('expiring_days', {'days': '$remaining'}),
-                style:  TextStyle(fontSize: 12, color: MFColors.txt)),
+                style: TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
           GestureDetector(
             onTap: () => mainTabIndex.value = 2,
@@ -163,42 +170,49 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildSubscriptionCard(bool hasSub, int remaining, String expire, int online, int total) {
+  /// #7 浅色信息卡：到期 / 设备 / 剩余天数 三格（柔光底色 + 清晰深色文字）
+  Widget _buildInfoCard(bool hasSub, int remaining, String expire, int online, int total) {
     return Container(
-      padding: const EdgeInsets.all(17),
+      padding: const EdgeInsets.fromLTRB(6, 15, 6, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
             begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0xFF1A2140), Color(0xFF10141F)]),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: MFColors.brand.withValues(alpha: .4)),
+            colors: [Color(0x2E455FE9), Color(0x12455FE9)]),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: MFColors.brand.withValues(alpha: .38)),
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              Text(hasSub ? '${_dashboard?.membership ?? ''} · ${AppStrings.t('unlimited')}'
-                  : AppStrings.t('no_plan_yet'),
-                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                decoration: BoxDecoration(
-                  color: (hasSub ? MFColors.green : MFColors.amber).withValues(alpha: .12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: (hasSub ? MFColors.green : MFColors.amber).withValues(alpha: .3)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              children: [
+                Text(hasSub
+                    ? ((_dashboard?.membership ?? '').isNotEmpty
+                        ? _dashboard!.membership
+                        : AppStrings.t('member'))
+                    : AppStrings.t('no_plan_yet'),
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: (hasSub ? MFColors.green : MFColors.amber).withValues(alpha: .15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: (hasSub ? MFColors.green : MFColors.amber).withValues(alpha: .35)),
+                  ),
+                  child: Text(hasSub ? '● ${AppStrings.t('active')}' : '● ${AppStrings.t('inactive')}',
+                      style: TextStyle(fontSize: 10, color: hasSub ? MFColors.green : MFColors.amber, fontWeight: FontWeight.w600)),
                 ),
-                child: Text(hasSub ? '● ${AppStrings.t('active')}' : '● ${AppStrings.t('inactive')}',
-                    style: TextStyle(fontSize: 10, color: hasSub ? MFColors.green : MFColors.amber, fontWeight: FontWeight.w600)),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 13),
           Row(
             children: [
-              _SubItem(value: '$remaining 天', label: AppStrings.t('remaining_days')),
-              _SubItem(value: expire.length > 12 ? expire.substring(0, 10) : expire, label: AppStrings.t('expire_time')),
-              _SubItem(value: '$online / $total', label: AppStrings.t('plan_devices')),
+              _SubItem(value: '$remaining', unit: AppStrings.t('days'), label: AppStrings.t('remaining_days'), highlight: true),
+              _SubItem(value: expire, label: AppStrings.t('expire_time')),
+              _SubItem(value: '$online/$total', label: AppStrings.t('plan_devices')),
             ],
           ),
         ],
@@ -207,13 +221,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Widget _buildMenu(BuildContext context, int online, int total) {
-    final rows = [
+    final rows = <(String, String, String?, VoidCallback)>[
       ('📱', AppStrings.t('profile_devices'), '$online/$total', () => _push(context, const DevicesPage())),
       ('🧾', AppStrings.t('profile_orders'), null, () => _push(context, const OrdersPage())),
-      ('🎟️', AppStrings.t('profile_coupons'), null, () => _toast(AppStrings.t('coupon_ok'))),
       ('🔔', AppStrings.t('profile_notifications'), null, () => _push(context, const NotificationsPage())),
       ('⚙️', AppStrings.t('settings'), null, () => _push(context, const SettingsPage())),
-      ('ℹ️', AppStrings.t('profile_about'), null, () => _showAbout(context)),
+      ('ℹ️', AppStrings.t('profile_about'), 'v${UpdateInfo.currentVersion}', () => _showAbout(context)),
     ];
     return Column(
       children: [
@@ -236,10 +249,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(12)),
-                      child: Text(badge, style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
+                      child: Text(badge, style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                     ),
                   const SizedBox(width: 4),
-                   Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
+                  Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
                 ],
               ),
             ),
@@ -256,7 +269,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           builder: (_) => AlertDialog(
             backgroundColor: MFColors.card2,
             title: Text(AppStrings.t('logout'), style: TextStyle(fontSize: 16)),
-            content:  Text(AppStrings.t('logout_confirm'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
+            content: Text(AppStrings.t('logout_confirm'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel'))),
               TextButton(
@@ -268,6 +281,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         );
         if (ok == true && context.mounted) {
           await AuthService.instance.logout();
+          _ProfilePageState.invalidateCache();
           if (context.mounted) context.read<SessionState>().setLoggedIn(false);
         }
       },
@@ -293,7 +307,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: Text(AppStrings.t('profile_about')),
-        content:  Text('MoneyFly v1.0.0\n\n${AppStrings.t('slogan')}\ndy.moneyfly.top',
+        content: Text('MoneyFly v${UpdateInfo.currentVersion}\n\n${AppStrings.t('slogan')}\ndy.moneyfly.top',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('好的'))],
@@ -303,21 +317,39 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 }
 
 class _SubItem extends StatelessWidget {
-  const _SubItem({required this.value, required this.label});
+  const _SubItem({required this.value, required this.label, this.unit, this.highlight = false});
   final String value;
+  final String? unit;
   final String label;
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(value,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(value,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: highlight ? 18 : 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: highlight ? MFColors.green : MFColors.txt,
+                      fontFamily: kNumFont)),
+              if (unit != null) ...[
+                const SizedBox(width: 2),
+                Text(unit!, style: TextStyle(fontSize: 10, color: MFColors.txt2)),
+              ],
+            ],
+          ),
           const SizedBox(height: 3),
-          Text(label, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: MFColors.txt2)),
         ],
       ),
     );

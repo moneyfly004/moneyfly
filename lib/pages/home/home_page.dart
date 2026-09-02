@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/models/models.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
@@ -27,6 +28,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
+
+  /// #3 订阅信息（到期/设备/剩余天数）本地缓存，进入主页不重复请求
+  static SubscriptionInfo? _subInfo;
+  SubscriptionInfo? get _sub => _subInfo;
 
   /// 连接状态下的呼吸动画（仅连接时运行，断开即停 → 省电 + 流畅）
   late final AnimationController _pulse = AnimationController(
@@ -73,19 +78,32 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _ensureNodes({bool force = false}) async {
     final conn = context.read<ConnectionController>();
+    // #3 首页订阅信息条：刷新节点时顺带刷新（静默失败不阻塞）
+    if (_sub == null || force) {
+      unawaited(_loadSubInfo());
+    }
     if (conn.nodes.isNotEmpty && !force) return;
     if (!mounted) return;
     setState(() => _loadingNodes = true);
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       await conn.loadNodes(nodes);
-      // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次）
+      // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次；默认关闭）
       unawaited(conn.autoConnectIfEnabled());
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loadingNodes = false);
     }
+  }
+
+  /// 拉取订阅信息（缓存，供顶部到期/设备/剩余天数展示）
+  Future<void> _loadSubInfo() async {
+    try {
+      final info = await SubscriptionService.instance.fetchInfo();
+      _subInfo = info;
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   Future<void> _toggleConnect(ConnectionController conn) async {
@@ -102,6 +120,12 @@ class _HomePageState extends State<HomePage>
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
     } else {
+      // #5 到期账户不允许连接 → 提示 + 引导购买
+      final sub = _sub;
+      if (sub != null && (sub.isExpired || sub.remainingDays <= 0)) {
+        _showExpiredDialog();
+        return;
+      }
       // 连接前：VPN 授权 + 通知 + 电池优化豁免（最高权限，防断连/防杀后台）
       final ok = await PermissionService.instance.ensureAllForConnect();
       if (!ok) {
@@ -110,6 +134,43 @@ class _HomePageState extends State<HomePage>
       }
       await conn.connect();
     }
+  }
+
+  /// #5 到期对话框 → 一键跳套餐页
+  void _showExpiredDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(18))),
+        title: const Text('⚠️', textAlign: TextAlign.center, style: TextStyle(fontSize: 34)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(AppStrings.t('expired_tip'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: MFColors.txt, height: 1.6)),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('cancel'))),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: MFColors.brand,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              mainTabIndex.value = 2; // 跳到购买套餐
+            },
+            child: Text(AppStrings.t('go_renew'),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _toast(String msg) {
@@ -133,6 +194,9 @@ class _HomePageState extends State<HomePage>
             children: [
               _buildHeader(),
               const SizedBox(height: 6),
+              // #3 顶部订阅信息条（到期/设备/剩余天数 一行三格，浅色）
+              _buildSubInfoBar(),
+              const SizedBox(height: 12),
               if (conn.nodes.isEmpty) ...[
                 _buildNoSubscriptionBanner(),
                 const SizedBox(height: 12),
@@ -140,12 +204,53 @@ class _HomePageState extends State<HomePage>
               _buildConnectCard(conn, connected, busy),
               const SizedBox(height: 12),
               _buildModeSwitch(conn),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _buildStats(conn),
+              const SizedBox(height: 14),
+              _buildQuickCountries(conn),
+              const SizedBox(height: 14),
+              _buildAutoTestCard(conn),
               const SizedBox(height: 16),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// #3 订阅信息条：到期时间 / 设备数量 / 剩余天数（浅色玻璃卡，三端通用）
+  Widget _buildSubInfoBar() {
+    final sub = _sub;
+    final expired = sub != null && (sub.isExpired || sub.remainingDays <= 0);
+    String expireText = AppStrings.t('expire_na');
+    if (sub?.expireTime != null) {
+      final dt = sub!.expireTime!;
+      expireText = '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+    } else if (sub != null) {
+      expireText = AppStrings.t('expire_na');
+    }
+    final deviceText = sub == null ? '—' : '${sub.currentDevices} / ${sub.deviceLimit}';
+    final daysText = sub == null ? '—' : '${sub.remainingDays}';
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        gradient: expired
+            ? const LinearGradient(colors: [Color(0x2EFF5A5F), Color(0x10FF5A5F)])
+            : const LinearGradient(colors: [Color(0x2E455FE9), Color(0x10455FE9)]),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: expired ? MFColors.red.withValues(alpha: .5) : MFColors.brand.withValues(alpha: .4)),
+      ),
+      child: Row(
+        children: [
+          _InfoCell(label: AppStrings.t('home_sub_expire'), value: expireText, flex: 2),
+          _InfoCell(label: AppStrings.t('home_sub_devices'), value: deviceText, flex: 2),
+          _InfoCell(
+            label: AppStrings.t('home_sub_days'),
+            value: sub == null ? '—' : '$daysText ${AppStrings.t('days')}',
+            flex: 2,
+            highlight: !expired,
+          ),
+        ],
       ),
     );
   }
@@ -351,10 +456,12 @@ class _HomePageState extends State<HomePage>
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
+        // #1 背景浅化：品牌蓝紫柔光渐变（不再深黑难辨）
         gradient: const LinearGradient(
-            begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF151B2B), Color(0xFF10141F)]),
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+            colors: [Color(0x38455FE9), Color(0x0F455FE9), Color(0x0AFFFFFF)]),
         border: Border.all(
-            color: connected ? MFColors.green.withValues(alpha: .4) : MFColors.line2),
+            color: connected ? MFColors.green.withValues(alpha: .55) : MFColors.brand.withValues(alpha: .45)),
       ),
       child: Column(
         children: [
@@ -462,7 +569,24 @@ class _HomePageState extends State<HomePage>
                                 fontWeight: FontWeight.w600)),
                       ),
                     const SizedBox(width: 6),
-                    Icon(Icons.chevron_right, size: 20, color: MFColors.txt3),
+                    // #2 明显的切换箭头（整行可点）
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: MFColors.brand.withValues(alpha: .22),
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(color: MFColors.brand.withValues(alpha: .5)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(AppStrings.t('node_switch'),
+                              style: const TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
+                          const SizedBox(width: 2),
+                          const Icon(Icons.chevron_right, size: 15, color: MFColors.brandLight),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -563,6 +687,124 @@ class _HomePageState extends State<HomePage>
     if (mbps < 0.1) return 'KB/s';
     return 'MB/s';
   }
+
+  /// 快速切换国家：点按即切该国延迟最优的在线节点
+  Widget _buildQuickCountries(ConnectionController conn) {
+    // 按国家聚合出最佳在线节点（最多 6 国）
+    final byCountry = <String, ProxyNode>{};
+    for (final n in conn.nodes) {
+      if (!n.online || n.latencyMs < 0) continue;
+      final code = n.countryCode ?? 'XX';
+      final cur = byCountry[code];
+      if (cur == null || n.latencyMs < cur.latencyMs) byCountry[code] = n;
+    }
+    final entries = byCountry.entries.toList()
+      ..sort((a, b) => a.value.latencyMs.compareTo(b.value.latencyMs));
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Text(AppStrings.t('quick_switch_country'),
+              style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final e in entries.take(6))
+              GestureDetector(
+                onTap: () async {
+                  await conn.switchNode(e.value);
+                  if (mounted) _toast(AppStrings.t('switched_to', {'name': e.value.tag}));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: conn.current?.countryCode == e.key
+                        ? MFColors.brand.withValues(alpha: .2)
+                        : MFColors.card,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(
+                        color: conn.current?.countryCode == e.key
+                            ? MFColors.brand.withValues(alpha: .7)
+                            : MFColors.line),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CountryFlag(e.key, size: 15),
+                      const SizedBox(width: 6),
+                      Text(GeoLookupService.countryName(e.key),
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: conn.current?.countryCode == e.key
+                                  ? MFColors.brandLight
+                                  : MFColors.txt)),
+                      const SizedBox(width: 5),
+                      Text('${e.value.latencyMs}ms',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: MFColors.txt3,
+                              fontFamily: kNumFont)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 自动测速开关卡（连接后后台测速选优，不阻塞连接）
+  Widget _buildAutoTestCard(ConnectionController conn) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+            colors: [Color(0x29455FE9), Color(0x0A455FE9)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: MFColors.brand.withValues(alpha: .35)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(9)),
+            child: const Icon(Icons.bolt, size: 16, color: Colors.white),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(AppStrings.t('auto_test_title'),
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                Text(
+                  conn.lastSpeedTestTime == null
+                      ? AppStrings.t('auto_test_desc')
+                      : '${AppStrings.t('last_test')} ${conn.lastSpeedTestTime}',
+                  style: TextStyle(fontSize: 10, color: MFColors.txt3),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: conn.autoTest,
+            activeTrackColor: MFColors.brand,
+            onChanged: (v) => conn.setAutoTest(v),
+          ),
+        ],
+      ),
+    );
+  }
+
 }
 
 class _ModeOption extends StatelessWidget {
@@ -648,6 +890,44 @@ class _StatCard extends StatelessWidget {
               Text(unit, style: TextStyle(fontSize: 13, color: MFColors.txt3, fontWeight: FontWeight.w500)),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+
+
+
+/// #3 顶部信息条单元格（窄屏自动收缩，不溢出）
+class _InfoCell extends StatelessWidget {
+  const _InfoCell({required this.label, required this.value, this.flex = 1, this.highlight = false});
+  final String label;
+  final String value;
+  final int flex;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      flex: flex,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w800,
+                color: highlight ? MFColors.green : MFColors.txt,
+                fontFamily: kNumFont,
+              )),
+          const SizedBox(height: 3),
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9.5, color: MFColors.txt2)),
         ],
       ),
     );
