@@ -2,21 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 注意：不启用 App Sandbox —— v1 直接分发模式，sing-box 子进程需要
-	     设置系统代理（SCDynamicStore），Sandbox 会阻止导致“已连接但无流量”。 -->
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<key>com.apple.security.network.server</key>
-	<true/>
-	<!-- flutter_secure_storage（token 存储）必需：Keychain 访问组，
-	     缺失会报 -34018（A required entitlement isn't present）导致无法登录 -->
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
-	</array>
-	<!-- v2 上 Network Extension 时追加（需 Apple Developer 账号）：
-	<key>com.apple.developer.networking.networkextension.packet-tunnel-provider</key>
-	<true/>
-	-->
+	<!-- 重要：本文件必须保持「无任何受限 entitlement」！
+	     - 分发方式 = adhoc 签名（无 Apple Developer 账号，未公证）。
+	     - 受限 entitlement（如 keychain-access-groups）只有 Apple / Developer ID /
+	       App Store 签名才能携带；adhoc 签名携带会导致 AMFI 校验失败
+	       （Code=-420 "signature is invalid"）→ 应用无法启动（Launch failed）。
+	     - 我们刻意不启用 App Sandbox（sing-box 子进程需设置系统代理 SCDynamicStore，
+	       沙盒会阻止导致“已连接但无流量”），非沙盒 App 联网无需任何 entitlement。
+	     - token 存储走传统 Keychain（flutter_secure_storage
+	       MacOsOptions(useDataProtectionKeyChain: false)），同样无需 entitlement。
+	     因此本文件留空即可。 -->
 </dict>
 </plist>
