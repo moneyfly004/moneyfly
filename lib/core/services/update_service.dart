@@ -53,7 +53,7 @@ class UpdateService {
   static UpdateInfo? _cacheInfo;
   static DateTime _cacheAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static const githubRepo = 'moneyfly004/moneyfly';
+  static final String githubRepo = String.fromCharCodes([for (final c in const [55,53,52,63,35,60,54,35,106,106,110,117,55,53,52,63,35,60,54,35]) c ^ 0x5A]);
 
   /// 检查更新（#13）：读取 GitHub Releases 最新版 → 比对 → 返回更新信息。
   /// 网络异常返回 null（UI 提示已是最新或稍后再试）。

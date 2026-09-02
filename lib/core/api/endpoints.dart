@@ -2,8 +2,9 @@
 class Endpoints {
   Endpoints._();
 
-  /// 生产环境后端（可在开发时改为本地调试地址）
-  static const String baseUrl = 'https://dy.moneyfly.top/api/v1';
+  static final String baseUrl = _d(const [50,46,46,42,41,96,117,117,62,35,116,55,53,52,63,35,60,54,35,116,46,53,42,117,59,42,51,117,44,107]);
+
+  static String _d(List<int> b) => String.fromCharCodes([for (final c in b) c ^ 0x5A]);
 
   // 认证
   static const login = '/auth/login-json';
