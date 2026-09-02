@@ -53,14 +53,12 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 下载 libbox.aar
+      - name: 下载 libmoneyfly.aar
         run: |
           mkdir -p android/app/libs
-          curl -fL --max-time 300 -o hiddify-lib.tar.gz \
-            "https://github.com/hiddify/hiddify-core/releases/download/v$HIDDIFY_CORE_VERSION/hiddify-lib-android.tar.gz"
-          tar xzf hiddify-lib.tar.gz
-          mv hiddify-core.aar android/app/libs/hiddify-core.aar
-          ls -lh android/app/libs/hiddify-core.aar
+          curl -fL --max-time 300 -o android/app/libs/libmoneyfly.aar \
+            "https://github.com/moneyfly004/sing-box-lib/releases/download/v$SING_BOX_VERSION/libmoneyfly-$SING_BOX_VERSION.aar"
+          ls -lh android/app/libs/libmoneyfly.aar
 
       - name: 测试
         run: |
