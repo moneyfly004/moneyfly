@@ -122,7 +122,7 @@ class _NodesPageState extends State<NodesPage> {
                             if (mounted) setState(() => _query = v.trim());
                           });
                         },
-                        style:  TextStyle(color: MFColors.txt, fontSize: 13.5),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 13.5),
                         decoration: InputDecoration(
                           hintText: AppStrings.t('search_hint'),
                           hintStyle:  TextStyle(fontSize: 13, color: MFColors.txt3),

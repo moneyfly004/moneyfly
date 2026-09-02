@@ -206,7 +206,8 @@ class _Field extends StatelessWidget {
         TextField(
           controller: controller,
           obscureText: obscure,
-          style:  TextStyle(color: MFColors.txt, fontSize: 15),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
+          cursorColor: MFColors.brand,
           textInputAction: action,
           onSubmitted: onSubmitted,
           decoration: InputDecoration(hintText: hint, suffixIcon: trailing),

@@ -93,7 +93,8 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         TextField(
           controller: c,
           obscureText: obscure,
-          style:  TextStyle(color: MFColors.txt, fontSize: 15),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
+          cursorColor: MFColors.brand,
           decoration: InputDecoration(hintText: hint),
         ),
       ],

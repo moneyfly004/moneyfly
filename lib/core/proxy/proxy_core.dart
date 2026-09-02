@@ -284,9 +284,9 @@ class ConnectionController extends ChangeNotifier {
     error = null;
     notifyListeners();
 
-    // 立即选定节点：优先当前选中（用户手动选的/上次最优），否则第一个在线节点。
-    // 不做任何测速等待 —— 内核立刻启动，连接即刻生效。
-    current ??= nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
+    // 优先选延迟最优（已有测速数据时）；否则先连可用节点，后台测速后自动切最优
+    final best = SpeedTester.selectBest(nodes);
+    current ??= best ?? nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
     if (epoch != _epoch) return;
     if (current == null) {
       status = ConnStatus.error;
@@ -311,7 +311,7 @@ class ConnectionController extends ChangeNotifier {
       _reconnectCount = 0;
       // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
       if (runSpeedTest && autoTest) {
-        unawaited(_autoSpeedTestAndSwitch(epoch));
+        unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: true));
       }
       _startBackgroundTest(intervalMin);
       unawaited(refreshRealCountry()); // 实测真实出口国家
@@ -335,12 +335,12 @@ class ConnectionController extends ChangeNotifier {
   /// 只测速+热切换节点，不重启内核、不断网）
   Future<void> retest() async {
     if (nodes.isEmpty || speedTesting) return;
-    await _autoSpeedTestAndSwitch(_epoch);
+    await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
   }
 
   /// 后台测速 + 自动切换最优节点（不阻塞连接；测速中保持已连接状态，
   /// UI 通过 speedTesting 标记显示「测速中」）
-  Future<void> _autoSpeedTestAndSwitch(int epoch) async {
+  Future<void> _autoSpeedTestAndSwitch(int epoch, {bool forceBest = false}) async {
     speedTesting = true;
     notifyListeners();
     try {
@@ -350,16 +350,20 @@ class ConnectionController extends ChangeNotifier {
       final best = SpeedTester.selectBest(tested);
       lastSpeedTestTime = _now();
       if (best != null && status == ConnStatus.connected) {
-        final cur = current;
-        if (cur == null) {
+        if (forceBest) {
           await switchNode(best);
         } else {
-          final curOnline =
-              nodes.firstWhere((n) => n.tag == cur.tag, orElse: () => cur);
-          if (!curOnline.online ||
-              (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
-                  best.latencyMs < curOnline.latencyMs - 100)) {
+          final cur = current;
+          if (cur == null) {
             await switchNode(best);
+          } else {
+            final curOnline =
+                nodes.firstWhere((n) => n.tag == cur.tag, orElse: () => cur);
+            if (!curOnline.online ||
+                (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
+                    best.latencyMs < curOnline.latencyMs - 100)) {
+              await switchNode(best);
+            }
           }
         }
       }

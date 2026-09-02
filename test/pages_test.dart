@@ -72,19 +72,21 @@ void main() {
   });
 
   group('首页', () {
-    testWidgets('渲染连接卡/模式/自动测速/国家网格', (tester) async {
+    testWidgets('渲染连接卡/模式/速率统计', (tester) async {
       final conn = ConnectionController.instance;
       await conn.loadNodes([
         ProxyNode(tag: '香港-01', type: 'vless', server: '1.2.3.4', port: 443, countryCode: 'HK', latencyMs: 35),
         ProxyNode(tag: '日本东京', type: 'trojan', server: '5.6.7.8', port: 443, countryCode: 'JP', latencyMs: 88),
       ]);
+      conn.current = conn.nodes.first;
       await tester.pumpWidget(_wrap(const HomePage()));
       await tester.pump();
       expect(find.text('智能模式'), findsOneWidget);
       expect(find.text('全局模式'), findsOneWidget);
-      expect(find.text('自动测速 · 自动选优'), findsOneWidget);
-      expect(find.text('快速切换国家'), findsOneWidget);
-      expect(find.text('最优'), findsOneWidget);
+      expect(find.text('上行'), findsOneWidget);
+      expect(find.text('下行'), findsOneWidget);
+      expect(find.text('当前线路'), findsOneWidget);
+      expect(find.text('香港-01'), findsOneWidget);
     });
 
     testWidgets('模式切换点击生效', (tester) async {

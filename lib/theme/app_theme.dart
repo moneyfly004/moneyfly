@@ -47,46 +47,58 @@ const kNumFont = 'Chakra Petch';
 
 ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
   final dark = brightness == Brightness.dark;
+  // 颜色必须跟 brightness 参数绑定，不能读 ThemeController.isLight。
+  // 否则 MaterialApp 同时构建 light/dark 两套主题时，输入框底色与文字色会错位
+  // （白底白字 / 黑底黑字），登录页等输入框不可读。
+  final bg = dark ? const Color(0xFF0B0E14) : const Color(0xFFF5F7FB);
+  final card = dark ? const Color(0xFF141926) : const Color(0xFFFFFFFF);
+  final card2 = dark ? const Color(0xFF1A2132) : const Color(0xFFF0F3FA);
+  final txt = dark ? const Color(0xFFF5F7FF) : const Color(0xFF1A2233);
+  final txt2 = dark ? const Color(0xFF9AA3B5) : const Color(0xFF4A5568);
+  final txt3 = dark ? const Color(0xFF5E6778) : const Color(0xFF8A94A6);
+  final line = dark ? const Color(0x12FFFFFF) : const Color(0x141A2B4A);
+  final line2 = dark ? const Color(0x1FFFFFFF) : const Color(0x241A2B4A);
+
   final scheme = dark
       ? ColorScheme.dark(
           primary: MFColors.brand,
           secondary: MFColors.brandLight,
-          surface: MFColors.card,
-          onSurface: MFColors.txt,
+          surface: card,
+          onSurface: txt,
           error: MFColors.red,
         )
       : ColorScheme.light(
           primary: MFColors.brand,
           secondary: MFColors.brandLight,
-          surface: MFColors.card,
-          onSurface: MFColors.txt,
+          surface: card,
+          onSurface: txt,
           error: MFColors.red,
         );
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: MFColors.bg,
+    scaffoldBackgroundColor: bg,
     brightness: brightness,
     fontFamily: 'PingFang SC',
     textTheme: TextTheme(
-      titleLarge: TextStyle(color: MFColors.txt, fontWeight: FontWeight.w700, fontSize: 20),
-      bodyMedium: TextStyle(color: MFColors.txt, fontSize: 14),
-      bodySmall: TextStyle(color: MFColors.txt2, fontSize: 12),
-      labelMedium: TextStyle(color: MFColors.txt2, fontSize: 12.5, fontWeight: FontWeight.w500),
+      titleLarge: TextStyle(color: txt, fontWeight: FontWeight.w700, fontSize: 20),
+      bodyMedium: TextStyle(color: txt, fontSize: 14),
+      bodySmall: TextStyle(color: txt2, fontSize: 12),
+      labelMedium: TextStyle(color: txt2, fontSize: 12.5, fontWeight: FontWeight.w500),
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: MFColors.bg,
+      backgroundColor: bg,
       elevation: 0,
       centerTitle: false,
-      titleTextStyle: TextStyle(color: MFColors.txt, fontSize: 18, fontWeight: FontWeight.w700),
-      iconTheme: IconThemeData(color: MFColors.txt),
+      titleTextStyle: TextStyle(color: txt, fontSize: 18, fontWeight: FontWeight.w700),
+      iconTheme: IconThemeData(color: txt),
     ),
     cardTheme: CardThemeData(
-      color: MFColors.card,
+      color: card,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: MFColors.line),
+        side: BorderSide(color: line),
       ),
     ),
     switchTheme: SwitchThemeData(
@@ -98,32 +110,32 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: MFColors.card,
-      hintStyle: TextStyle(color: MFColors.txt3, fontSize: 14),
+      fillColor: card2,
+      hintStyle: TextStyle(color: txt3, fontSize: 14),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: MFColors.line2),
+        borderSide: BorderSide(color: line2),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: MFColors.line2),
+        borderSide: BorderSide(color: line2),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: MFColors.brand, width: 1.4),
       ),
     ),
-    dividerTheme: DividerThemeData(color: MFColors.line, thickness: 1, space: 1),
+    dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
     bottomNavigationBarTheme: BottomNavigationBarThemeData(
-      backgroundColor: MFColors.bg,
+      backgroundColor: bg,
       selectedItemColor: MFColors.brandLight,
-      unselectedItemColor: MFColors.txt3,
+      unselectedItemColor: txt3,
       type: BottomNavigationBarType.fixed,
     ),
     snackBarTheme: SnackBarThemeData(
-      backgroundColor: MFColors.card2,
-      contentTextStyle: TextStyle(color: MFColors.txt, fontSize: 13),
+      backgroundColor: card2,
+      contentTextStyle: TextStyle(color: txt, fontSize: 13),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),

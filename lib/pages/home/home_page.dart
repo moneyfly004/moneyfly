@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/proxy/proxy_core.dart';
-import '../../core/services/speed_tester.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/api/api_client.dart';
@@ -141,11 +140,7 @@ class _HomePageState extends State<HomePage>
               _buildConnectCard(conn, connected, busy),
               const SizedBox(height: 12),
               _buildModeSwitch(conn),
-              const SizedBox(height: 12),
-              _buildAutoTestCard(conn),
-              const SizedBox(height: 12),
-              _buildRegionGrid(conn),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _buildStats(conn),
               const SizedBox(height: 16),
             ],
@@ -182,6 +177,121 @@ class _HomePageState extends State<HomePage>
           ),
         ],
       ),
+    );
+  }
+
+  void _openNodePicker(ConnectionController conn) {
+    if (conn.nodes.isEmpty) {
+      _toast(AppStrings.t('no_nodes'));
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: MFColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final sorted = List.of(conn.nodes)
+          ..sort((a, b) {
+            if (a.online != b.online) return a.online ? -1 : 1;
+            if (a.latencyMs < 0 && b.latencyMs < 0) return a.tag.compareTo(b.tag);
+            if (a.latencyMs < 0) return 1;
+            if (b.latencyMs < 0) return -1;
+            return a.latencyMs.compareTo(b.latencyMs);
+          });
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.62,
+          minChildSize: 0.35,
+          maxChildSize: 0.9,
+          builder: (_, scroll) => Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: MFColors.line2,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                child: Row(
+                  children: [
+                    Text(AppStrings.t('nodes_title'),
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    Text(AppStrings.t('tap_switch_node'),
+                        style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  controller: scroll,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                  itemCount: sorted.length,
+                  itemBuilder: (_, i) {
+                    final n = sorted[i];
+                    final isCurrent = conn.current?.tag == n.tag;
+                    final latencyColor = !n.online
+                        ? MFColors.red
+                        : (n.latencyMs < 0
+                            ? MFColors.txt3
+                            : (n.latencyMs < 100 ? MFColors.green : MFColors.amber));
+                    return GestureDetector(
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await conn.switchNode(n);
+                        if (mounted) _toast(AppStrings.t('switched_to', {'name': n.tag}));
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: isCurrent ? MFColors.brand.withValues(alpha: .09) : MFColors.card2,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isCurrent ? MFColors.brand.withValues(alpha: .55) : MFColors.line,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            CountryFlag(n.countryCode, size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(n.tag,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                            ),
+                            Text(
+                              n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '—',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: latencyColor,
+                                fontFamily: kNumFont,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (isCurrent) ...[
+                              const SizedBox(width: 8),
+                              const Icon(Icons.check_circle, size: 16, color: MFColors.brandLight),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -238,7 +348,7 @@ class _HomePageState extends State<HomePage>
       _ => AppStrings.t('disconnected'),
     };
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: const LinearGradient(
@@ -248,17 +358,19 @@ class _HomePageState extends State<HomePage>
       ),
       child: Column(
         children: [
+          Text(statusLabel,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: statusColor)),
+          const SizedBox(height: 14),
           GestureDetector(
             onTap: () => _toggleConnect(conn),
-            // RepaintBoundary：呼吸动画只重绘按钮区域，不影响整页
             child: RepaintBoundary(
               child: AnimatedBuilder(
                 animation: _pulse,
                 builder: (context, child) {
                   final glow = connected ? _pulse.value : 1.0;
                   return Container(
-                    width: 96,
-                    height: 96,
+                    width: 108,
+                    height: 108,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
@@ -274,7 +386,7 @@ class _HomePageState extends State<HomePage>
                   );
                 },
                 child: Container(
-                  margin: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: connected
@@ -284,63 +396,82 @@ class _HomePageState extends State<HomePage>
                         color: connected ? MFColors.green.withValues(alpha: .5) : MFColors.line2,
                         width: 1.2),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(statusLabel,
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 2, color: statusColor)),
-                      const SizedBox(height: 3),
-                      Text(
-                        switch (conn.status) {
-                          ConnStatus.testing => 'TESTING',
-                          ConnStatus.connecting => 'CONNECTING',
-                          ConnStatus.connected => 'CONNECTED',
-                          ConnStatus.error => 'ERROR',
-                          _ => 'OFFLINE',
-                        },
-                        style: TextStyle(
-                            fontSize: 9, fontFamily: kNumFont, fontWeight: FontWeight.w600,
-                            color: connected ? const Color(0xFFD8FFEF) : MFColors.txt3),
-                      ),
-                    ],
+                  child: Center(
+                    child: busy
+                        ? SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: statusColor,
+                            ),
+                          )
+                        : Icon(
+                            Icons.power_settings_new_rounded,
+                            size: 44,
+                            color: connected ? MFColors.green : MFColors.txt2,
+                          ),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           if (node != null)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CountryFlag(node.countryCode, size: 17),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(node.tag,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            GestureDetector(
+              onTap: () => _openNodePicker(conn),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: MFColors.card2.withValues(alpha: .55),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: MFColors.line),
                 ),
-                if (node.latencyMs >= 0) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: MFColors.green.withValues(alpha: .12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: MFColors.green.withValues(alpha: .25)),
+                child: Row(
+                  children: [
+                    CountryFlag(node.countryCode, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(AppStrings.t('current_node'),
+                              style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+                          const SizedBox(height: 2),
+                          Text(node.tag,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
                     ),
-                    child: Text('${node.latencyMs} ms',
-                        style: const TextStyle(fontSize: 12, color: MFColors.green, fontFamily: kNumFont, fontWeight: FontWeight.w600)),
-                  ),
-                ],
-              ],
+                    if (node.latencyMs >= 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: MFColors.green.withValues(alpha: .12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: MFColors.green.withValues(alpha: .25)),
+                        ),
+                        child: Text('${node.latencyMs} ms',
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: MFColors.green,
+                                fontFamily: kNumFont,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                    const SizedBox(width: 6),
+                    Icon(Icons.chevron_right, size: 20, color: MFColors.txt3),
+                  ],
+                ),
+              ),
             )
           else
-             Text(AppStrings.t('no_nodes'),
+            Text(AppStrings.t('no_nodes'),
                 style: TextStyle(fontSize: 13, color: MFColors.txt3)),
-          // 真实出口：连接后通过隧道 IP 定位实测（非节点名猜测）
           if (connected && conn.realCountry != null) ...[
-            const SizedBox(height: 7),
+            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -386,240 +517,51 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildAutoTestCard(ConnectionController conn) {
-    final best = SpeedTester.selectBest(conn.nodes);
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: const LinearGradient(
-            colors: [Color(0x29455FE9), Color(0x0A455FE9)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        border: Border.all(color: MFColors.brand.withValues(alpha: .35)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.bolt, size: 15, color: Colors.white),
-              ),
-              const SizedBox(width: 8),
-              Text(AppStrings.t('auto_test_title'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => conn.setAutoTest(!conn.autoTest),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: conn.autoTest ? MFColors.green.withValues(alpha: .1) : Colors.transparent,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: conn.autoTest ? MFColors.green.withValues(alpha: .3) : MFColors.line2),
-                  ),
-                  child: Text(conn.autoTest ? '● ${AppStrings.t('auto_test_on')}' : '○ ${AppStrings.t('auto_test_off')}',
-                      style: TextStyle(fontSize: 10,
-                          color: conn.autoTest ? MFColors.green : MFColors.txt3,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-                  decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .35),
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(color: MFColors.line)),
-                  child: Row(
-                    children: [
-                      CountryFlag(best?.countryCode, size: 15),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(best?.tag ?? AppStrings.t('no_nodes'),
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                      ),
-                      if (best != null && best.latencyMs >= 0) ...[
-                        Text('${best.latencyMs} ms',
-                            style: const TextStyle(fontSize: 11.5, color: MFColors.green, fontFamily: kNumFont, fontWeight: FontWeight.w700)),
-                        const SizedBox(width: 6),
-                      ],
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(12)),
-                        child: Text(AppStrings.t('best'), style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1)),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 9),
-              GestureDetector(
-                onTap: () async {
-                  _toast(AppStrings.t('testing_all'));
-                  await conn.connect();
-                  if (mounted && conn.error != null) _toast(conn.error!);
-                },
-                child: Container(
-                  height: 34,
-                  padding: const EdgeInsets.symmetric(horizontal: 13),
-                  decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(11)),
-                  alignment: Alignment.center,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.refresh, size: 13, color: Colors.white),
-                      const SizedBox(width: 4),
-                      Text(AppStrings.t('retest'), style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(conn.autoTest ? AppStrings.t('auto_test_on') : AppStrings.t('auto_test_off'),
-                  style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
-              Text('${conn.nodes.length} 节点${conn.lastSpeedTestTime != null ? ' · ${conn.lastSpeedTestTime} 测速' : ''}',
-                  style:  TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRegionGrid(ConnectionController conn) {
-    final byCountry = SpeedTester.bestLatencyByCountry(conn.nodes);
-    // 国家列表：有测速结果的国家 + 常见国家兜底
-    final countries = <(String, String)>[
-      ('HK', '香港'), ('JP', '日本'), ('SG', '新加坡'), ('TW', '台湾'),
-      ('KR', '韩国'), ('US', '美国'), ('GB', '英国'), ('DE', '德国'),
-    ];
-    final available = <(String, String)>[];
-    for (final c in countries) {
-      if (byCountry.containsKey(c.$1)) available.add(c);
-    }
-    final list = available.isEmpty ? countries.take(4).toList() : available;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(AppStrings.t('quick_region'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-            const Spacer(),
-             Text('点按即切换该国最优节点', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
-          ],
-        ),
-        const SizedBox(height: 8),
-        GridView.count(
-          crossAxisCount: 3,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 7,
-          crossAxisSpacing: 7,
-          childAspectRatio: 1.55,
-          children: [
-            // 自动最优
-            _regionTile(conn, null, AppStrings.t('auto_best'), conn.current?.latencyMs ?? -1, isAuto: true),
-            for (final (code, name) in list)
-              _regionTile(conn, code, name, byCountry[code] ?? -1),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _regionTile(ConnectionController conn, String? code, String name, int latencyMs,
-      {bool isAuto = false}) {
-    final active = isAuto
-        ? conn.current != null && conn.current!.countryCode == null
-        : conn.current?.countryCode == nameToCode(name);
-    return GestureDetector(
-      onTap: () async {
-        if (isAuto) {
-          // 自动最优：重新测速并选优
-          _toast(AppStrings.t('testing_all'));
-          await conn.connect();
-        } else {
-          // 切到该国延迟最低的节点
-          final candidates = conn.nodes
-              .where((n) => n.countryCode == nameToCode(name) && n.online)
-              .toList()
-            ..sort((a, b) => a.latencyMs.compareTo(b.latencyMs));
-          if (candidates.isEmpty) {
-            _toast(AppStrings.t('region_empty'));
-            return;
-          }
-          await conn.switchNode(candidates.first);
-          _toast(AppStrings.t('switched_to', {'name': candidates.first.tag}));
-        }
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: isAuto ?  LinearGradient(colors: [Color(0x40455FE9), MFColors.card]) : null,
-          color: isAuto ? null : MFColors.card,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: active ? MFColors.brand.withValues(alpha: .8) : MFColors.line),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (isAuto)
-              const Text('✨', style: TextStyle(fontSize: 17))
-            else
-              CountryFlag(code, size: 17),
-            const SizedBox(height: 2),
-            Text(name,
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
-                    color: isAuto ? MFColors.brandLight : MFColors.txt2)),
-            const SizedBox(height: 1),
-            Text(latencyMs >= 0 ? '$latencyMs ms' : '— ms',
-                style: TextStyle(fontSize: 9.5, fontFamily: kNumFont, fontWeight: FontWeight.w600,
-                    color: latencyMs >= 0 ? (latencyMs > 150 ? MFColors.amber : MFColors.green) : MFColors.txt3)),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildStats(ConnectionController conn) {
-    // 实时速率由内核 1s 推送；用 ValueListenableBuilder 只刷新速率卡片，
-    // 避免每秒重建整个首页（流畅度）
     return ValueListenableBuilder<SpeedSnapshot>(
       valueListenable: conn.speedNotifier,
       builder: (context, snap, _) {
-        final up = snap.upMbps, down = snap.downMbps;
+        final connected = conn.status == ConnStatus.connected;
+        final up = connected ? snap.upMbps : 0.0;
+        final down = connected ? snap.downMbps : 0.0;
         return Row(
           children: [
-            Expanded(child: _StatCard(label: AppStrings.t('up_speed'), value: conn.status == ConnStatus.connected && up > 0 ? up.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.brandLight)),
+            Expanded(
+              child: _StatCard(
+                label: AppStrings.t('up_speed'),
+                value: _formatSpeed(up, connected),
+                unit: _speedUnit(up, connected),
+                icon: Icons.arrow_upward_rounded,
+                color: MFColors.brandLight,
+              ),
+            ),
             const SizedBox(width: 12),
-            Expanded(child: _StatCard(label: AppStrings.t('down_speed'), value: conn.status == ConnStatus.connected && down > 0 ? down.toStringAsFixed(1) : '—', unit: 'MB/s', color: MFColors.green)),
+            Expanded(
+              child: _StatCard(
+                label: AppStrings.t('down_speed'),
+                value: _formatSpeed(down, connected),
+                unit: _speedUnit(down, connected),
+                icon: Icons.arrow_downward_rounded,
+                color: MFColors.green,
+              ),
+            ),
           ],
         );
       },
     );
   }
 
-  static String nameToCode(String name) {
-    const map = {
-      '香港': 'HK', '台湾': 'TW', '日本': 'JP', '新加坡': 'SG', '韩国': 'KR',
-      '美国': 'US', '英国': 'GB', '德国': 'DE', '法国': 'FR', '澳大利亚': 'AU',
-      '加拿大': 'CA', '俄罗斯': 'RU', '印度': 'IN', '泰国': 'TH', '越南': 'VN',
-      '荷兰': 'NL', '瑞典': 'SE', '阿联酋': 'AE',
-    };
-    return map[name] ?? '';
+  String _formatSpeed(double mbps, bool connected) {
+    if (!connected) return '0.0';
+    if (mbps <= 0) return '0.0';
+    if (mbps < 0.1) return (mbps * 1024).toStringAsFixed(0);
+    return mbps.toStringAsFixed(1);
+  }
+
+  String _speedUnit(double mbps, bool connected) {
+    if (!connected || mbps <= 0) return 'MB/s';
+    if (mbps < 0.1) return 'KB/s';
+    return 'MB/s';
   }
 }
 
@@ -658,28 +600,54 @@ class _ModeOption extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value, required this.unit, required this.color});
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.unit,
+    required this.color,
+    required this.icon,
+  });
   final String label;
   final String value;
   final String unit;
   final Color color;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-          color: MFColors.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: MFColors.line)),
+        color: MFColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: MFColors.line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style:  TextStyle(fontSize: 11, color: MFColors.txt3, letterSpacing: .6)),
-          const SizedBox(height: 5),
-          Text.rich(TextSpan(children: [
-            TextSpan(text: value,
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: color, fontFamily: kNumFont)),
-            TextSpan(text: ' $unit', style:  TextStyle(fontSize: 11, color: MFColors.txt3)),
-          ])),
+          Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(fontSize: 12, color: MFColors.txt2, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(value,
+                  style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: color,
+                      fontFamily: kNumFont,
+                      height: 1)),
+              const SizedBox(width: 6),
+              Text(unit, style: TextStyle(fontSize: 13, color: MFColors.txt3, fontWeight: FontWeight.w500)),
+            ],
+          ),
         ],
       ),
     );
