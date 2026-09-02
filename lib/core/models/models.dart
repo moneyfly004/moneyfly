@@ -8,6 +8,9 @@ class UserInfo {
   final String email;
   final double balance;
   final bool isAdmin;
+  /// 账号是否启用（后端 users.is_active；禁用账号 = 被管理员封禁，
+  /// 无法使用任何服务。登录接口不返回该字段，默认按启用处理）
+  final bool isActive;
 
   UserInfo({
     required this.id,
@@ -15,6 +18,7 @@ class UserInfo {
     required this.email,
     required this.balance,
     this.isAdmin = false,
+    this.isActive = true,
   });
 
   factory UserInfo.fromJson(Map<String, dynamic> j) => UserInfo(
@@ -23,6 +27,7 @@ class UserInfo {
         email: j['email']?.toString() ?? '',
         balance: double.tryParse(j['balance']?.toString() ?? '') ?? (j['balance'] as num?)?.toDouble() ?? 0,
         isAdmin: j['is_admin'] == true,
+        isActive: j['is_active'] != false,
       );
 }
 
@@ -38,6 +43,8 @@ class DashboardInfo {
   final String expireTime;
   final int remainingDays;
   final bool hasSpecialNodes;
+  /// 账号是否启用（users.is_active；false = 账号被禁用）
+  final bool isActive;
 
   DashboardInfo({
     required this.username,
@@ -50,6 +57,7 @@ class DashboardInfo {
     required this.expireTime,
     required this.remainingDays,
     required this.hasSpecialNodes,
+    this.isActive = true,
   });
 
   factory DashboardInfo.fromJson(Map<String, dynamic> j) => DashboardInfo(
@@ -63,9 +71,12 @@ class DashboardInfo {
         expireTime: j['expire_time']?.toString() ?? '未设置',
         remainingDays: (j['remaining_days'] as num?)?.toInt() ?? 0,
         hasSpecialNodes: j['has_special_nodes'] == true,
+        isActive: j['is_active'] != false,
       );
 
-  bool get hasSubscription => subscriptionStatus.isNotEmpty && subscriptionStatus != 'inactive';
+  /// 订阅是否生效（后端 subscription_status: active / inactive / disabled 等，
+  /// 只有 active 视为生效；未设置视为无订阅）
+  bool get hasSubscription => subscriptionStatus == 'active';
 }
 
 // ============ 订阅 ============
@@ -79,6 +90,8 @@ class SubscriptionInfo {
   final int remainingDays;
   final bool isExpired;
   final String status;
+  /// 订阅是否启用（后端 subscriptions.is_active；false = 订阅被管理员停用）
+  final bool isActive;
 
   SubscriptionInfo({
     required this.subscribeUrl,
@@ -89,6 +102,7 @@ class SubscriptionInfo {
     required this.remainingDays,
     required this.isExpired,
     required this.status,
+    this.isActive = true,
   });
 
   factory SubscriptionInfo.fromJson(Map<String, dynamic> j) {
@@ -102,10 +116,16 @@ class SubscriptionInfo {
       remainingDays: (j['remaining_days'] as num?)?.toInt() ?? 0,
       isExpired: j['is_expired'] == true,
       status: j['status']?.toString() ?? '',
+      isActive: j['is_active'] != false,
     );
   }
 
-  bool get hasSubscription => subscribeUrl.isNotEmpty && !isExpired;
+  /// 订阅真正生效（启用 + 状态 active + 未过期 + 有订阅地址）
+  bool get hasSubscription =>
+      subscribeUrl.isNotEmpty &&
+      isActive &&
+      (status.isEmpty || status == 'active') &&
+      !isExpired;
 }
 
 // ============ 套餐 / 支付 ============

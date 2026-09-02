@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
 import '../../core/proxy/proxy_core.dart';
+import '../../core/services/account_service.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/api/api_client.dart';
@@ -14,6 +15,7 @@ import '../../core/services/geo_lookup.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/country_flag.dart';
+import '../devices/devices_page.dart';
 import '../settings/settings_page.dart';
 
 /// 首页 · 连接页（设计稿 02）
@@ -28,10 +30,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
-
-  /// #3 订阅信息（到期/设备/剩余天数）本地缓存，进入主页不重复请求
-  static SubscriptionInfo? _subInfo;
-  SubscriptionInfo? get _sub => _subInfo;
 
   /// 连接状态下的呼吸动画（仅连接时运行，断开即停 → 省电 + 流畅）
   late final AnimationController _pulse = AnimationController(
@@ -76,14 +74,17 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  /// 刷新账号状态 + 节点列表。
+  /// 状态判定（到期/设备满/禁用）先于节点拉取完成，任何自动连接/手动连接
+  /// 都能基于真实状态拦截——不会出现「拉订阅之前就放行」的窗口。
   Future<void> _ensureNodes({bool force = false}) async {
     final conn = context.read<ConnectionController>();
-    // #3 首页订阅信息条：刷新节点时顺带刷新（静默失败不阻塞）
-    if (_sub == null || force) {
-      unawaited(_loadSubInfo());
+    // 首次进入 / 下拉刷新时刷新账号状态（登录成功时已判定过一次，这里幂等）
+    if (force || !AccountService.instance.loaded) {
+      await AccountService.instance.refresh(force: force);
     }
-    if (conn.nodes.isNotEmpty && !force) return;
     if (!mounted) return;
+    if (conn.nodes.isNotEmpty && !force) return;
     setState(() => _loadingNodes = true);
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
@@ -97,17 +98,9 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  /// 拉取订阅信息（缓存，供顶部到期/设备/剩余天数展示）
-  Future<void> _loadSubInfo() async {
-    try {
-      final info = await SubscriptionService.instance.fetchInfo();
-      _subInfo = info;
-      if (mounted) setState(() {});
-    } catch (_) {}
-  }
-
   Future<void> _toggleConnect(ConnectionController conn) async {
     unawaited(HapticFeedback.mediumImpact());
+    final acc = AccountService.instance;
     if (conn.status == ConnStatus.connected) {
       unawaited(conn.disconnect());
     } else if (conn.status == ConnStatus.testing ||
@@ -115,15 +108,13 @@ class _HomePageState extends State<HomePage>
         conn.status == ConnStatus.reconnecting) {
       unawaited(conn.disconnect());
       _toast(AppStrings.t('cancel_connect'));
+    } else if (acc.isBlocked) {
+      // 到期 / 设备满 / 被禁用 / 未开通：先给对应提示，绝不放行
+      // （状态在登录/进入主页时已判定，这里不依赖节点拉取结果）
+      _showBlockedDialog(acc);
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
     } else {
-      // #5 到期账户不允许连接 → 提示 + 引导购买
-      final sub = _sub;
-      if (sub != null && sub.isExpired) {
-        _showExpiredDialog();
-        return;
-      }
       // 连接前：VPN 授权 + 通知 + 电池优化豁免（最高权限，防断连/防杀后台）
       final ok = await PermissionService.instance.ensureAllForConnect();
       if (!ok) {
@@ -134,38 +125,74 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  /// #5 到期对话框 → 一键跳套餐页
-  void _showExpiredDialog() {
+  /// 受限账号（到期/设备满/禁用/未开通）弹窗 → 一键跳对应处理页
+  void _showBlockedDialog(AccountService acc) {
+    final emoji = switch (acc.status) {
+      AccountStatus.expired => '⏰',
+      AccountStatus.deviceFull => '📱',
+      AccountStatus.accountDisabled || AccountStatus.subscriptionDisabled => '🚫',
+      AccountStatus.noSubscription => '🛒',
+      _ => '⚠️',
+    };
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(18))),
-        title: const Text('⚠️', textAlign: TextAlign.center, style: TextStyle(fontSize: 34)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(AppStrings.t('expired_tip'),
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: MFColors.txt, height: 1.6)),
-          ],
-        ),
+        title: Text('$emoji\n${acc.blockTitle}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, height: 1.4)),
+        content: Text(acc.blockText,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt, height: 1.7)),
         actionsAlignment: MainAxisAlignment.center,
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('cancel'))),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: MFColors.brand,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+          if (acc.status == AccountStatus.accountDisabled ||
+              acc.status == AccountStatus.subscriptionDisabled) ...[
+            // 被禁用：不可购买/不可连接，只给关闭
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppStrings.t('ok_btn')),
             ),
-            onPressed: () {
-              Navigator.pop(context);
-              mainTabIndex.value = 2; // 跳到购买套餐
-            },
-            child: Text(AppStrings.t('go_renew'),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-          ),
+          ] else ...[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppStrings.t('cancel')),
+            ),
+            if (acc.status == AccountStatus.deviceFull) ...[
+              // 设备超限：先给「管理设备」（删旧设备），再给「升级设备套餐」
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const DevicesPage()));
+                },
+                child: Text(AppStrings.t('manage_devices'),
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ],
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: MFColors.brand,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                mainTabIndex.value = 2; // 跳到购买套餐（到期续费 / 升级设备 / 开通）
+              },
+              child: Text(
+                switch (acc.status) {
+                  AccountStatus.deviceFull =>
+                    AppStrings.t('go_upgrade_devices'),
+                  AccountStatus.noSubscription =>
+                    AppStrings.t('go_purchase'),
+                  _ => AppStrings.t('go_renew'),
+                },
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -179,6 +206,7 @@ class _HomePageState extends State<HomePage>
   @override
   Widget build(BuildContext context) {
     final conn = context.watch<ConnectionController>();
+    final acc = context.watch<AccountService>();
     final connected = conn.status == ConnStatus.connected;
     final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting;
     final compact = MediaQuery.of(context).size.height < 820;
@@ -193,10 +221,10 @@ class _HomePageState extends State<HomePage>
             children: [
               _buildHeader(),
               SizedBox(height: compact ? 4 : 6),
-              _buildSubInfoBar(),
+              _buildSubInfoBar(acc),
               SizedBox(height: compact ? 8 : 12),
-              if (conn.nodes.isEmpty) ...[
-                _buildNoSubscriptionBanner(),
+              if (acc.isBlocked) ...[
+                _buildAccountBanner(acc),
                 SizedBox(height: compact ? 8 : 12),
               ],
               _buildConnectCard(conn, connected, busy, compact),
@@ -216,27 +244,41 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  /// #3 订阅信息条：到期时间 / 设备数量 / 剩余天数（浅色玻璃卡，三端通用）
-  Widget _buildSubInfoBar() {
-    final sub = _sub;
-    final expired = sub != null && sub.isExpired;
+  /// 订阅信息条：到期时间 / 设备数量 / 剩余天数。
+  /// 颜色随账号状态变化（到期红 / 设备满橙 / 禁用红），正常态品牌蓝。
+  Widget _buildSubInfoBar(AccountService acc) {
+    final sub = acc.sub;
+    final status = acc.status;
+    final expired = status == AccountStatus.expired;
+    final deviceFull = status == AccountStatus.deviceFull;
+    final disabled = status == AccountStatus.accountDisabled ||
+        status == AccountStatus.subscriptionDisabled;
+    final warn = expired || deviceFull || disabled;
     String expireText = AppStrings.t('expire_na');
     if (sub?.expireTime != null) {
       final dt = sub!.expireTime!;
       expireText = '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-    } else if (sub != null) {
-      expireText = AppStrings.t('expire_na');
     }
-    final deviceText = sub == null ? '—' : '${sub.currentDevices} / ${sub.deviceLimit}';
+    if (expired) expireText = AppStrings.t('expired_short');
+    final deviceText = sub == null
+        ? '—'
+        : '${sub.currentDevices} / ${sub.deviceLimit}';
     final daysText = sub == null ? '—' : '${sub.remainingDays}';
+    final color = disabled
+        ? MFColors.red
+        : expired
+            ? MFColors.red
+            : deviceFull
+                ? MFColors.amber
+                : MFColors.brand;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: BoxDecoration(
-        gradient: expired
-            ? const LinearGradient(colors: [Color(0x2EFF5A5F), Color(0x10FF5A5F)])
+        gradient: warn
+            ? LinearGradient(colors: [color.withValues(alpha: .18), color.withValues(alpha: .05)])
             : const LinearGradient(colors: [Color(0x2E455FE9), Color(0x10455FE9)]),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: expired ? MFColors.red.withValues(alpha: .5) : MFColors.brand.withValues(alpha: .4)),
+        border: Border.all(color: color.withValues(alpha: warn ? .55 : .4)),
       ),
       child: Row(
         children: [
@@ -246,38 +288,80 @@ class _HomePageState extends State<HomePage>
             label: AppStrings.t('home_sub_days'),
             value: sub == null ? '—' : '$daysText ${AppStrings.t('days')}',
             flex: 2,
-            highlight: !expired,
+            highlight: !warn && !expired,
           ),
         ],
       ),
     );
   }
 
-  /// 未开通/订阅过期引导条 → 一键跳充值
-  Widget _buildNoSubscriptionBanner() {
+  /// 受限账号顶部引导条：只有「确实受限」才出现，且按钮按状态区分 ——
+  /// 到期→去续费；设备满→升级设备/管理设备；禁用→无购买按钮；未开通→去开通。
+  /// 正常账号节点加载失败等临时问题不再被引导去购买（原实现按 nodes.isEmpty 判断）。
+  Widget _buildAccountBanner(AccountService acc) {
+    final status = acc.status;
+    final (Color color, Color soft) = switch (status) {
+      AccountStatus.expired => (MFColors.red, const Color(0x2EFF5A5F)),
+      AccountStatus.deviceFull => (MFColors.amber, const Color(0x33FFB020)),
+      AccountStatus.accountDisabled ||
+      AccountStatus.subscriptionDisabled =>
+        (MFColors.red, const Color(0x2EFF5A5F)),
+      AccountStatus.noSubscription => (MFColors.amber, const Color(0x33FFB020)),
+      _ => (MFColors.brand, const Color(0x2E455FE9)),
+    };
+    final emoji = switch (status) {
+      AccountStatus.expired => '⏰',
+      AccountStatus.deviceFull => '📱',
+      AccountStatus.accountDisabled ||
+      AccountStatus.subscriptionDisabled =>
+        '🚫',
+      AccountStatus.noSubscription => '🛒',
+      _ => 'ℹ️',
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0x33FFB020), Color(0x0DFFB020)]),
+        gradient: LinearGradient(colors: [soft, color.withValues(alpha: .06)]),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: MFColors.amber.withValues(alpha: .4)),
+        border: Border.all(color: color.withValues(alpha: .45)),
       ),
       child: Row(
         children: [
-          const Text('🛒', style: TextStyle(fontSize: 16)),
+          Text(emoji, style: const TextStyle(fontSize: 16)),
           const SizedBox(width: 9),
-           Expanded(
-            child: Text(AppStrings.t('no_subscription'),
-                style: TextStyle(fontSize: 12, color: MFColors.txt)),
+          Expanded(
+            child: Text(acc.blockText,
+                style: TextStyle(fontSize: 12, color: MFColors.txt, height: 1.5)),
           ),
-          GestureDetector(
-            onTap: () => mainTabIndex.value = 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-              child: Text(AppStrings.t('go_purchase'), style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+          if (status != AccountStatus.accountDisabled &&
+              status != AccountStatus.subscriptionDisabled)
+            GestureDetector(
+              onTap: () {
+                if (status == AccountStatus.deviceFull) {
+                  // 设备满：管理设备（删除旧设备）优先级最高，次选升级
+                  Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const DevicesPage()));
+                } else {
+                  mainTabIndex.value = 2;
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                decoration: BoxDecoration(
+                    gradient: MFColors.brandGradient,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Text(
+                  switch (status) {
+                    AccountStatus.expired => AppStrings.t('go_renew'),
+                    AccountStatus.deviceFull =>
+                      AppStrings.t('manage_devices'),
+                    _ => AppStrings.t('go_purchase'),
+                  },
+                  style: const TextStyle(
+                      fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -437,7 +521,13 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildConnectCard(ConnectionController conn, bool connected, bool busy, bool compact) {
-    final node = conn.current;
+    final acc = AccountService.instance;
+    // 未连接时也展示「将连接」的线路：取当前选中，没有则默认列表第一个在线节点，
+    // 避免有节点的正常用户看到「暂无节点/去开通」的误导（原实现 current==null 时误报）
+    final node = conn.current ??
+        (conn.nodes.isNotEmpty
+            ? conn.nodes.firstWhere((n) => n.online, orElse: () => conn.nodes.first)
+            : null);
     final statusColor = busy
         ? MFColors.amber
         : (connected ? MFColors.green : MFColors.txt3);
@@ -541,7 +631,9 @@ class _HomePageState extends State<HomePage>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(AppStrings.t('current_node'),
+                          Text(conn.current == null
+                              ? AppStrings.t('will_connect_node')
+                              : AppStrings.t('current_node'),
                               style: TextStyle(fontSize: 10, color: MFColors.txt3)),
                           const SizedBox(height: 2),
                           Text(node.tag,
@@ -590,21 +682,42 @@ class _HomePageState extends State<HomePage>
               ),
             )
           else
-            GestureDetector(
-              onTap: () => mainTabIndex.value = 2,
-              child: Column(
-                children: [
-                  Text(AppStrings.t('no_nodes'),
-                      style: TextStyle(fontSize: 13, color: MFColors.txt3)),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-                    child: Text(AppStrings.t('go_purchase'),
-                        style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
+            // 无任何节点：受限状态由顶部横幅解释（不引导去开通）；
+            // 正常账号节点拉取失败 → 给「重试」而非「去开通」
+            Column(
+              children: [
+                Text(
+                  acc.isBlocked
+                      ? AppStrings.t('no_nodes')
+                      : (_loadingNodes
+                          ? AppStrings.t('loading')
+                          : AppStrings.t('nodes_empty_retry')),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: MFColors.txt3, height: 1.5),
+                ),
+                if (!acc.isBlocked && !_loadingNodes) ...[
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: () => _ensureNodes(force: true),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                      decoration: BoxDecoration(
+                          color: MFColors.brand.withValues(alpha: .12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: MFColors.brand.withValues(alpha: .4))),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.refresh, size: 13, color: MFColors.brandLight),
+                          const SizedBox(width: 4),
+                          Text(AppStrings.t('retry_btn'),
+                              style: const TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
-              ),
+              ],
             ),
           if (connected && conn.realCountry != null) ...[
             const SizedBox(height: 8),
@@ -621,17 +734,21 @@ class _HomePageState extends State<HomePage>
           if (conn.error != null) ...[
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11, color: MFColors.red)),
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => mainTabIndex.value = 2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-                child: Text(AppStrings.t('go_renew'),
-                    style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700)),
+                style: const TextStyle(fontSize: 11, color: MFColors.red, height: 1.5)),
+            // 受限状态（自动连接被账号门禁拦截）错误区不放「重试」——
+            // 顶部横幅已给续费/升级/管理入口；点电源键也会弹对应说明弹窗
+            if (!acc.isBlocked) ...[
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: () => conn.connect(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                  decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+                  child: Text(AppStrings.t('retry_btn'),
+                      style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700)),
+                ),
               ),
-            ),
+            ],
           ],
         ],
       ),

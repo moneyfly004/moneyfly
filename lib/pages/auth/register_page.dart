@@ -6,7 +6,12 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
+import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
+
+/// 校验邮箱格式（与后端一致的宽松正则，拦截明显输入错误）
+bool _looksLikeEmail(String s) =>
+    RegExp(r'^[\w.+-]+@[\w-]+(\.[\w-]+)+$').hasMatch(s.trim());
 
 /// 注册页（设计稿 07）：邮箱 + 验证码（60s 倒计时）+ 用户名 + 密码 + 邀请码
 class RegisterPage extends StatefulWidget {
@@ -43,7 +48,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   Future<void> _sendCode() async {
     final email = _email.text.trim();
-    if (email.isEmpty || !email.contains('@')) {
+    if (!_looksLikeEmail(email)) {
       _toast(AppStrings.t('email_invalid'));
       return;
     }
@@ -74,8 +79,11 @@ class _RegisterPageState extends State<RegisterPage> {
 
   Future<void> _register() async {
     if (_username.text.trim().length < 4) return _toast(AppStrings.t('username_short'));
-    if (_password.text.length < 8) return _toast(AppStrings.t('pwd_short'));
+    // 与后端同规则校验新密码（长度 + 四类字符至少三种）
+    final pwdErr = PasswordPolicy.errorFor(_password.text);
+    if (pwdErr != null) return _toast(pwdErr);
     if (_password.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
+    if (!_looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_invalid'));
     if (!_agreed) return _toast(AppStrings.t('agree_required'));
     setState(() => _loading = true);
     try {
@@ -128,7 +136,7 @@ class _RegisterPageState extends State<RegisterPage> {
               SizedBox(height: compact ? 14 : 24),
               _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_hint')),
               const SizedBox(height: 12),
-              _field('验证码', _code,
+              _field(AppStrings.t('code_label'), _code,
                   hint: AppStrings.t('code_hint'),
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,

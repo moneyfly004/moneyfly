@@ -131,7 +131,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
               ),
             ),
             const SizedBox(height: 6),
-             Text('点按二维码可放大', style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+             Text(AppStrings.t('qr_tap_zoom'), style: TextStyle(fontSize: 10, color: MFColors.txt3)),
             const SizedBox(height: 12),
             Text.rich(TextSpan(children: [
                TextSpan(text: '¥', style: TextStyle(fontSize: 15, color: MFColors.txt2)),
@@ -144,13 +144,13 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 // 剪贴板无需等待，直接提示
                 Clipboard.setData(ClipboardData(text: widget.orderNo));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('订单号已复制'), duration: Duration(seconds: 1)),
+                  SnackBar(content: Text(AppStrings.t('order_copied')), duration: Duration(seconds: 1)),
                 );
               },
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('订单号 ${widget.orderNo}',
+                  Text('${AppStrings.t('order_no')} ${widget.orderNo}',
                       style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
                   const SizedBox(width: 5),
                    Icon(Icons.copy, size: 12, color: MFColors.txt3),
@@ -170,7 +170,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 ],
               )
             else
-              Text(_pollError ?? '已停止轮询',
+              Text(_pollError ?? AppStrings.t('poll_stopped'),
                   style: TextStyle(fontSize: 12, color: _pollError != null ? MFColors.red : MFColors.txt3)),
             const SizedBox(height: 18),
             Row(

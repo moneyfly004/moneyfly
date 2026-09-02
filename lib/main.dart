@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
+import 'core/services/account_service.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/crash_logger.dart';
 import 'core/services/update_service.dart';
@@ -41,6 +42,9 @@ class SessionState extends ChangeNotifier {
   }
 }
 
+/// 全局导航 key：会话失效/退出登录时清空路由栈，自动回到登录窗口
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
@@ -70,9 +74,11 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
     ThemeController.instance.restore();
     // 崩溃日志（设置开关控制）
     CrashLogger.init();
-    // 会话失效（refresh 失败）→ 强制回登录页
+    // 会话失效（refresh 失败）→ 清空路由栈强制回登录页
+    // （push 在栈上的设置/订单等页面会残留盖住登录页，需先 pop 到根）
     ApiClient.instance.onSessionExpired(() {
       AuthService.instance.logout();
+      rootNavigatorKey.currentState?.popUntil((r) => r.isFirst);
       _session.setLoggedIn(false);
     });
   }
@@ -85,6 +91,8 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
         ChangeNotifierProvider.value(value: ConnectionController.instance),
         ChangeNotifierProvider.value(value: ThemeController.instance),
         ChangeNotifierProvider.value(value: LocaleController.instance),
+        // 账号可用状态（到期/设备满/禁用）——首页横幅、连接门禁、我的页共用
+        ChangeNotifierProvider.value(value: AccountService.instance),
       ],
       child: Consumer<ThemeController>(
         builder: (context, themeCtrl, _) =>
@@ -92,6 +100,7 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
           builder: (context, locale, _) => MaterialApp(
             title: AppStrings.t('app_name'),
             debugShowCheckedModeBanner: false,
+            navigatorKey: rootNavigatorKey,
             theme: buildMoneyFlyTheme(brightness: Brightness.light),
             darkTheme: buildMoneyFlyTheme(brightness: Brightness.dark),
             themeMode: themeCtrl.mode,

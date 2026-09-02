@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:moneyfly/core/api/api_client.dart';
 import 'package:moneyfly/core/models/models.dart';
 import 'package:moneyfly/core/proxy/proxy_core.dart';
+import 'package:moneyfly/core/services/account_service.dart';
+import 'package:moneyfly/core/services/subscription_service.dart';
 import 'package:moneyfly/main.dart';
 import 'package:moneyfly/pages/devices/devices_page.dart';
 import 'package:moneyfly/pages/home/home_page.dart';
@@ -56,6 +58,7 @@ Widget _wrap(Widget child) => MaterialApp(
         providers: [
           ChangeNotifierProvider.value(value: SessionState()..setLoggedIn(true)),
           ChangeNotifierProvider.value(value: ConnectionController.instance),
+          ChangeNotifierProvider.value(value: AccountService.instance),
         ],
         child: child,
       ),
@@ -69,6 +72,8 @@ void main() {
   tearDown(() {
     ApiClient.debugDio = null;
     ApiClient.resetInstance();
+    AccountService.instance.reset();
+    SubscriptionService.instance.clearCache();
   });
 
   group('首页', () {
@@ -112,6 +117,71 @@ void main() {
       expect(ConnectionController.instance.smartMode, isFalse);
       await tapSettle(tester, find.text('智能模式'));
       expect(ConnectionController.instance.smartMode, isTrue);
+    });
+  });
+
+  group('首页·受限状态（到期/设备满/正常）', () {
+    Future<void> pumpHome(WidgetTester tester, Map<String, dynamic> sub,
+        {List<ProxyNode>? nodes}) async {
+      ApiClient.debugDio = mockDio((a) {
+        a.onGet('/user/subscribe', (s) => s.reply(200, sub));
+      });
+      final conn = ConnectionController.instance;
+      await conn.loadNodes(nodes ?? []);
+      await pumpPage(tester, _wrap(const HomePage()));
+    }
+
+    testWidgets('套餐到期 → 顶部横幅引导去续费，且显示「已到期」', (tester) async {
+      await pumpHome(tester, {
+        'subscribe_url':
+            'https://dy.moneyfly.top/api/v1/client/subscribe?token=t&type=clash',
+        'expire_time': '2020-01-01T08:00:00',
+        'device_limit': 3,
+        'current_devices': 3,
+        'remaining_days': 0,
+        'is_expired': true,
+        'status': 'active',
+      });
+      // 信息条到期格显示「已到期」；横幅给出续费引导（到期才出现续费按钮）
+      expect(find.text('已到期'), findsOneWidget);
+      expect(find.textContaining('您的套餐已到期'), findsOneWidget);
+      expect(find.text('去续费'), findsOneWidget);
+      expect(find.text('去开通'), findsNothing);
+    });
+
+    testWidgets('设备数已达上限 → 横幅提示上限并引导管理设备/升级', (tester) async {
+      await pumpHome(tester, {
+        'subscribe_url':
+            'https://dy.moneyfly.top/api/v1/client/subscribe?token=t&type=clash',
+        'expire_time': '2032-06-06 08:00:00',
+        'device_limit': 3,
+        'current_devices': 3,
+        'remaining_days': 2104,
+        'is_expired': false,
+        'status': 'active',
+      });
+      expect(find.textContaining('设备数量已达上限'), findsOneWidget);
+      expect(find.text('管理设备'), findsOneWidget);
+      // 未到期不出现「去续费」
+      expect(find.text('去续费'), findsNothing);
+    });
+
+    testWidgets('正常账号但节点为空 → 提示重试而非「去开通」', (tester) async {
+      await pumpHome(tester, {
+        'subscribe_url':
+            'https://dy.moneyfly.top/api/v1/client/subscribe?token=t&type=clash',
+        'expire_time': '2032-06-06 08:00:00',
+        'device_limit': 3,
+        'current_devices': 1,
+        'remaining_days': 2104,
+        'is_expired': false,
+        'status': 'active',
+      });
+      // 正常状态不弹任何购买引导
+      expect(find.text('去开通'), findsNothing);
+      expect(find.text('去续费'), findsNothing);
+      // 空节点给重试提示而非购买按钮
+      expect(find.textContaining('节点加载失败'), findsOneWidget);
     });
   });
 

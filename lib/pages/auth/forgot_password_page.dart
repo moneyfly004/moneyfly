@@ -1,11 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
 import '../../l10n/app_strings.dart';
 import '../../core/api/endpoints.dart';
+import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
+
+/// 校验邮箱格式（与后端一致的宽松正则，拦截明显输入错误）
+bool _looksLikeEmail(String s) =>
+    RegExp(r'^[\w.+-]+@[\w-]+(\.[\w-]+)+$').hasMatch(s.trim());
 
 /// 找回密码（设计稿 08）：邮箱验证码两步重置
 class ForgotPasswordPage extends StatefulWidget {
@@ -39,7 +45,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   Future<void> _sendCode() async {
     final email = _email.text.trim();
-    if (email.isEmpty || !email.contains('@')) return _toast(AppStrings.t('email_reg_invalid'));
+    if (!_looksLikeEmail(email)) return _toast(AppStrings.t('email_reg_invalid'));
     setState(() => _sending = true);
     try {
       await ApiClient.instance.post(Endpoints.forgotPassword, data: {'email': email});
@@ -66,8 +72,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _reset() async {
-    if (_newPassword.text.length < 8) return _toast(AppStrings.t('pwd_short'));
+    // 与后端同规则校验新密码（长度 + 四类字符至少三种）
+    final pwdErr = PasswordPolicy.errorFor(_newPassword.text);
+    if (pwdErr != null) return _toast(pwdErr);
     if (_newPassword.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
+    if (!_looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_reg_invalid'));
     setState(() => _loading = true);
     try {
       await ApiClient.instance.post(Endpoints.resetPassword, data: {
@@ -124,8 +133,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               SizedBox(height: compact ? 16 : 26),
               _field(AppStrings.t('email_label'), _email, hint: AppStrings.t('email_reg_hint')),
               const SizedBox(height: 12),
-              _field('验证码', _code,
+              _field(AppStrings.t('code_label'), _code,
                   hint: AppStrings.t('code_hint'),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
                   suffix: SizedBox(
                     width: 104,
                     height: 48,
@@ -155,7 +168,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 Text(AppStrings.t('identity_ok'), style: TextStyle(fontSize: 10.5, color: MFColors.green, fontWeight: FontWeight.w600)),
               ],
               const SizedBox(height: 12),
-              _field('新密码', _newPassword, hint: '至少 8 位，含字母和数字', obscure: _obscure),
+              _field(AppStrings.t('new_pwd'), _newPassword,
+                  hint: PasswordPolicy.hint, obscure: _obscure),
               const SizedBox(height: 12),
               _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure),
               const SizedBox(height: 14),
@@ -171,7 +185,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Widget _field(String label, TextEditingController c,
-      {required String hint, bool obscure = false, Widget? suffix}) {
+      {required String hint, bool obscure = false, Widget? suffix,
+      List<TextInputFormatter>? inputFormatters}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -187,6 +202,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 obscureText: obscure,
                 style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
                 cursorColor: MFColors.brand,
+                inputFormatters: inputFormatters,
                 decoration: InputDecoration(hintText: hint),
               ),
             ),

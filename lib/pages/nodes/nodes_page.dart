@@ -5,12 +5,15 @@ import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
+import '../../core/services/account_service.dart';
 import '../../core/services/speed_tester.dart';
 import '../../core/models/models.dart';
 import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
+import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/country_flag.dart';
+import '../devices/devices_page.dart';
 
 /// 节点列表（设计稿 03）：自动选优条 + 分组 + 延迟徽标 + 真实测速
 class NodesPage extends StatefulWidget {
@@ -228,22 +231,9 @@ class _NodesPageState extends State<NodesPage> {
             // 节点列表
             Expanded(
               child: conn.nodes.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                           Text(AppStrings.t('no_nodes'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                          const SizedBox(height: 10),
-                          GestureDetector(
-                            onTap: () => _load(force: true),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(12)),
-                              child: Text(AppStrings.t('refresh_sub'), style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
-                            ),
-                          ),
-                        ],
-                      ),
+                  ? _EmptyNodesView(
+                      refreshing: _refreshing,
+                      onRefresh: () => _load(force: true),
                     )
                   : _NodeListView(
                       conn: conn,
@@ -379,6 +369,99 @@ class _NodeListView extends StatelessWidget {
         }
         return buildNodeRow(conn, e);
       },
+    );
+  }
+}
+
+/// 节点空态：受限账号给出对应引导（到期续费 / 设备满管理·升级 / 禁用提示），
+/// 正常账号给出「刷新订阅」重试。不再让到期/禁用用户看到干巴巴的「暂无节点」。
+class _EmptyNodesView extends StatelessWidget {
+  const _EmptyNodesView({required this.refreshing, required this.onRefresh});
+  final bool refreshing;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final acc = context.watch<AccountService>();
+    if (!acc.isBlocked) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(AppStrings.t('no_nodes'),
+                style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: refreshing ? null : onRefresh,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                    gradient: MFColors.brandGradient,
+                    borderRadius: BorderRadius.circular(12)),
+                child: refreshing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Text(AppStrings.t('refresh_sub'),
+                        style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final status = acc.status;
+    final isManageable =
+        status == AccountStatus.expired ||
+        status == AccountStatus.noSubscription ||
+        status == AccountStatus.deviceFull;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 30),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('⛔', style: const TextStyle(fontSize: 30)),
+            const SizedBox(height: 10),
+            Text(acc.blockText,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+            const SizedBox(height: 16),
+            if (isManageable)
+              GestureDetector(
+                onTap: () {
+                  if (status == AccountStatus.deviceFull) {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const DevicesPage()));
+                  } else {
+                    mainTabIndex.value = 2; // 购买套餐
+                  }
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+                  decoration: BoxDecoration(
+                      gradient: MFColors.brandGradient,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Text(
+                    status == AccountStatus.deviceFull
+                        ? AppStrings.t('manage_devices')
+                        : AppStrings.t('go_purchase'),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

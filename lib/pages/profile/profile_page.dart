@@ -18,6 +18,9 @@ import '../settings/settings_page.dart';
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
+  /// 退出登录 / 套餐开通成功后清空缓存，下次进入重新加载
+  static void invalidateCache() => _ProfilePageState.invalidateCache();
+
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
@@ -88,10 +91,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
                 )
               else ...[
-                if (hasSub && remaining < 7) ...[
-                  _buildExpiringBanner(remaining),
-                  const SizedBox(height: 12),
-                ],
+                // 账号状态横幅（禁用 > 套餐停用 > 到期 > 设备满），
+                // 之后才是「剩余 < 7 天」的普通续费提醒
+                if (_dashboard != null) ..._buildStatusBanners(_dashboard!),
                 // #7 浅色玻璃信息卡（不再深色看不清）
                 _buildInfoCard(hasSub, remaining, expireShort, online, total),
                 const SizedBox(height: 18),
@@ -165,6 +167,104 @@ class _ProfilePageState extends State<ProfilePage> {
               child: Text(AppStrings.t('renew'), style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 账号状态横幅列表：
+  /// 账号禁用（无购买按钮）> 套餐停用 > 套餐到期（去续费）> 设备满（管理/升级）
+  /// > 到期倒计时提醒（0<剩余<7）。正常账号不出现任何购买类横幅。
+  List<Widget> _buildStatusBanners(DashboardInfo dash) {
+    final banners = <Widget>[];
+    final status = dash.subscriptionStatus;
+    final hasSub = dash.hasSubscription;
+    final remaining = dash.remainingDays;
+    final online = dash.onlineDevices;
+    final total = dash.totalDevices;
+    final isExpired = hasSub && remaining <= 0;
+    final deviceFull = hasSub && total > 0 && online >= total;
+
+    if (!dash.isActive) {
+      banners.add(_buildNoticeBanner(
+        emoji: '🚫',
+        text: AppStrings.t('account_disabled_block'),
+        color: MFColors.red,
+      ));
+    } else if (status.isNotEmpty && status != 'active') {
+      banners.add(_buildNoticeBanner(
+        emoji: '🚫',
+        text: AppStrings.t('sub_disabled_block'),
+        color: MFColors.red,
+      ));
+    } else if (isExpired) {
+      banners.add(_buildNoticeBanner(
+        emoji: '⏰',
+        text: AppStrings.t('account_expired_block'),
+        color: MFColors.red,
+        buttonLabel: AppStrings.t('go_renew'),
+        onTap: () => mainTabIndex.value = 2,
+      ));
+    } else if (deviceFull) {
+      banners.add(_buildNoticeBanner(
+        emoji: '📱',
+        text: AppStrings.t('devices_full_hint', {'cur': '$online', 'limit': '$total'}),
+        color: MFColors.amber,
+        buttonLabel: AppStrings.t('manage_devices'),
+        onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const DevicesPage())),
+      ));
+    } else if (hasSub && remaining > 0 && remaining < 7) {
+      banners.add(_buildExpiringBanner(remaining));
+    }
+    if (banners.isEmpty) return const [];
+    return [
+      for (var i = 0; i < banners.length; i++) ...[
+        banners[i],
+        const SizedBox(height: 12),
+      ]
+    ];
+  }
+
+  /// 通用提示横幅（emoji + 文案 + 可选按钮）
+  Widget _buildNoticeBanner({
+    required String emoji,
+    required String text,
+    required Color color,
+    String? buttonLabel,
+    VoidCallback? onTap,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+            colors: [color.withValues(alpha: .2), color.withValues(alpha: .05)]),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: .45)),
+      ),
+      child: Row(
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 16)),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(text,
+                style: TextStyle(fontSize: 12, color: MFColors.txt, height: 1.5)),
+          ),
+          if (buttonLabel != null && onTap != null) ...[
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: onTap,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                decoration: BoxDecoration(
+                    gradient: MFColors.brandGradient,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Text(buttonLabel,
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -282,6 +382,9 @@ class _ProfilePageState extends State<ProfilePage> {
         if (ok == true && context.mounted) {
           await AuthService.instance.logout();
           _ProfilePageState.invalidateCache();
+          if (!context.mounted) return;
+          // 确保回到根部路由，登录窗口不被残留页面盖住
+          Navigator.of(context).popUntil((r) => r.isFirst);
           if (context.mounted) context.read<SessionState>().setLoggedIn(false);
         }
       },

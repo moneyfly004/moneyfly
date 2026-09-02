@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
+import '../services/account_service.dart';
 import '../services/geo_lookup.dart';
 import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
@@ -227,6 +228,16 @@ class ConnectionController extends ChangeNotifier {
   /// [fromReconnect] 由断线重连调度发起：失败时继续重试（不中断重连链）。
   /// _epoch 守卫：连接过程中用户断开/再次连接时，旧流程的结果不再覆盖状态
   Future<void> connect({bool runSpeedTest = true, bool fromReconnect = false}) async {
+    // 账号门禁：到期 / 设备满 / 被禁用 / 未开通 —— 一律不允许建立 VPN。
+    // 放在最前，自动连接、断线重连、首页点连接都走同一道拦截；
+    // 会话内已判定过（AccountService.loaded）才生效，内核 e2e 直连不受影响。
+    final acc = AccountService.instance;
+    if (acc.loaded && acc.isBlocked) {
+      status = ConnStatus.disconnected;
+      error = acc.blockText;
+      notifyListeners();
+      return;
+    }
     if (nodes.isEmpty) {
       error = AppStrings.t('no_available_nodes');
       notifyListeners();
@@ -375,6 +386,28 @@ class ConnectionController extends ChangeNotifier {
     status = ConnStatus.disconnected;
     error = null;
     realCountry = null;
+    notifyListeners();
+  }
+
+  /// 登出/切号时重置：断开内核并清空节点与连接状态，
+  /// 防止上一个账号的节点/状态残留到下一个账号
+  Future<void> resetForLogout() async {
+    _epoch++;
+    _reconnectTimer?.cancel();
+    _bgTestTimer?.cancel();
+    speedTesting = false;
+    upSpeedMbps = 0;
+    downSpeedMbps = 0;
+    speedNotifier.value = const SpeedSnapshot();
+    try {
+      await _core.stop();
+    } catch (_) {}
+    nodes = [];
+    current = null;
+    status = ConnStatus.disconnected;
+    error = null;
+    realCountry = null;
+    _autoConnectTried = false;
     notifyListeners();
   }
 

@@ -68,6 +68,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (ok != true) return;
     await AuthService.instance.logout();
     if (!mounted) return;
+    // 设置页是 push 上来的页面：先清空路由栈回到根部，
+    // 否则登录窗口会被设置页盖住，需要手动返回一步才能看到
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    if (!mounted) return;
     context.read<SessionState>().setLoggedIn(false);
   }
 

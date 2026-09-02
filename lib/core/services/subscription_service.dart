@@ -16,6 +16,12 @@ class SubscriptionService {
   DateTime _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
   static const _cacheTtl = Duration(minutes: 30);
 
+  /// 登出/切号时清空节点缓存，避免旧账号节点残留到新账号
+  void clearCache() {
+    _cache = [];
+    _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
   /// 获取订阅信息（XBoard 兼容 /user/subscribe）
   Future<SubscriptionInfo> fetchInfo() async {
     final data = await ApiClient.instance.get(Endpoints.userSubscribe);
@@ -26,6 +32,7 @@ class SubscriptionService {
         currentDevices: 0,
         remainingDays: 0,
         isExpired: true,
+        isActive: false,
         status: '',
       );
     }

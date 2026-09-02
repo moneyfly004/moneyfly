@@ -61,10 +61,45 @@ class _LoginPageState extends State<LoginPage> {
       await AuthService.instance.login(_account.text, _password.text);
       if (mounted) context.read<SessionState>().setLoggedIn(true);
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      final msg = ApiClient.errorMsg(e);
+      // 账号被禁用：后端登录返回 403「账户已被禁用…」——弹窗明确提示，
+      // 而不是普通 toast（用户需要知道不是密码错、且无法自助解决）
+      final m = msg.toLowerCase();
+      if (msg.contains('禁用') ||
+          msg.contains('禁止') ||
+          m.contains('disabled') ||
+          m.contains('banned')) {
+        _showDisabledDialog(msg);
+      } else {
+        _toast(msg);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _showDisabledDialog(String msg) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(18))),
+        title: Text(AppStrings.t('account_disabled_title'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(msg,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.7)),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppStrings.t('ok_btn')),
+          ),
+        ],
+      ),
+    );
   }
 
   void _toast(String msg) {
