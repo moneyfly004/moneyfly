@@ -85,6 +85,10 @@ class ApiClient {
 
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    // macOS：默认 useDataProtectionKeyChain=true 走数据保护 Keychain，
+    // adhoc 签名（未公证分发）无对应 entitlement → SecItem 报 -34018（登录失败）。
+    // 显式关闭，改走传统 Keychain（无需 entitlement）。
+    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
   );
 
   /// 客户端 User-Agent：MoneyFly/<版本>（后端据此识别为 moneyfly 客户端，
