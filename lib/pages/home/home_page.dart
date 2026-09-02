@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage>
     } else {
       // #5 到期账户不允许连接 → 提示 + 引导购买
       final sub = _sub;
-      if (sub != null && (sub.isExpired || sub.remainingDays <= 0)) {
+      if (sub != null && sub.isExpired) {
         _showExpiredDialog();
         return;
       }
@@ -219,7 +219,7 @@ class _HomePageState extends State<HomePage>
   /// #3 订阅信息条：到期时间 / 设备数量 / 剩余天数（浅色玻璃卡，三端通用）
   Widget _buildSubInfoBar() {
     final sub = _sub;
-    final expired = sub != null && (sub.isExpired || sub.remainingDays <= 0);
+    final expired = sub != null && sub.isExpired;
     String expireText = AppStrings.t('expire_na');
     if (sub?.expireTime != null) {
       final dt = sub!.expireTime!;
