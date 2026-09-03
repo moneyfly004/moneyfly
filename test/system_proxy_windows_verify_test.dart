@@ -75,4 +75,36 @@ void main() {
     // 能走到这里即说明 FFI 调用未导致进程崩溃
     expect(true, isTrue);
   }, timeout: const Timeout(Duration(seconds: 30)));
+
+  // 回归：restore 必须把「原本不存在的注册表值」删除，而非残留我们写入的
+  // 127.0.0.1:2080 / <local>（真机发现的 bug：原本未配代理的机器断开后残留）。
+  test('Windows restore 无残留：原本不存在的值应被删除', () async {
+    if (!Platform.isWindows) {
+      markTestSkipped('仅 Windows 验证');
+      return;
+    }
+    // 记录 apply 前 ProxyServer/ProxyOverride 是否存在（exitCode==0 即存在）
+    Future<bool> exists(String name) async {
+      final r = await Process.run('reg', ['query', _winReg, '/v', name],
+          runInShell: true);
+      return r.exitCode == 0;
+    }
+
+    final serverExistedBefore = await exists('ProxyServer');
+    final overrideExistedBefore = await exists('ProxyOverride');
+
+    await SystemProxyManager.apply(port: 2080);
+    await SystemProxyManager.restore();
+
+    // restore 后存在性必须回到 apply 前：原本没有的，现在也不能有
+    expect(await exists('ProxyServer'), serverExistedBefore,
+        reason: 'ProxyServer 存在性应恢复到 apply 前（原本无则应被删除，不残留）');
+    expect(await exists('ProxyOverride'), overrideExistedBefore,
+        reason: 'ProxyOverride 存在性应恢复到 apply 前（原本无则应被删除，不残留）');
+    // 若原本就有值，还需确认不是残留的我们的值
+    if (!serverExistedBefore) {
+      expect(await _proxyPointsTo(2080), isFalse,
+          reason: '原本无 ProxyServer，restore 后不应残留 127.0.0.1:2080');
+    }
+  }, timeout: const Timeout(Duration(seconds: 60)));
 }

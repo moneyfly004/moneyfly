@@ -323,11 +323,15 @@ class SystemProxyManager {
             runInShell: true),
         Process.run('reg', ['query', _winReg, '/v', 'ProxyServer'],
             runInShell: true),
+        Process.run('reg', ['query', _winReg, '/v', 'ProxyOverride'],
+            runInShell: true),
       ]);
       final enableOut =
           results[0].exitCode == 0 ? (results[0].stdout as String) : null;
       final serverOut =
           results[1].exitCode == 0 ? (results[1].stdout as String) : null;
+      final overrideOut =
+          results[2].exitCode == 0 ? (results[2].stdout as String) : null;
       // 残留检测：上次崩溃/被强杀，代理仍指向我们自己的端口 →
       // 视为「原本关闭」，restore 时关掉而非还原到死端口（否则系统流量永久中断）。
       if (_winStateIsSelfResidual(enableOut, serverOut, port)) {
@@ -337,6 +341,9 @@ class SystemProxyManager {
         _original['ProxyEnable'] = enableOut;
         _original['ProxyServer'] = serverOut;
       }
+      // ProxyOverride 也需记录：restore 时有原值则还原、无原值则删除我们写入的
+      // <local>，否则会残留（真机验证发现：原本未设代理的机器断开后有残留）。
+      _original['ProxyOverride'] = overrideOut;
       _captured = true;
     }
 
@@ -358,9 +365,9 @@ class SystemProxyManager {
   }
 
   static Future<void> _restoreWindows() async {
+    // ProxyEnable：总是有意义（0/1），还原原值或置 0
     final enable = _original['ProxyEnable'] as String?;
     if (enable != null && enable.contains('ProxyEnable')) {
-      // 还原原值（含 ProxyEnable=0 或 1）
       await Process.run('reg', ['add', _winReg, '/v', 'ProxyEnable', '/t',
           'REG_DWORD', '/d', enable.contains('0x1') ? '1' : '0', '/f'],
           runInShell: true);
@@ -370,17 +377,31 @@ class SystemProxyManager {
               '/f'],
           runInShell: true);
     }
-    final server = _original['ProxyServer'] as String?;
-    if (server != null && server.contains('ProxyServer')) {
-      final line = server
+    // ProxyServer / ProxyOverride：原本有值则还原；原本不存在则删除我们写入的
+    // 值（关键：否则原本未配代理的机器会残留 127.0.0.1:2080 / <local>）。
+    await _restoreWinValueOrDelete('ProxyServer');
+    await _restoreWinValueOrDelete('ProxyOverride');
+  }
+
+  /// 还原单个 Windows 注册表字符串值到原始状态：
+  /// _original 里存有原 reg query 输出（含该值名）→ 解析末段还原；
+  /// 否则（原本不存在）→ reg delete 清除我们写入的值，避免残留。
+  static Future<void> _restoreWinValueOrDelete(String name) async {
+    final raw = _original[name] as String?;
+    if (raw != null && raw.contains(name)) {
+      final line = raw
           .split('\n')
-          .firstWhere((l) => l.contains('ProxyServer'), orElse: () => '');
+          .firstWhere((l) => l.contains(name), orElse: () => '');
       final parts = line.trim().split(RegExp(r'\s+'));
       if (parts.length >= 3) {
-        await Process.run('reg', ['add', _winReg, '/v', 'ProxyServer',
-            '/t', 'REG_SZ', '/d', parts.last, '/f'], runInShell: true);
+        await Process.run('reg', ['add', _winReg, '/v', name, '/t', 'REG_SZ',
+            '/d', parts.last, '/f'], runInShell: true);
+        return;
       }
     }
+    // 原本无此值 → 删除（忽略「值不存在」的报错）
+    await Process.run('reg', ['delete', _winReg, '/v', name, '/f'],
+        runInShell: true);
   }
 
   /// 让浏览器/系统立即感知代理注册表变化（仅 Windows；reg.exe 写注册表
