@@ -34,8 +34,14 @@ class MainActivity : FlutterActivity() {
                 "prepareVpn" -> prepareVpn(result)
                 "isVpnPrepared" -> result.success(VpnService.prepare(this) == null)
                 "isBatteryOptimizationIgnored" -> result.success(isBatteryOptimizationIgnored())
-                "requestIgnoreBatteryOptimization" -> requestIgnoreBatteryOptimization()
-                "openBatterySettings" -> openBatterySettings()
+                "requestIgnoreBatteryOptimization" -> {
+                    requestIgnoreBatteryOptimization()
+                    result.success(true) // 必须回调，否则 Dart 侧 await 永久挂起、阻塞连接
+                }
+                "openBatterySettings" -> {
+                    openBatterySettings()
+                    result.success(true)
+                }
                 "getVendor" -> result.success(Build.MANUFACTURER ?: "unknown")
                 "requestNotificationPermission" -> requestNotificationPermission(result)
                 "hasNotificationPermission" -> result.success(hasNotificationPermission())

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -73,16 +75,32 @@ class PermissionService {
     }
   }
 
-  /// 连接前一次性引导：VPN 授权 + 通知 + 电池豁免（最高权限防断连）
-  /// 返回 false 表示用户拒绝 VPN 授权（不继续连接）
+  /// 本会话是否已请求过电池豁免（避免每次连接都弹系统框把 App 切后台）
+  bool _batteryPromptedThisSession = false;
+
+  /// 连接前一次性引导：VPN 授权（必需，前置）+ 通知。
+  /// 返回 false 表示用户拒绝 VPN 授权（不继续连接）。
+  ///
+  /// 关键修复：电池豁免会打开系统界面、把 App 切到后台，若在连接瞬间同步等待，
+  /// 表现为「一点连接界面就自动缩小、随后断开」。故电池豁免改为：
+  ///   1) 不阻塞连接（不 await）—— 连接立即继续；
+  ///   2) 每会话至多请求一次 —— 不会每次连接都弹框打断。
+  /// 豁免与否不影响本次隧道建立（VpnService 前台服务已足以维持连接）。
   Future<bool> ensureAllForConnect() async {
     final vpnOk = await prepareVpn();
     if (!vpnOk) return false;
     await requestNotificationPermission();
-    final ignored = await isBatteryOptimizationIgnored();
-    if (!ignored) {
-      await requestIgnoreBatteryOptimization();
-    }
+    unawaited(_maybeRequestBatteryOnce());
     return true;
+  }
+
+  Future<void> _maybeRequestBatteryOnce() async {
+    if (_batteryPromptedThisSession) return;
+    _batteryPromptedThisSession = true;
+    try {
+      if (!await isBatteryOptimizationIgnored()) {
+        await requestIgnoreBatteryOptimization();
+      }
+    } catch (_) {}
   }
 }

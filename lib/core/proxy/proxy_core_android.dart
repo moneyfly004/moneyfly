@@ -7,6 +7,35 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_strings.dart';
 import 'proxy_core.dart';
 
+/// 看门狗单次巡检后的决策（纯逻辑，便于单元测试）
+enum WatchdogAction {
+  /// 隧道正常，继续
+  healthy,
+  /// 本次失败但未达阈值 / 原生确认存活 → 保持连接，绝不断连
+  keepAlive,
+  /// 连续失败达阈值且原生确认已停 → 判定内核死亡
+  declareDead,
+}
+
+/// 看门狗判死纯函数（无副作用，可单测）：
+/// - 本次巡检 OK → healthy
+/// - 失败但连续次数未达阈值 → keepAlive（等下次）
+/// - 达阈值但原生 VpnService 仍在跑 → keepAlive（App 后台/限流导致的假失败）
+/// - 达阈值且原生已停 → declareDead
+///
+/// [consecutiveFailures] 含本次在内的连续失败次数（本次失败时由调用方 +1 后传入）。
+WatchdogAction decideWatchdog({
+  required bool pollOk,
+  required int consecutiveFailures,
+  required int deadThreshold,
+  required bool nativeAlive,
+}) {
+  if (pollOk) return WatchdogAction.healthy;
+  if (consecutiveFailures < deadThreshold) return WatchdogAction.keepAlive;
+  if (nativeAlive) return WatchdogAction.keepAlive;
+  return WatchdogAction.declareDead;
+}
+
 /// Android 内核：通过 MethodChannel 驱动 VpnService + libbox（sing-box 共享库），
 /// 切模式/切节点走 Clash API 热更新，流量统计从 /traffic 流拉取。
 class ProxyCoreAndroid extends ProxyCore {
@@ -26,6 +55,12 @@ class ProxyCoreAndroid extends ProxyCore {
   Timer? _watchdog;
   CancelToken? _trafficCancel;
   final List<int> _trafficBuf = [];
+
+  /// 看门狗连续失败计数。单次 /version 失败不判定内核死亡 —— App 切后台、
+  /// 弹系统框、Doze 限流都可能让某一次轮询瞬时失败，但隧道其实还活着。
+  /// 连续多次失败、且原生 VpnService 也确认已停，才判定真死亡。
+  int _watchdogFailures = 0;
+  static const _watchdogDeadThreshold = 3; // 连续 3 次(约15s)才判死
 
   @override
   bool get isRunning => _running;
@@ -109,19 +144,60 @@ class ProxyCoreAndroid extends ProxyCore {
 
   void _startWatchdog() {
     _watchdog?.cancel();
+    _watchdogFailures = 0;
     _watchdog = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!_running) return;
+      bool ok;
       try {
-        final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
-        if (r.statusCode != 200) _onKernelDead();
+        final r = await _api.get('/version',
+            options: Options(validateStatus: (s) => true));
+        ok = r.statusCode == 200;
       } catch (_) {
-        _onKernelDead();
+        ok = false;
+      }
+      if (ok) {
+        _watchdogFailures = 0; // 恢复即清零
+        return;
+      }
+      // 本次轮询失败 —— 不立即判死，累计次数
+      _watchdogFailures++;
+      // 仅在达阈值时才查原生（省去健康期的 method channel 往返）
+      final nativeAlive = _watchdogFailures >= _watchdogDeadThreshold
+          ? await _nativeVpnAlive()
+          : true;
+      final action = decideWatchdog(
+        pollOk: false,
+        consecutiveFailures: _watchdogFailures,
+        deadThreshold: _watchdogDeadThreshold,
+        nativeAlive: nativeAlive,
+      );
+      switch (action) {
+        case WatchdogAction.healthy:
+        case WatchdogAction.keepAlive:
+          // 原生确认存活时清零，避免阈值后每次巡检都查原生
+          if (nativeAlive && _watchdogFailures >= _watchdogDeadThreshold) {
+            _watchdogFailures = 0;
+          }
+          return;
+        case WatchdogAction.declareDead:
+          _onKernelDead();
       }
     });
   }
 
+  /// 向原生查询 VpnService.isRunning（内核真死亡时才为 false）。
+  /// 查询本身异常时保守返回 true（宁可不断连，也不误杀存活隧道）。
+  Future<bool> _nativeVpnAlive() async {
+    try {
+      return await _channel.invokeMethod<bool>('isVpnRunning') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   void _onKernelDead() {
     _running = false;
+    _watchdogFailures = 0;
     _lastError = AppStrings.t('kernel_exit');
     _trafficCancel?.cancel();
     _onUnexpectedExit?.call();
