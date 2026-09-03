@@ -228,7 +228,10 @@ class SingBoxConfigBuilder {
         if (tunMode != 'off')
           {
             'type': 'tun', 'tag': 'tun-in',
-            'inet4_address': '172.19.0.1/30',
+            // sing-box 1.12+：旧 inet4_address(字符串)已移除，改用 address(数组)。
+            // 旧字段会导致内核拒绝启动：「legacy tun address fields ... removed
+            // in sing-box 1.12.0」(Android 走 TUN 必现，桌面 tunMode=off 不触发)。
+            'address': ['172.19.0.1/30'],
             'auto_route': true, 'strict_route': false, 'stack': tunStack,
           },
       ],
