@@ -317,10 +317,10 @@ class ConnectionController extends ChangeNotifier {
         }
       }
       error = errMsg;
-      // 内核启动失败但系统代理可能已设置 → 恢复，避免残留指向死端口
-      if (SystemProxyManager.isApplied) {
-        unawaited(SystemProxyManager.restore());
-      }
+      // 注意：这里不再手动 restore 系统代理 —— 代理生命周期绑定内核
+      // 启停（ProxyCoreCli.start/stop），且失败路径的异步 restore 可能与
+      // 下一次重连成功后的 apply 交错，出现「已连接但系统代理被误关」；
+      // 系统代理异常时由连接期的保活巡检自动恢复（见 SystemProxyManager）。
       // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（最多 3 次）
       if (fromReconnect && autoReconnect && _reconnectCount < 3) {
         _scheduleReconnect();

@@ -41,6 +41,11 @@ class ProxyCoreCli extends ProxyCore {
   String? _lastError;
   String? _configPath;
 
+  /// 系统代理保活定时器：连接期间周期检查，被系统/外部关掉就重新开启。
+  /// 目标：只要内核在跑，系统代理就保持指向本地端口，直到断开/退出。
+  Timer? _proxyKeepAlive;
+  static const _proxyKeepAliveInterval = Duration(seconds: 30);
+
   /// 进程异常退出（非主动断开）→ 控制器触发自动重连
   VoidCallback? _onUnexpectedExit;
 
@@ -139,6 +144,7 @@ class ProxyCoreCli extends ProxyCore {
           // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
           if (manageSystemProxy && !_tunForceMode) {
             await SystemProxyManager.apply(port: SystemProxyManager.defaultPort);
+            _startProxyKeepAlive();
           }
           _startStatsTimer();
           return;
@@ -155,6 +161,7 @@ class ProxyCoreCli extends ProxyCore {
   @override
   Future<void> stop() async {
     _intentionalStop = true;
+    _stopProxyKeepAlive();
     _trafficCancel?.cancel();
     final p = _proc;
     _proc = null;
@@ -170,6 +177,25 @@ class ProxyCoreCli extends ProxyCore {
     if (manageSystemProxy) {
       await SystemProxyManager.restore();
     }
+  }
+
+  /// 启动系统代理保活：每 30s 检查一次，被关/被改走则立即重新指向本地端口
+  void _startProxyKeepAlive() {
+    _stopProxyKeepAlive();
+    _proxyKeepAlive = Timer.periodic(_proxyKeepAliveInterval, (_) async {
+      if (_proc == null || _tunForceMode || !manageSystemProxy) return;
+      try {
+        await SystemProxyManager.ensureApplied(
+            port: SystemProxyManager.defaultPort);
+      } catch (_) {
+        // 保活失败不影响内核运行，下个周期再试
+      }
+    });
+  }
+
+  void _stopProxyKeepAlive() {
+    _proxyKeepAlive?.cancel();
+    _proxyKeepAlive = null;
   }
 
   @override
