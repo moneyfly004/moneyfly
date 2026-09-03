@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -55,6 +56,18 @@ class UpdateService {
 
   static final String githubRepo = String.fromCharCodes([for (final c in const [55,53,52,63,35,60,54,35,106,106,110,117,55,53,52,63,35,60,54,35]) c ^ 0x5A]);
 
+  /// GitHub API 专用裸客户端（不经 [ApiClient]）。
+  /// 更新检测不能复用后端通道：ApiClient 会为每个请求注入
+  /// `Authorization: Bearer <登录 token>`，GitHub 对无效 Bearer 一律返回 401
+  /// （实测日志 Bad credentials）→ 检测永远失败、UI 误报「已是最新版本」。
+  /// 这里不带任何登录态，只带 UA 直连 GitHub。
+  static final Dio _ghDio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 12),
+    receiveTimeout: const Duration(seconds: 25),
+    sendTimeout: const Duration(seconds: 15),
+    headers: {'Accept': 'application/json', 'User-Agent': ApiClient.userAgent},
+  ));
+
   /// 检查更新（#13）：读取 GitHub Releases 最新版 → 比对 → 返回更新信息。
   /// 网络异常返回 null（UI 提示已是最新或稍后再试）。
   Future<UpdateInfo?> check() async {
@@ -64,8 +77,9 @@ class UpdateService {
       return _cacheInfo;
     }
     try {
-      final data = await ApiClient.instance
+      final r = await _ghDio
           .get('https://api.github.com/repos/$githubRepo/releases/latest');
+      final data = r.data;
       if (data is! Map) return null;
       final tag = data['tag_name']?.toString() ?? '';
       final version = tag.startsWith('v') ? tag.substring(1) : tag;
