@@ -43,8 +43,10 @@ class ProxyCoreCli extends ProxyCore {
 
   /// 系统代理保活定时器：连接期间周期检查，被系统/外部关掉就重新开启。
   /// 目标：只要内核在跑，系统代理就保持指向本地端口，直到断开/退出。
+  /// 5s 一次：探测是只读的 reg query / networksetup -get，开销极小；
+  /// 兼顾「代理被 Windows 关掉后最多 5s 内自动恢复」，避免长时间断流。
   Timer? _proxyKeepAlive;
-  static const _proxyKeepAliveInterval = Duration(seconds: 30);
+  static const _proxyKeepAliveInterval = Duration(seconds: 5);
 
   /// 进程异常退出（非主动断开）→ 控制器触发自动重连
   VoidCallback? _onUnexpectedExit;
@@ -152,7 +154,7 @@ class ProxyCoreCli extends ProxyCore {
       } catch (_) {
         // 未就绪，继续等
       }
-      await Future.delayed(const Duration(milliseconds: 250));
+      await Future.delayed(const Duration(milliseconds: 100));
     }
     await stop();
     throw UnsupportedError('内核启动超时（10s）。日志：${_tail()}');
@@ -165,18 +167,23 @@ class ProxyCoreCli extends ProxyCore {
     _trafficCancel?.cancel();
     final p = _proc;
     _proc = null;
-    if (p != null) {
+
+    // 杀进程与恢复系统代理并行：两者互不依赖，串行会白白叠加耗时。
+    // 内核收到 SIGTERM 实测 ~20ms 退出，1.5s 超时兜底即可（原 3s 过长）。
+    final killFut = () async {
+      if (p == null) return;
       try {
         p.kill(ProcessSignal.sigterm);
-        await p.exitCode.timeout(const Duration(seconds: 3));
+        await p.exitCode.timeout(const Duration(milliseconds: 1500));
       } catch (_) {
         p.kill(ProcessSignal.sigkill);
       }
-    }
+    }();
     // 恢复系统代理（sing-box set_system_proxy 被终止后不会自动恢复）
-    if (manageSystemProxy) {
-      await SystemProxyManager.restore();
-    }
+    final restoreFut =
+        manageSystemProxy ? SystemProxyManager.restore() : Future.value();
+
+    await Future.wait([killFut, restoreFut]);
   }
 
   /// 启动系统代理保活：每 30s 检查一次，被关/被改走则立即重新指向本地端口
