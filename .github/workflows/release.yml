@@ -67,9 +67,22 @@ jobs:
 
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
+        env:
+          # 正式签名密钥（缺失则 build.gradle.kts 回退 debug）。
+          # 必须在此注入，否则 Gradle 读不到 → 每次构建用临时 debug 签名 →
+          # 版本间签名不一致，用户无法覆盖升级、必须卸载重装。
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: 构建 AAB（应用商店备用）
         run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: 重命名产物
         run: |
