@@ -15,6 +15,22 @@ import 'singbox_config.dart';
 import 'system_proxy.dart';
 import '../../l10n/app_strings.dart';
 
+/// 后台 isolate 入口：构建 sing-box JSON 配置（800+ outbound 时 ~50-100ms，
+/// 放后台避免阻塞 UI 线程导致连接按钮卡顿）。compute 要求顶层/静态函数。
+Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
+  final proxies = (args['proxies'] as List).cast<Map<String, dynamic>>();
+  final nodes = proxies.map((m) => ProxyNode.fromClashMap(m)).toList();
+  return SingBoxConfigBuilder.build(
+    nodes: nodes,
+    selectedTag: args['selectedTag'] as String,
+    smartMode: args['smartMode'] as bool,
+    dns: args['dns'] as String,
+    tunMode: args['tunMode'] as String,
+    bypassLan: args['bypassLan'] as bool,
+    ruleSetDir: args['ruleSetDir'] as String?,
+  );
+}
+
 /// 连接状态
 enum ConnStatus { disconnected, disconnecting, testing, connecting, connected, reconnecting, error }
 
@@ -300,15 +316,16 @@ class ConnectionController extends ChangeNotifier {
             ? null
             : ProxyCoreCli.workDir,
       );
-      final cfg = SingBoxConfigBuilder.build(
-        nodes: nodes,
-        selectedTag: current!.tag,
-        smartMode: smartMode,
-        dns: dns,
-        tunMode: tunMode,
-        bypassLan: bypassLan,
-        ruleSetDir: ruleDir,
-      );
+      if (epoch != _epoch) return;
+      final cfg = await compute(_buildConfigInIsolate, {
+        'proxies': [for (final n in nodes) n.raw],
+        'selectedTag': current!.tag,
+        'smartMode': smartMode,
+        'dns': dns,
+        'tunMode': tunMode,
+        'bypassLan': bypassLan,
+        'ruleSetDir': ruleDir,
+      });
       await _core.start(cfg);
       if (epoch != _epoch) {
         // 连接建立期间用户已断开/发起新连接：内核此刻才起来，若直接 return
@@ -430,10 +447,8 @@ class ConnectionController extends ChangeNotifier {
     } catch (_) {
       // 测速失败不影响已建立的连接
     } finally {
-      if (epoch == _epoch) {
-        speedTesting = false;
-        notifyListeners();
-      }
+      speedTesting = false;
+      notifyListeners();
     }
   }
 

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 
 import 'proxy_core.dart';
 import 'system_proxy.dart';
@@ -120,9 +120,7 @@ class ProxyCoreCli extends ProxyCore {
     if (!dir.existsSync()) dir.createSync(recursive: true);
     _configPath = '${dir.path}/config.json';
 
-    // 把内置规则集落盘（智能模式 geoip/geosite 本地化，不依赖远程下载）
-    await _materializeRuleAssets(dir);
-    File(_configPath!).writeAsStringSync(jsonEncode(config));
+    await File(_configPath!).writeAsString(jsonEncode(config), flush: true);
 
     _proc = await Process.start(
       binary,
@@ -187,15 +185,21 @@ class ProxyCoreCli extends ProxyCore {
   }
 
   /// 启动系统代理保活：每 30s 检查一次，被关/被改走则立即重新指向本地端口
+  bool _keepAliveInFlight = false;
+
   void _startProxyKeepAlive() {
     _stopProxyKeepAlive();
+    _keepAliveInFlight = false;
     _proxyKeepAlive = Timer.periodic(_proxyKeepAliveInterval, (_) async {
+      if (_keepAliveInFlight) return;
       if (_proc == null || _tunForceMode || !manageSystemProxy) return;
+      _keepAliveInFlight = true;
       try {
         await SystemProxyManager.ensureApplied(
             port: SystemProxyManager.defaultPort);
       } catch (_) {
-        // 保活失败不影响内核运行，下个周期再试
+      } finally {
+        _keepAliveInFlight = false;
       }
     });
   }
@@ -253,21 +257,6 @@ class ProxyCoreCli extends ProxyCore {
   }
 
   String _tail() => _logTail.isEmpty ? '（无输出）' : _logTail.join(' | ');
-
-  /// 从 App 资产中取出内置规则集写到内核工作目录（幂等）
-  Future<void> _materializeRuleAssets(Directory dir) async {
-    for (final file in const ['geoip-cn.srs', 'geosite-cn.srs']) {
-      final target = File('${dir.path}/$file');
-      if (target.existsSync()) continue;
-      try {
-        final data = await rootBundle.load('assets/rules/$file');
-        await target.writeAsBytes(data.buffer.asUint8List(
-          data.offsetInBytes, data.lengthInBytes), flush: true);
-      } catch (_) {
-        // 资产缺失（开发环境未内置）→ 配置生成器已回退远程地址，不阻塞启动
-      }
-    }
-  }
 
   /// 进程退出监视：主动 stop 之外的退出 → 通知控制器重连
   Future<void> _watchProcess() async {

@@ -25,11 +25,10 @@ class RuleAssets {
       final dirPath = preferDir ?? await _defaultDir();
       if (dirPath == null) return null;
       final dir = Directory(dirPath);
-      if (!dir.existsSync()) dir.createSync(recursive: true);
+      if (!await dir.exists()) await dir.create(recursive: true);
       for (final file in files) {
         final target = File('${dir.path}/$file');
-        // 幂等：已存在且非空则跳过（避免每次连接重复写盘）
-        if (target.existsSync() && target.lengthSync() > 0) continue;
+        if (await target.exists() && await target.length() > 0) continue;
         final data = await rootBundle.load('assets/rules/$file');
         await target.writeAsBytes(
           data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),

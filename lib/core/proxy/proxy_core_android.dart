@@ -166,45 +166,50 @@ class ProxyCoreAndroid extends ProxyCore {
         options: Options(method: method, validateStatus: (s) => s != null && s >= 200 && s < 300));
   }
 
+  bool _watchdogInFlight = false;
+
   void _startWatchdog() {
     _watchdog?.cancel();
     _watchdogFailures = 0;
+    _watchdogInFlight = false;
     _watchdog = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (!_running) return;
-      bool ok;
+      if (!_running || _watchdogInFlight) return;
+      _watchdogInFlight = true;
       try {
-        final r = await _api.get('/version',
-            options: Options(validateStatus: (s) => true));
-        ok = r.statusCode == 200;
-      } catch (_) {
-        ok = false;
-      }
-      if (ok) {
-        _watchdogFailures = 0; // 恢复即清零
-        return;
-      }
-      // 本次轮询失败 —— 不立即判死，累计次数
-      _watchdogFailures++;
-      // 仅在达阈值时才查原生（省去健康期的 method channel 往返）
-      final nativeAlive = _watchdogFailures >= _watchdogDeadThreshold
-          ? await _nativeVpnAlive()
-          : true;
-      final action = decideWatchdog(
-        pollOk: false,
-        consecutiveFailures: _watchdogFailures,
-        deadThreshold: _watchdogDeadThreshold,
-        nativeAlive: nativeAlive,
-      );
-      switch (action) {
-        case WatchdogAction.healthy:
-        case WatchdogAction.keepAlive:
-          // 原生确认存活时清零，避免阈值后每次巡检都查原生
-          if (nativeAlive && _watchdogFailures >= _watchdogDeadThreshold) {
-            _watchdogFailures = 0;
-          }
+        bool ok;
+        try {
+          final r = await _api.get('/version',
+              options: Options(validateStatus: (s) => true));
+          ok = r.statusCode == 200;
+        } catch (_) {
+          ok = false;
+        }
+        if (ok) {
+          _watchdogFailures = 0;
           return;
-        case WatchdogAction.declareDead:
-          _onKernelDead();
+        }
+        _watchdogFailures++;
+        final nativeAlive = _watchdogFailures >= _watchdogDeadThreshold
+            ? await _nativeVpnAlive()
+            : true;
+        final action = decideWatchdog(
+          pollOk: false,
+          consecutiveFailures: _watchdogFailures,
+          deadThreshold: _watchdogDeadThreshold,
+          nativeAlive: nativeAlive,
+        );
+        switch (action) {
+          case WatchdogAction.healthy:
+          case WatchdogAction.keepAlive:
+            if (nativeAlive && _watchdogFailures >= _watchdogDeadThreshold) {
+              _watchdogFailures = 0;
+            }
+            return;
+          case WatchdogAction.declareDead:
+            _onKernelDead();
+        }
+      } finally {
+        _watchdogInFlight = false;
       }
     });
   }
