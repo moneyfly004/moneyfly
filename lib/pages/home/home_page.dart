@@ -382,8 +382,14 @@ class _HomePageState extends State<HomePage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        // 节点列表统一排序：国家（热门港·日·新·美→按距中国远近）→ 在线→延迟
-        final sorted = List.of(conn.nodes)..sort(ProxyNode.compareForList);
+        final sorted = List.of(conn.nodes)
+          ..sort((a, b) {
+            if (a.online != b.online) return a.online ? -1 : 1;
+            if (a.latencyMs < 0 && b.latencyMs < 0) return a.tag.compareTo(b.tag);
+            if (a.latencyMs < 0) return 1;
+            if (b.latencyMs < 0) return -1;
+            return a.latencyMs.compareTo(b.latencyMs);
+          });
         return DraggableScrollableSheet(
           expand: false,
           initialChildSize: 0.62,
@@ -834,13 +840,8 @@ class _HomePageState extends State<HomePage>
       final cur = byCountry[code];
       if (cur == null || n.latencyMs < cur.latencyMs) byCountry[code] = n;
     }
-    // 快速切换国家：按国家权重排序（热门港·日·新·美置顶，其余按距中国远近），
-    // 与节点列表一致；同权重（不会发生，国家唯一）时退到延迟
     final entries = byCountry.entries.toList()
-      ..sort((a, b) {
-        final r = ProxyNode.countryRank(a.key).compareTo(ProxyNode.countryRank(b.key));
-        return r != 0 ? r : a.value.latencyMs.compareTo(b.value.latencyMs);
-      });
+      ..sort((a, b) => a.value.latencyMs.compareTo(b.value.latencyMs));
     if (entries.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

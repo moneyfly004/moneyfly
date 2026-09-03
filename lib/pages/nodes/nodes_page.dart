@@ -333,8 +333,9 @@ class _NodesPageState extends State<NodesPage> {
 }
 
 
-/// 节点懒加载列表：分组头/节点行拍平为索引，只构建视口内可见项（680+ 节点也流畅）
-class _NodeListView extends StatelessWidget {
+/// 节点懒加载列表：国家分组头（可折叠，默认展开）+ 节点行，拍平为索引，
+/// 只构建视口内可见项（680+ 节点也流畅）。点分组头折叠/展开该国节点。
+class _NodeListView extends StatefulWidget {
   const _NodeListView({
     required this.conn,
     required this.groups,
@@ -348,12 +349,29 @@ class _NodeListView extends StatelessWidget {
   final Widget Function(ConnectionController, dynamic) buildNodeRow;
 
   @override
+  State<_NodeListView> createState() => _NodeListViewState();
+}
+
+class _NodeListViewState extends State<_NodeListView> {
+  /// 已折叠的国家码（默认全展开 → 空集合）。State 随组件位置保活，
+  /// 搜索/测速/刷新触发父级重建时折叠状态不丢。
+  final Set<String> _collapsed = <String>{};
+
+  void _toggle(String code) {
+    setState(() {
+      if (!_collapsed.remove(code)) _collapsed.add(code);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // 拍平：header 用负索引标记，节点行用实际对象
+    // 拍平：header 标记 + 展开的分组才追加节点行
     final entries = <dynamic>[];
-    for (final code in sortedCodes) {
+    for (final code in widget.sortedCodes) {
       entries.add('__header__$code');
-      entries.addAll(groups[code]!);
+      if (!_collapsed.contains(code)) {
+        entries.addAll(widget.groups[code]!);
+      }
     }
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 12),
@@ -362,23 +380,67 @@ class _NodeListView extends StatelessWidget {
         final e = entries[i];
         if (e is String && e.startsWith('__header__')) {
           final code = e.substring('__header__'.length);
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(24, 6, 24, 7),
-            child: Row(
-              children: [
-                Text(regionFlag(code), style: const TextStyle(fontSize: 13)),
-                const SizedBox(width: 7),
-                Text(regionName(code),
-                    style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontWeight: FontWeight.w700, letterSpacing: 1)),
-                const Spacer(),
-                Text('${groups[code]!.length} ${AppStrings.t('nodes_count')}',
-                    style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
-              ],
-            ),
+          return _CountryHeader(
+            code: code,
+            count: widget.groups[code]!.length,
+            collapsed: _collapsed.contains(code),
+            onTap: () => _toggle(code),
           );
         }
-        return buildNodeRow(conn, e);
+        return widget.buildNodeRow(widget.conn, e);
       },
+    );
+  }
+}
+
+/// 可折叠国家分组头：旗标 + 国名 + 节点数 + 旋转箭头（点按折叠/展开）
+class _CountryHeader extends StatelessWidget {
+  const _CountryHeader({
+    required this.code,
+    required this.count,
+    required this.collapsed,
+    required this.onTap,
+  });
+
+  final String code;
+  final int count;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 20, 8),
+        child: Row(
+          children: [
+            Text(regionFlag(code), style: const TextStyle(fontSize: 13)),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(regionName(code),
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: MFColors.txt3,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+            ),
+            Text('$count ${AppStrings.t('nodes_count')}',
+                style: TextStyle(
+                    fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont)),
+            const SizedBox(width: 6),
+            AnimatedRotation(
+              turns: collapsed ? -0.25 : 0, // 展开↓ / 折叠→
+              duration: const Duration(milliseconds: 180),
+              child: Icon(Icons.keyboard_arrow_down,
+                  size: 20, color: MFColors.txt3),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
