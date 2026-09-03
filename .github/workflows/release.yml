@@ -53,6 +53,15 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
+      - name: 下载规则集（构建时从 GitHub 拉最新，不在仓库里存二进制）
+        run: |
+          mkdir -p assets/rules
+          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          ls -lh assets/rules/
+
       - name: 下载 libmoneyfly.aar
         run: |
           mkdir -p android/app/libs
@@ -115,6 +124,16 @@ jobs:
 
       - name: 依赖
         run: flutter pub get
+
+      - name: 下载规则集
+        shell: bash
+        run: |
+          mkdir -p assets/rules
+          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          ls -lh assets/rules/
 
       # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
       - name: 下载 sing-box 内核
@@ -194,6 +213,15 @@ jobs:
 
       - name: 依赖
         run: flutter pub get
+
+      - name: 下载规则集
+        run: |
+          mkdir -p assets/rules
+          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
+            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          ls -lh assets/rules/
 
       # ---- 先下载内核（arm64 即可）：让 flutter test 真实启动内核做端到端验证 ----
       - name: 下载 sing-box 内核（测试用）

@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'proxy_core.dart';
+import 'rule_assets.dart';
 import 'system_proxy.dart';
 
 /// 方案 A：sing-box CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
@@ -120,6 +121,9 @@ class ProxyCoreCli extends ProxyCore {
     if (!dir.existsSync()) dir.createSync(recursive: true);
     _configPath = '${dir.path}/config.json';
 
+    // 确保内置规则集落盘（connect 路径会提前调 RuleAssets.materialize，
+    // 但集成测试/外部直接调 start 时不经 connect，需自保）
+    await RuleAssets.materialize(preferDir: workDir);
     await File(_configPath!).writeAsString(jsonEncode(config), flush: true);
 
     _proc = await Process.start(
