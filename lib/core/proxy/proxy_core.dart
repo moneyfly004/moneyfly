@@ -310,7 +310,13 @@ class ConnectionController extends ChangeNotifier {
         ruleSetDir: ruleDir,
       );
       await _core.start(cfg);
-      if (epoch != _epoch) return;
+      if (epoch != _epoch) {
+        // 连接建立期间用户已断开/发起新连接：内核此刻才起来，若直接 return
+        // 会残留一个「在跑但 UI 显示已断开」的孤儿内核（流量仍走、再连报
+        // 「内核已在运行」）。必须立刻停掉。
+        unawaited(_core.stop());
+        return;
+      }
       status = ConnStatus.connected;
       _reconnectCount = 0;
       AccountService.instance.startExpiryWatch();

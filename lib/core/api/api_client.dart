@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'endpoints.dart';
 import 'user_agent.dart';
@@ -184,16 +186,53 @@ class ApiClient {
     }
   }
 
-  /// 追加一行到 HOME/Library/Application Support/top.moneyfly.app/http.log
+  /// HTTP 日志文件（跨平台正确路径，惰性解析一次并缓存）。
+  /// 旧实现每次请求同步 existsSync/createSync/writeAsStringSync：
+  ///  - 阻塞调用 isolate（拦截器在主 isolate 跑）；
+  ///  - 路径写死 HOME/Library/...（仅 macOS），Android 每次请求都失败重试；
+  ///  - 无大小上限，日志无限增长。
+  /// 改为：path_provider 解析一次 → 异步 fire-and-forget 追加 → 超 512KB 截断。
+  static Future<File?>? _logFileFuture;
+  static bool _logRotating = false;
+
+  static Future<File?> _resolveLogFile() async {
+    _logFileFuture ??= () async {
+      try {
+        final dir = await getApplicationSupportDirectory();
+        return File('${dir.path}/http.log');
+      } catch (_) {
+        return null;
+      }
+    }();
+    return _logFileFuture;
+  }
+
   static void _logHttp(String line) {
     if (kIsWeb) return;
-    try {
-      final home = Platform.environment['HOME'] ?? '/tmp';
-      final logDir = Directory('$home/Library/Application Support/top.moneyfly.app');
-      if (!logDir.existsSync()) logDir.createSync(recursive: true);
-      final f = File('${logDir.path}/http.log');
-      f.writeAsStringSync('[${DateTime.now().toIso8601String()}] $line\n', mode: FileMode.append);
-    } catch (_) {}
+    // 不 await：日志写入绝不阻塞请求链路
+    unawaited(() async {
+      try {
+        final f = await _resolveLogFile();
+        if (f == null) return;
+        await f.writeAsString(
+          '[${DateTime.now().toIso8601String()}] $line\n',
+          mode: FileMode.append,
+          flush: false,
+        );
+        // 大小上限：超 512KB 截断保留尾部（避免无限增长；低频检查）
+        if (!_logRotating && await f.length() > 512 * 1024) {
+          _logRotating = true;
+          try {
+            final content = await f.readAsString();
+            await f.writeAsString(content.substring(content.length ~/ 2),
+                flush: true);
+          } catch (_) {
+          } finally {
+            _logRotating = false;
+          }
+        }
+      } catch (_) {}
+    }());
   }
 
   // ---------- 统一解包 ----------
