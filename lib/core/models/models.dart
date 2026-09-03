@@ -482,6 +482,56 @@ class ProxyNode {
 
   String get regionName => countryNames[countryCode?.toUpperCase()] ?? '其他';
 
+  /// 节点列表国家/地区展示顺序：热门在前（港·日·新·美，用户指定），
+  /// 其余按「距中国远近」由近及远。三端节点列表统一用此顺序。
+  static const countryOrder = <String>[
+    // 热门（固定置顶顺序）
+    'HK', 'JP', 'SG', 'US',
+    // 东亚近邻
+    'TW', 'KR',
+    // 东南亚
+    'VN', 'TH', 'PH', 'MY', 'ID',
+    // 南亚 / 中亚
+    'IN', 'KZ',
+    // 中东
+    'AE', 'TR',
+    // 欧亚 / 东欧
+    'RU', 'UA',
+    // 欧洲
+    'DE', 'NL', 'FR', 'CH', 'GB', 'IE', 'SE', 'FI', 'PL', 'IT', 'ES', 'PT',
+    // 大洋洲
+    'AU',
+    // 北美（美国已置顶）
+    'CA', 'MX',
+    // 南美
+    'BR', 'CL', 'AR',
+    // 非洲
+    'ZA',
+  ];
+
+  /// 国家排序权重：越小越靠前。已列入按其位次；已知但未列入→998；未知→999。
+  static int countryRank(String? code) {
+    if (code == null || code.isEmpty) return 999;
+    final i = countryOrder.indexOf(code.toUpperCase());
+    if (i >= 0) return i;
+    return countryNames.containsKey(code.toUpperCase()) ? 998 : 999;
+  }
+
+  /// 节点列表统一比较器：国家（距中国远近/热门）→ 在线优先 → 延迟升序 → 名称。
+  /// 同一国家内在线且低延迟的排前，未测速/离线的靠后。
+  static int compareForList(ProxyNode a, ProxyNode b) {
+    final ra = countryRank(a.countryCode);
+    final rb = countryRank(b.countryCode);
+    if (ra != rb) return ra.compareTo(rb);
+    if (a.online != b.online) return a.online ? -1 : 1;
+    final la = a.latencyMs, lb = b.latencyMs;
+    if (la < 0 && lb < 0) return a.tag.compareTo(b.tag);
+    if (la < 0) return 1;
+    if (lb < 0) return -1;
+    if (la != lb) return la.compareTo(lb);
+    return a.tag.compareTo(b.tag);
+  }
+
   /// 由 Clash YAML 节点 map 构造
   factory ProxyNode.fromClashMap(Map<String, dynamic> m) {
     final tag = m['name']?.toString() ?? '未命名节点';

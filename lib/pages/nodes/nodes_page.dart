@@ -89,13 +89,21 @@ class _NodesPageState extends State<NodesPage> {
     final filtered = conn.nodes
         .where((n) => n.tag.toLowerCase().contains(_query.toLowerCase()))
         .toList();
-    final groups = <String, List<dynamic>>{};
+    final groups = <String, List<ProxyNode>>{};
     for (final n in filtered) {
       final key = n.countryCode ?? 'XX';
       groups.putIfAbsent(key, () => []).add(n);
     }
+    // 组内按 在线优先→延迟升序→名称 排序（同国比较器自动落到这几项）
+    for (final list in groups.values) {
+      list.sort(ProxyNode.compareForList);
+    }
+    // 国家分组顺序：热门在前（港·日·新·美），其余按距中国远近（见 countryOrder）
     final sortedCodes = groups.keys.toList()
-      ..sort((a, b) => regionName(a).compareTo(regionName(b)));
+      ..sort((a, b) {
+        final r = ProxyNode.countryRank(a).compareTo(ProxyNode.countryRank(b));
+        return r != 0 ? r : regionName(a).compareTo(regionName(b));
+      });
 
     return Scaffold(
       body: SafeArea(
@@ -335,7 +343,7 @@ class _NodeListView extends StatelessWidget {
   });
 
   final ConnectionController conn;
-  final Map<String, List<dynamic>> groups;
+  final Map<String, List<ProxyNode>> groups;
   final List<String> sortedCodes;
   final Widget Function(ConnectionController, dynamic) buildNodeRow;
 
