@@ -56,7 +56,9 @@ class _NodesPageState extends State<NodesPage> {
     }
     setState(() => _testing = true);
     try {
-      final tested = await SpeedTester.instance.testAll(conn.nodes);
+      // 已连接时走内核 delay（真实协议+隧道，UDP/被墙节点都能测准）；
+      // 未连接回退 TCP。统一由 ConnectionController 路由。
+      final tested = await conn.testAllNodes(conn.nodes);
       conn.updateTestedNodes(tested);
       if (mounted) {
         _toast(AppStrings.t('speed_done'));

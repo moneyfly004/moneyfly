@@ -135,6 +135,30 @@ class ProxyCoreAndroid extends ProxyCore {
     await _clash('PUT', '/proxies/select', {'name': tag});
   }
 
+  @override
+  Future<int> testNodeDelay(String tag,
+      {Duration timeout = const Duration(seconds: 5)}) async {
+    if (!_running) return -1;
+    try {
+      final r = await _api.get(
+        '/proxies/${Uri.encodeComponent(tag)}/delay',
+        queryParameters: {
+          'timeout': timeout.inMilliseconds,
+          'url': 'http://www.gstatic.com/generate_204',
+        },
+        options: Options(
+            validateStatus: (s) => true,
+            receiveTimeout: timeout + const Duration(seconds: 2)),
+      );
+      if (r.statusCode == 200 && r.data is Map && r.data['delay'] is num) {
+        return (r.data['delay'] as num).toInt();
+      }
+      return -1;
+    } catch (_) {
+      return -1;
+    }
+  }
+
   Future<void> _clash(String method, String path, Object body) async {
     if (!_running) throw StateError('not running');
     await _api.request(path,

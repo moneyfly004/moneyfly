@@ -215,6 +215,30 @@ class ProxyCoreCli extends ProxyCore {
     await _clash('PUT', '/proxies/select', {'name': tag});
   }
 
+  @override
+  Future<int> testNodeDelay(String tag,
+      {Duration timeout = const Duration(seconds: 5)}) async {
+    if (_proc == null) return -1;
+    try {
+      final r = await _api.get(
+        '/proxies/${Uri.encodeComponent(tag)}/delay',
+        queryParameters: {
+          'timeout': timeout.inMilliseconds,
+          'url': 'http://www.gstatic.com/generate_204',
+        },
+        options: Options(
+            validateStatus: (s) => true,
+            receiveTimeout: timeout + const Duration(seconds: 2)),
+      );
+      if (r.statusCode == 200 && r.data is Map && r.data['delay'] is num) {
+        return (r.data['delay'] as num).toInt();
+      }
+      return -1; // 超时/不可达 → 内核返回非 200
+    } catch (_) {
+      return -1;
+    }
+  }
+
   Future<void> _clash(String method, String path, Object body) async {
     if (_proc == null) throw StateError('内核未运行');
     await _api.request(path,

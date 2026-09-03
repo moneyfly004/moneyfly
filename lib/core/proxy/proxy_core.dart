@@ -10,6 +10,7 @@ import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
 import 'proxy_core_android.dart';
 import 'proxy_core_cli.dart';
+import 'rule_assets.dart';
 import 'singbox_config.dart';
 import 'system_proxy.dart';
 import '../../l10n/app_strings.dart';
@@ -37,6 +38,11 @@ abstract class ProxyCore {
 
   /// 热切换节点——走 Clash API 改 selector
   Future<void> switchNode(String tag);
+
+  /// 通过内核测节点延迟(ms)：走 Clash API /proxies/{tag}/delay，用真实协议+
+  /// 隧道实测，UDP(hysteria2/tuic)与被墙 TCP 节点都能测准。失败/未运行返回 -1。
+  Future<int> testNodeDelay(String tag,
+      {Duration timeout = const Duration(seconds: 5)});
 
   /// 当前是否运行中
   bool get isRunning;
@@ -86,6 +92,10 @@ class _UnavailableCore implements ProxyCore {
 
   @override
   Future<void> switchNode(String tag) async {}
+
+  @override
+  Future<int> testNodeDelay(String tag,
+      {Duration timeout = const Duration(seconds: 5)}) async => -1;
 
   @override
   bool get isRunning => _running;
@@ -282,6 +292,14 @@ class ConnectionController extends ChangeNotifier {
     }
 
     try {
+      // 内置规则集落盘（智能模式的 CN 分流；所有平台都落地本地文件，
+      // 避免回退 GitHub 远程下载在国内超时导致内核起不来）。
+      // 桌面端落到内核 workDir；移动端落到 app 私有目录。失败则回退远程。
+      final ruleDir = await RuleAssets.materialize(
+        preferDir: (Platform.isAndroid || Platform.isIOS)
+            ? null
+            : ProxyCoreCli.workDir,
+      );
       final cfg = SingBoxConfigBuilder.build(
         nodes: nodes,
         selectedTag: current!.tag,
@@ -289,7 +307,7 @@ class ConnectionController extends ChangeNotifier {
         dns: dns,
         tunMode: tunMode,
         bypassLan: bypassLan,
-        ruleSetDir: Platform.isAndroid || Platform.isIOS ? null : ProxyCoreCli.workDir,
+        ruleSetDir: ruleDir,
       );
       await _core.start(cfg);
       if (epoch != _epoch) return;
@@ -329,6 +347,44 @@ class ConnectionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 统一测速入口：
+  /// - 已连接(内核在跑)→ 走内核 Clash API delay，真实协议+隧道实测，
+  ///   UDP(hysteria2/tuic)与被墙 TCP 节点都能测准（裸 TCP 直连对这些必失败）。
+  /// - 未连接 → 回退纯 TCP 探测（SpeedTester），至少给个可达性参考。
+  Future<List<ProxyNode>> testAllNodes(List<ProxyNode> list,
+      {void Function(int done, int total)? onProgress}) async {
+    if (status == ConnStatus.connected && _core.isRunning) {
+      return _testViaKernel(list, onProgress: onProgress);
+    }
+    return SpeedTester.instance.testAll(list, onProgress: onProgress);
+  }
+
+  /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）
+  Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
+      {void Function(int done, int total)? onProgress}) async {
+    final result = List<ProxyNode>.of(nodes);
+    final queue = List<int>.generate(result.length, (i) => i);
+    var done = 0;
+    const maxConcurrent = 16;
+
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final idx = queue.removeLast();
+        final ms = await _core.testNodeDelay(result[idx].tag);
+        result[idx].latencyMs = ms;
+        result[idx].online = ms >= 0;
+        done++;
+        onProgress?.call(done, result.length);
+      }
+    }
+
+    final count = result.isEmpty
+        ? 1
+        : (result.length < maxConcurrent ? result.length : maxConcurrent);
+    await Future.wait(List.generate(count, (_) => worker()));
+    return result;
+  }
+
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
   /// 只测速+热切换节点，不重启内核、不断网）
   Future<void> retest() async {
@@ -342,7 +398,7 @@ class ConnectionController extends ChangeNotifier {
     speedTesting = true;
     notifyListeners();
     try {
-      final tested = await SpeedTester.instance.testAll(nodes);
+      final tested = await testAllNodes(nodes);
       if (epoch != _epoch) return;
       nodes = tested;
       final best = SpeedTester.selectBest(tested);
@@ -490,7 +546,7 @@ class ConnectionController extends ChangeNotifier {
     if (intervalMin <= 0) return;
     _bgTestTimer = Timer.periodic(Duration(minutes: intervalMin), (_) async {
       if (status != ConnStatus.connected || nodes.isEmpty) return;
-      final tested = await SpeedTester.instance.testAll(nodes);
+      final tested = await testAllNodes(nodes);
       if (status != ConnStatus.connected) return;
       nodes = tested;
       final best = SpeedTester.selectBest(tested);
