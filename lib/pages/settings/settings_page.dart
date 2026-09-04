@@ -114,6 +114,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 trailing: _switch(_s['autoReconnect'] == true, (v) => _set('autoReconnect', v))),
             _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: '${_s['testIntervalMin'] ?? 30} ${AppStrings.t('settings_minutes')}',
                 onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
+            _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
+                value: _testUrlHost(),
+                onTap: _pickTestUrl),
             _row(icon: '🌐', title: AppStrings.t('settings_dns'), value: _s['dns']?.toString() ?? '223.5.5.5',
                 onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
             _section(AppStrings.t('settings_mode')),
@@ -129,6 +132,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('settings_local_port_desc'),
                 value: '${_s['localPort'] ?? 2080}',
                 onTap: _pickLocalPort),
+            _row(icon: '🔧', title: AppStrings.t('settings_clash_api_port'),
+                desc: AppStrings.t('settings_clash_api_port_desc'),
+                value: '${_s['clashApiPort'] ?? 9090}',
+                onTap: _pickClashApiPort),
             _row(icon: '🚀', title: AppStrings.t('settings_tun'),
                 desc: _tunDesc(),
                 value: switch (_s['tunMode']?.toString()) {
@@ -292,16 +299,15 @@ class _SettingsPageState extends State<SettingsPage> {
     return null;
   }
 
-  /// 自定义本地代理端口（默认 2080）。已连接时改端口 → 自动断开并用新端口重连，
-  /// 否则下次连接生效。端口校验：1024–65535，且不能占用内置 Clash API 9090。
-  Future<void> _pickLocalPort() async {
-    final cur = (_s['localPort'] as num?)?.toInt() ?? 2080;
+  /// 端口输入弹窗通用件：返回合法端口；[forbidden] 返回与之冲突的值时应拒绝
+  Future<int?> _askPort(String title, String hint, int cur, String invalidMsg,
+      int? forbidden, {String? helper}) async {
     final ctrl = TextEditingController(text: '$cur');
     final v = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('settings_local_port'),
+        title: Text(title,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
         content: TextField(
           controller: ctrl,
@@ -309,8 +315,86 @@ class _SettingsPageState extends State<SettingsPage> {
           autofocus: true,
           style: TextStyle(color: MFColors.txt),
           decoration: InputDecoration(
-            hintText: '2080',
-            helperText: AppStrings.t('settings_local_port_desc'),
+            hintText: hint,
+            helperText: helper ?? AppStrings.t('settings_local_port_desc'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppStrings.t('cancel_text')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: Text(AppStrings.t('save'),
+                style: TextStyle(color: MFColors.brandLight)),
+          ),
+        ],
+      ),
+    );
+    if (v == null || v.isEmpty) return null;
+    final p = int.tryParse(v);
+    if (p == null || p < 1024 || p > 65535 || (forbidden != null && p == forbidden)) {
+      _toast(invalidMsg);
+      return null;
+    }
+    return p;
+  }
+
+  /// 保存端口类设置：已连接 → 自动断开并用新值重连（内核重启后才生效）
+  Future<void> _applyPortChange(String key, int value) async {
+    await _set(key, value);
+    final conn = ConnectionController.instance;
+    if (conn.status == ConnStatus.connected) {
+      _toast(AppStrings.t('local_port_reconnect'));
+      unawaited(() async {
+        await conn.disconnect();
+        await conn.connect();
+      }());
+    } else {
+      _toast(AppStrings.t('local_port_saved'));
+    }
+  }
+
+  /// 本地代理端口（默认 2080），不能与 Clash API 端口相同
+  Future<void> _pickLocalPort() async {
+    final cur = (_s['localPort'] as num?)?.toInt() ?? 2080;
+    final clash = (_s['clashApiPort'] as num?)?.toInt() ?? 9090;
+    final p = await _askPort(AppStrings.t('settings_local_port'), '2080', cur,
+        AppStrings.t('local_port_invalid'), clash);
+    if (p == null) return;
+    await _applyPortChange('localPort', p);
+  }
+
+  /// Clash API 管理端口（默认 9090），不能与本地代理端口相同
+  Future<void> _pickClashApiPort() async {
+    final cur = (_s['clashApiPort'] as num?)?.toInt() ?? 9090;
+    final local = (_s['localPort'] as num?)?.toInt() ?? 2080;
+    final p = await _askPort(AppStrings.t('settings_clash_api_port'), '9090', cur,
+        AppStrings.t('clash_api_port_invalid'), local,
+        helper: AppStrings.t('settings_clash_api_port_desc'));
+    if (p == null) return;
+    await _applyPortChange('clashApiPort', p);
+  }
+
+  /// 测速地址（默认谷歌 204；网络环境特殊时可改）
+  Future<void> _pickTestUrl() async {
+    final cur = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
+    final ctrl = TextEditingController(text: cur);
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_test_url'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          style: TextStyle(color: MFColors.txt),
+          decoration: InputDecoration(
+            hintText: ConnectionController.defaultTestUrl,
+            helperText: AppStrings.t('settings_test_url_desc'),
           ),
         ),
         actions: [
@@ -327,24 +411,20 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (v == null || v.isEmpty) return;
-    final p = int.tryParse(v);
-    // 9090 为内置 Clash API 端口，被占用时内核起不来
-    if (p == null || p < 1024 || p > 65535 || p == 9090) {
-      _toast(AppStrings.t('local_port_invalid'));
+    final u = v.trim();
+    if (!u.startsWith('http://') && !u.startsWith('https://')) {
+      _toast(AppStrings.t('test_url_invalid'));
       return;
     }
-    await _set('localPort', p);
-    final conn = ConnectionController.instance;
-    if (conn.status == ConnStatus.connected) {
-      _toast(AppStrings.t('local_port_reconnect'));
-      // 端口需重启内核才生效：断开后立刻用新端口重连
-      unawaited(() async {
-        await conn.disconnect();
-        await conn.connect();
-      }());
-    } else {
-      _toast(AppStrings.t('local_port_saved'));
-    }
+    // _set 内部已同步到连接控制器（applySettings 读取 testUrl）
+    await _set('testUrl', u);
+  }
+
+  /// 测速地址行展示：取 host，避免超长 URL 挤爆行
+  String _testUrlHost() {
+    final u = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
+    final host = Uri.tryParse(u)?.host;
+    return (host != null && host.isNotEmpty) ? host : u;
   }
 
   Future<void> _pickTunMode() async {

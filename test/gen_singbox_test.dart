@@ -54,28 +54,38 @@ void main() {
     expect((tun['address'] as List), contains('172.19.0.1/30'));
   });
 
-  // 回归：本地 mixed 入站端口可配置（设置页「本地代理端口」，默认 2080）。
-  // 端口必须同时落在：mixed inbound listen_port + 顶层 _localPort 元数据
-  // （ProxyCoreCli 据此管理系统代理指向；Android 启动前剥离）。
-  test('mixed inbound 端口可配置（默认 2080，自定义生效）', () {
+  // 回归：本地 mixed 入站端口与 Clash API 端口都可配置（设置页），
+  // 默认 2080 / 9090；两者以元数据 _localPort / _clashApiPort 下发给内核适配器
+  // （CLI/Android 启动前读取并剥离，不传给内核）。
+  test('mixed/Clash API 端口可配置（默认 2080/9090，自定义生效）', () {
     final node = ProxyNode(
       tag: 't', type: 'vless', server: '1.1.1.1', port: 443,
       uuid: '00000000-0000-0000-0000-000000000000',
       countryCode: 'HK', raw: const {},
     );
-    Map<String, dynamic> cfgOf(int port) => SingBoxConfigBuilder.build(
+    Map<String, dynamic> cfgOf({int localPort = 2080, int clashApiPort = 9090}) =>
+        SingBoxConfigBuilder.build(
           nodes: [node],
           selectedTag: 't',
           smartMode: true,
           tunMode: 'auto',
           tunStack: 'gvisor',
-          localPort: port,
+          localPort: localPort,
+          clashApiPort: clashApiPort,
         );
     Map mixedOf(Map<String, dynamic> cfg) =>
         (cfg['inbounds'] as List).cast<Map>().firstWhere((i) => i['type'] == 'mixed');
+    Map clashApiOf(Map<String, dynamic> cfg) =>
+        (cfg['experimental']!['clash_api'] as Map).cast<String, dynamic>();
 
-    expect(mixedOf(cfgOf(2080))['listen_port'], 2080); // 默认不变
-    expect(mixedOf(cfgOf(10809))['listen_port'], 10809); // 自定义生效
-    expect(cfgOf(10809)['_localPort'], 10809);
+    // 默认值保持兼容
+    expect(mixedOf(cfgOf())['listen_port'], 2080);
+    expect(clashApiOf(cfgOf())['external_controller'], '127.0.0.1:9090');
+    // 自定义端口生效 + 元数据同步下发
+    final cfg = cfgOf(localPort: 10809, clashApiPort: 19090);
+    expect(mixedOf(cfg)['listen_port'], 10809);
+    expect(clashApiOf(cfg)['external_controller'], '127.0.0.1:19090');
+    expect(cfg['_localPort'], 10809);
+    expect(cfg['_clashApiPort'], 19090);
   });
 }

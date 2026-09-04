@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_strings.dart';
+import '../services/permission_service.dart';
 import 'proxy_core.dart';
 
 /// 看门狗单次巡检后的决策（纯逻辑，便于单元测试）
@@ -82,6 +83,9 @@ class ProxyCoreAndroid extends ProxyCore {
     // 剥离 app 侧元数据（系统代理端口/模式），不传给 libbox 内核
     config.remove('_tunMode');
     config.remove('_localPort');
+    final clashPort =
+        (config.remove('_clashApiPort') as num?)?.toInt() ?? 9090;
+    _api.options.baseUrl = 'http://127.0.0.1:$clashPort';
     final inbounds = config['inbounds'];
     if (inbounds is List) {
       for (final ib in inbounds) {
@@ -92,16 +96,26 @@ class ProxyCoreAndroid extends ProxyCore {
         }
       }
     }
+    // 前置检查：VPN 授权缺失/被撤销（重装、清数据、系统里关闭授权）时，
+    // 直接在 Dart 侧给出类型化失败，避免走 15s 轮询超时才知道失败
+    if (!await PermissionService.instance.isVpnPrepared()) {
+      throw TypedConnError(
+          ConnErrorKind.noVpnPermission, AppStrings.t('vpn_permission_needed'));
+    }
     try {
       await _channel.invokeMethod('startVpn', {'config': jsonEncode(config)});
-    } catch (e) {
+    } on PlatformException catch (e) {
       // start_failed（原生侧返回，如 Android 12+ 后台启动前台服务受限）：
-      // 直接透传原生原因，避免被笼统的「内核启动超时」掩盖
-      final detail = e is PlatformException && e.code == 'start_failed'
-          ? (e.message?.toString() ?? '')
-          : '$e';
-      _lastError = AppStrings.t('vpn_start_fail', {'err': detail});
-      throw UnsupportedError(_lastError!);
+      // 类型化后交给首页分场景引导（保持前台重试等）
+      final msg = e.message?.toString() ?? '$e';
+      if (e.code == 'start_failed') {
+        throw TypedConnError(ConnErrorKind.backgroundStartBlocked, msg);
+      }
+      throw TypedConnError(ConnErrorKind.unknown,
+          AppStrings.t('vpn_start_fail', {'err': msg}));
+    } catch (e) {
+      throw TypedConnError(
+          ConnErrorKind.unknown, AppStrings.t('vpn_start_fail', {'err': '$e'}));
     }
     final sw = Stopwatch()..start();
     while (sw.elapsed < const Duration(seconds: 15)) {
@@ -117,7 +131,7 @@ class ProxyCoreAndroid extends ProxyCore {
       await Future.delayed(const Duration(milliseconds: 300));
     }
     _lastError = AppStrings.t('kernel_timeout');
-    throw UnsupportedError(_lastError!);
+    throw TypedConnError(ConnErrorKind.kernelTimeout, _lastError!);
   }
 
   @override
@@ -144,14 +158,14 @@ class ProxyCoreAndroid extends ProxyCore {
 
   @override
   Future<int> testNodeDelay(String tag,
-      {Duration timeout = const Duration(seconds: 5)}) async {
+      {Duration timeout = const Duration(seconds: 5), String? url}) async {
     if (!_running) return -1;
     try {
       final r = await _api.get(
         '/proxies/${Uri.encodeComponent(tag)}/delay',
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': 'http://www.gstatic.com/generate_204',
+          'url': url ?? 'http://www.gstatic.com/generate_204',
         },
         options: Options(
             validateStatus: (s) => true,

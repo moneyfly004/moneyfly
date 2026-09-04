@@ -14,6 +14,8 @@ import 'rule_assets.dart';
 import 'singbox_config.dart';
 import 'system_proxy.dart';
 import '../../l10n/app_strings.dart';
+import 'conn_error.dart';
+export 'conn_error.dart';
 
 /// 后台 isolate 入口：构建 sing-box JSON 配置（800+ outbound 时 ~50-100ms，
 /// 放后台避免阻塞 UI 线程导致连接按钮卡顿）。compute 要求顶层/静态函数。
@@ -28,6 +30,7 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     tunMode: args['tunMode'] as String,
     bypassLan: args['bypassLan'] as bool,
     localPort: (args['localPort'] as num?)?.toInt() ?? 2080,
+    clashApiPort: (args['clashApiPort'] as num?)?.toInt() ?? 9090,
     ruleSetDir: args['ruleSetDir'] as String?,
   );
 }
@@ -58,8 +61,9 @@ abstract class ProxyCore {
 
   /// 通过内核测节点延迟(ms)：走 Clash API /proxies/{tag}/delay，用真实协议+
   /// 隧道实测，UDP(hysteria2/tuic)与被墙 TCP 节点都能测准。失败/未运行返回 -1。
+  /// [url] 测速探测地址（设置页可改，默认 gstatic 204）。
   Future<int> testNodeDelay(String tag,
-      {Duration timeout = const Duration(seconds: 5)});
+      {Duration timeout = const Duration(seconds: 5), String? url});
 
   /// 当前是否运行中
   bool get isRunning;
@@ -112,7 +116,7 @@ class _UnavailableCore implements ProxyCore {
 
   @override
   Future<int> testNodeDelay(String tag,
-      {Duration timeout = const Duration(seconds: 5)}) async => -1;
+      {Duration timeout = const Duration(seconds: 5), String? url}) async => -1;
 
   @override
   bool get isRunning => _running;
@@ -150,6 +154,13 @@ class ConnectionController extends ChangeNotifier {
   List<ProxyNode> nodes = [];
   ProxyNode? current;
   String? error;
+
+  /// 最近一次连接失败的类型（首页错误区按类型给不同引导；非错误态为 none）
+  ConnErrorKind errorKind = ConnErrorKind.none;
+
+  /// 测速探测地址（设置页可改；内核 delay 测试用，默认谷歌 204）
+  static const defaultTestUrl = 'http://www.gstatic.com/generate_204';
+  String testUrl = defaultTestUrl;
   bool smartMode = true;
   bool autoTest = true;
   bool autoReconnect = true;
@@ -191,6 +202,8 @@ class ConnectionController extends ChangeNotifier {
   void applySettings(Map<String, dynamic> s) {
     if (s['autoTest'] is bool) autoTest = s['autoTest'] as bool;
     if (s['autoReconnect'] is bool) autoReconnect = s['autoReconnect'] as bool;
+    final u = s['testUrl']?.toString();
+    if (u != null && u.trim().isNotEmpty) testUrl = u.trim();
     // 仅在用户未手动切过模式时应用 defaultMode，避免首页选择被设置页静默重置
     if (!_modeUserSet) {
       if (s['defaultMode'] == 'global') {
@@ -302,11 +315,13 @@ class ConnectionController extends ChangeNotifier {
     if (acc.loaded && acc.isBlocked) {
       status = ConnStatus.disconnected;
       error = acc.blockText;
+      errorKind = ConnErrorKind.none;
       notifyListeners();
       return;
     }
     if (nodes.isEmpty) {
       error = AppStrings.t('no_available_nodes');
+      errorKind = ConnErrorKind.none;
       notifyListeners();
       return;
     }
@@ -326,6 +341,11 @@ class ConnectionController extends ChangeNotifier {
     final dns = settings['dns']?.toString() ?? '223.5.5.5';
     // 本机代理监听端口（设置页可改，默认 2080）：mixed 入站 + 系统代理共同指向
     final localPort = (settings['localPort'] as num?)?.toInt() ?? 2080;
+    // Clash API 端口（设置页可改，默认 9090）：内核管理通道（切节点/测速/流量）
+    final clashApiPort = (settings['clashApiPort'] as num?)?.toInt() ?? 9090;
+    // 测速探测地址（设置页可改，默认 gstatic 204）
+    final u = settings['testUrl']?.toString();
+    if (u != null && u.trim().isNotEmpty) testUrl = u.trim();
     // 桌面端（macOS/Windows）默认「仅系统代理」：TUN 需要 root 权限，
     // 默认开启会导致用户一点连接就失败（operation not permitted）；
     // Android 默认「TUN + 系统代理双通道」：VpnService 授权后 TUN 接管全部流量。
@@ -337,6 +357,7 @@ class ConnectionController extends ChangeNotifier {
 
     status = ConnStatus.connecting;
     error = null;
+    errorKind = ConnErrorKind.none;
     notifyListeners();
 
     // 优先选延迟最优（已有测速数据时）；否则先连可用节点，后台测速后自动切最优
@@ -346,6 +367,7 @@ class ConnectionController extends ChangeNotifier {
     if (current == null) {
       status = ConnStatus.error;
       error = AppStrings.t('all_nodes_offline');
+      errorKind = ConnErrorKind.none;
       notifyListeners();
       return;
     }
@@ -368,6 +390,7 @@ class ConnectionController extends ChangeNotifier {
         'tunMode': tunMode,
         'bypassLan': bypassLan,
         'localPort': localPort,
+        'clashApiPort': clashApiPort,
         'ruleSetDir': ruleDir,
       });
       await _core.start(cfg);
@@ -390,9 +413,15 @@ class ConnectionController extends ChangeNotifier {
     } catch (e) {
       if (epoch != _epoch) return;
       status = ConnStatus.error;
-      var errMsg = e is UnsupportedError ? _core.lastError ?? e.message : e.toString();
+      // 类型化失败（TypedConnError）→ 保留类型供首页分场景引导；
+      // 其余走通用路径（未知类型，仅显示文案 + 重试）
+      final TypedConnError? typedErr = e is TypedConnError ? e : null;
+      errorKind = typedErr?.kind ?? ConnErrorKind.unknown;
+      var errMsg = typedErr?.message ??
+          (e is UnsupportedError ? _core.lastError ?? e.message : e.toString());
       // TUN 模式需要管理员权限（macOS/Windows），给出明确提示
-      if (tunMode == 'force' || tunMode == 'auto') {
+      // （仅对未分类错误做文本映射；类型化错误已带明确语义，不再改写）
+      if (typedErr == null && (tunMode == 'force' || tunMode == 'auto')) {
         final errLower = errMsg?.toLowerCase() ?? '';
         if (errLower.contains('permission') || errLower.contains('operation not permitted') ||
             errLower.contains('access') || errLower.contains('tun')) {
@@ -437,7 +466,7 @@ class ConnectionController extends ChangeNotifier {
     Future<void> worker() async {
       while (queue.isNotEmpty) {
         final idx = queue.removeLast();
-        final ms = await _core.testNodeDelay(result[idx].tag);
+        final ms = await _core.testNodeDelay(result[idx].tag, url: testUrl);
         result[idx].latencyMs = ms;
         result[idx].online = ms >= 0;
         done++;
@@ -510,6 +539,7 @@ class ConnectionController extends ChangeNotifier {
     await _core.stop();
     status = ConnStatus.disconnected;
     error = null;
+    errorKind = ConnErrorKind.none;
     realCountry = null;
     notifyListeners();
   }
@@ -531,6 +561,7 @@ class ConnectionController extends ChangeNotifier {
     current = null;
     status = ConnStatus.disconnected;
     error = null;
+    errorKind = ConnErrorKind.none;
     realCountry = null;
     _autoConnectTried = false;
     notifyListeners();
@@ -547,6 +578,7 @@ class ConnectionController extends ChangeNotifier {
         unawaited(refreshRealCountry());
       } catch (e) {
         error = AppStrings.t('node_switch_fail', {'err': '$e'});
+        errorKind = ConnErrorKind.none;
         notifyListeners();
       }
     }
@@ -562,6 +594,7 @@ class ConnectionController extends ChangeNotifier {
         await _core.switchMode(smart);
       } catch (e) {
         error = AppStrings.t('mode_switch_fail', {'err': '$e'});
+        errorKind = ConnErrorKind.none;
         notifyListeners();
       }
     }
@@ -576,6 +609,7 @@ class ConnectionController extends ChangeNotifier {
     if (!autoReconnect || _reconnectCount >= 3) {
       status = ConnStatus.disconnected;
       error = autoReconnect ? AppStrings.t('reconnect_exhausted') : AppStrings.t('disconnected_hint');
+      errorKind = ConnErrorKind.none;
       // 内核已死且不再重连 → 必须恢复系统代理，否则残留指向死端口，
       // 整个系统流量中断（设置页「断线自动重连」关闭或重连超限时必现）
       unawaited(SystemProxyManager.restore());

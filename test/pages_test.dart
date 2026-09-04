@@ -185,6 +185,61 @@ void main() {
     });
   });
 
+  group('首页·类型化连接失败引导', () {
+    Map<String, dynamic> sub() => {
+          'subscribe_url':
+              'https://dy.moneyfly.top/api/v1/client/subscribe?token=t&type=clash',
+          'expire_time': '2032-06-06 08:00:00',
+          'device_limit': 600,
+          'current_devices': 3,
+          'remaining_days': 2104,
+          'is_expired': false,
+          'status': 'active',
+        };
+
+    Future<void> pumpError(
+        WidgetTester tester, ConnErrorKind kind, String msg) async {
+      ApiClient.debugDio = mockDio((a) {
+        a.onGet('/user/subscribe', (s) => s.reply(200, sub()));
+      });
+      final conn = ConnectionController.instance;
+      addTearDown(() {
+        conn.status = ConnStatus.disconnected;
+        conn.error = null;
+        conn.errorKind = ConnErrorKind.none;
+      });
+      conn.status = ConnStatus.error;
+      conn.error = msg;
+      conn.errorKind = kind;
+      // 预置节点：避免「节点为空」区域额外渲染一个「重试」，干扰错误区断言
+      await conn.loadNodes([
+        ProxyNode(
+            tag: '香港-01', type: 'vless', server: '1.2.3.4', port: 443,
+            countryCode: 'HK', latencyMs: 35),
+      ]);
+      await pumpPage(tester, _wrap(const HomePage()));
+    }
+
+    testWidgets('缺 VPN 权限 → 显示「授权 VPN 权限」而非通用「重试」', (tester) async {
+      await pumpError(tester, ConnErrorKind.noVpnPermission, '需要授予 VPN 权限才能连接');
+      expect(find.text('授权 VPN 权限'), findsOneWidget);
+      expect(find.text('重试'), findsNothing);
+    });
+
+    testWidgets('后台启动受限 → 提示保持前台 + 重试按钮', (tester) async {
+      await pumpError(tester, ConnErrorKind.backgroundStartBlocked, '后台启动受限');
+      expect(find.text('请保持 App 在前台，再点重试'), findsOneWidget);
+      expect(find.text('重试'), findsOneWidget);
+      expect(find.text('授权 VPN 权限'), findsNothing);
+    });
+
+    testWidgets('未知错误 → 通用重试按钮', (tester) async {
+      await pumpError(tester, ConnErrorKind.unknown, '内核启动超时');
+      expect(find.text('重试'), findsOneWidget);
+      expect(find.text('授权 VPN 权限'), findsNothing);
+    });
+  });
+
   group('设备管理', () {
     testWidgets('空状态', (tester) async {
       ApiClient.debugDio = mockDio((a) {

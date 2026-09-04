@@ -20,6 +20,10 @@ class SettingsStore {
         'defaultMode': 'smart', // smart / global
         // 本机代理监听端口（mixed 入站 + 系统代理指向的端口），默认 2080
         'localPort': 2080,
+        // Clash API 管理端口（切节点/测速/流量统计），默认 9090
+        'clashApiPort': 9090,
+        // 测速探测地址（内核 delay 测试；网络环境特殊时可改）
+        'testUrl': 'http://www.gstatic.com/generate_204',
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',

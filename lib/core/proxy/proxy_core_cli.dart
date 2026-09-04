@@ -46,6 +46,9 @@ class ProxyCoreCli extends ProxyCore {
   /// 系统代理的 apply/保活/探测全部指向该端口。
   int _localPort = SystemProxyManager.defaultPort;
 
+  /// Clash API 管理端口（设置页可改；随配置传入，默认 9090）
+  int _clashApiPort = 9090;
+
   /// 系统代理保活定时器：连接期间周期检查，被系统/外部关掉就重新开启。
   /// 目标：只要内核在跑，系统代理就保持指向本地端口，直到断开/退出。
   /// 5s 一次：探测是只读的 reg query / networksetup -get，开销极小；
@@ -122,6 +125,9 @@ class ProxyCoreCli extends ProxyCore {
     // 本机监听端口（设置页自定义，默认 2080）
     _localPort =
         (config.remove('_localPort') as num?)?.toInt() ?? SystemProxyManager.defaultPort;
+    // Clash API 管理端口（设置页自定义，默认 9090）
+    _clashApiPort = (config.remove('_clashApiPort') as num?)?.toInt() ?? 9090;
+    _api.options.baseUrl = 'http://127.0.0.1:$_clashApiPort';
 
     final binary = resolveBinary();
     final dir = Directory(workDir);
@@ -231,14 +237,14 @@ class ProxyCoreCli extends ProxyCore {
 
   @override
   Future<int> testNodeDelay(String tag,
-      {Duration timeout = const Duration(seconds: 5)}) async {
+      {Duration timeout = const Duration(seconds: 5), String? url}) async {
     if (_proc == null) return -1;
     try {
       final r = await _api.get(
         '/proxies/${Uri.encodeComponent(tag)}/delay',
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': 'http://www.gstatic.com/generate_204',
+          'url': url ?? 'http://www.gstatic.com/generate_204',
         },
         options: Options(
             validateStatus: (s) => true,

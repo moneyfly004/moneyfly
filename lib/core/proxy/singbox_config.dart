@@ -150,6 +150,7 @@ class SingBoxConfigBuilder {
     String tunMode = 'auto',
     bool bypassLan = true,
     int localPort = 2080,
+    int clashApiPort = 9090,
     String tunStack = 'system', // 桌面端 system；Android 需 gvisor
     String? ruleSetDir,
   }) {
@@ -212,6 +213,8 @@ class SingBoxConfigBuilder {
       // 元数据：本机 mixed 入站监听端口（ProxyCoreCli 读它管理系统代理指向；
       // Android 内核启动前剥离，不会传给 libbox）
       '_localPort': localPort,
+      // 元数据：Clash API 管理端口（切节点/测速/流量统计用；内核启动前剥离）
+      '_clashApiPort': clashApiPort,
       // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
       'log': {'level': 'warn', 'timestamp': true},
       // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
@@ -257,7 +260,7 @@ class SingBoxConfigBuilder {
       },
       'experimental': {
         'clash_api': {
-          'external_controller': '127.0.0.1:9090',
+          'external_controller': '127.0.0.1:$clashApiPort',
           'external_ui': '',
           'secret': '',
           'default_mode': initialMode,

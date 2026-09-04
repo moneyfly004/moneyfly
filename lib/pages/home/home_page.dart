@@ -738,24 +738,67 @@ class _HomePageState extends State<HomePage>
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 11, color: MFColors.red, height: 1.5)),
-            // 受限状态（自动连接被账号门禁拦截）错误区不放「重试」——
+            // 类型化失败 → 分场景引导（授权 VPN / 允许通知 / 保持前台重试）；
+            // 受限状态（自动连接被账号门禁拦截）不放按钮——
             // 顶部横幅已给续费/升级/管理入口；点电源键也会弹对应说明弹窗
             if (!acc.isBlocked) ...[
               const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () => conn.connect(),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                  decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-                  child: Text(AppStrings.t('retry_btn'),
-                      style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700)),
-                ),
-              ),
+              _buildErrorActions(conn),
             ],
           ],
         ],
       ),
     );
+  }
+
+  /// 错误区按钮：按失败类型分场景引导
+  /// （类型化失败：授权 VPN / 允许通知 / 保持前台重试；未知类型：通用重试）
+  Widget _buildErrorActions(ConnectionController conn) {
+    final guide = guideForConnError(conn.errorKind);
+    final actions = <Widget>[
+      if (guide.foregroundHint)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(AppStrings.t('stay_foreground_hint'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 10.5, color: MFColors.amber, height: 1.5)),
+        ),
+    ];
+    if (guide.showGrantVpn) {
+      actions.add(_ErrorBtn(
+          label: AppStrings.t('grant_vpn_btn'),
+          onTap: () => _retryConnect(ConnErrorKind.noVpnPermission)));
+    }
+    if (guide.showGrantNotify) {
+      actions.add(_ErrorBtn(
+          label: AppStrings.t('grant_notify_btn'),
+          onTap: () => _retryConnect(ConnErrorKind.noNotificationPermission)));
+    }
+    if (guide.showRetry) {
+      actions.add(
+          _ErrorBtn(label: AppStrings.t('retry_btn'), onTap: () => _retryConnect(conn.errorKind)));
+    }
+    if (actions.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: actions,
+    );
+  }
+
+  /// 授权类失败：先引导权限（授权成功再重连）；普通失败直接重连
+  Future<void> _retryConnect(ConnErrorKind kind) async {
+    final conn = ConnectionController.instance;
+    if (kind == ConnErrorKind.noVpnPermission ||
+        kind == ConnErrorKind.noNotificationPermission) {
+      final ok = await PermissionService.instance.ensureAllForConnect();
+      if (!ok) {
+        _toast(AppStrings.t('vpn_permission_needed'));
+        return;
+      }
+    }
+    await conn.connect();
   }
 
   Widget _buildModeSwitch(ConnectionController conn) {
@@ -947,6 +990,27 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+}
+
+class _ErrorBtn extends StatelessWidget {
+  const _ErrorBtn({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        decoration: BoxDecoration(
+            gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+        child: Text(label,
+            style: const TextStyle(
+                fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
 }
 
 class _ModeOption extends StatelessWidget {
