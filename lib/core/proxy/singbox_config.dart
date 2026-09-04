@@ -94,8 +94,16 @@ class SingBoxConfigBuilder {
           base['plugin_opts'] = 'obfs=$obfs${obfsPwd != null ? ';obfs-host=$obfsPwd' : ''}';
         }
       case 'hysteria2':
-        base['password'] = n.password ?? '';
+        base['password'] = n.password ?? raw['auth']?.toString() ?? '';
         base['tls'] = tls();
+        final hy2Alpn = raw['alpn'];
+        if (hy2Alpn is List && hy2Alpn.isNotEmpty) {
+          (base['tls'] as Map<String, dynamic>)['alpn'] = hy2Alpn.map((e) => e.toString()).toList();
+        }
+        final obfsType = raw['obfs']?.toString();
+        if (obfsType != null && obfsType.isNotEmpty) {
+          base['obfs'] = {'type': obfsType, 'password': raw['obfs-password']?.toString() ?? ''};
+        }
       case 'tuic':
         base['uuid'] = n.uuid ?? '';
         base['password'] = n.password ?? '';

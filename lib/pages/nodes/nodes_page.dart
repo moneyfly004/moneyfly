@@ -92,8 +92,12 @@ class _NodesPageState extends State<NodesPage> {
     // 精准订阅：仅 nodes 列表/current 节点变化时重建列表
     context.select((ConnectionController c) => (n: c.nodes.length, t: c.current?.tag));
     final conn = context.read<ConnectionController>();
+    final q = _query.toLowerCase();
     final filtered = conn.nodes
-        .where((n) => n.tag.toLowerCase().contains(_query.toLowerCase()))
+        .where((n) => n.tag.toLowerCase().contains(q) ||
+                      n.type.toLowerCase().contains(q) ||
+                      (n.countryCode?.toLowerCase().contains(q) ?? false) ||
+                      n.regionName.toLowerCase().contains(q))
         .toList();
     final groups = <String, List<ProxyNode>>{};
     for (final n in filtered) {

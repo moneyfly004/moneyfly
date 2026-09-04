@@ -24,10 +24,8 @@ class SpeedTester {
         sw.stop();
         samples.add(sw.elapsedMilliseconds);
       } catch (_) {
-        return -1; // 一次失败即判定不可用（避免慢节点拖时间）
+        return -1;
       } finally {
-        // 关键：destroy() 立即释放 native FD（close() 只做优雅关闭、等待对端 FIN，
-        // 大量节点测速时 FD 会堆积 → 'Too many open files' → 后续连接全部失败）
         socket?.destroy();
       }
     }
@@ -53,7 +51,9 @@ class SpeedTester {
       }
     }
 
-    final count = result.isEmpty ? 1 : (result.length < _maxConcurrent ? result.length : _maxConcurrent);
+    final count = result.isEmpty
+        ? 1
+        : (result.length < _maxConcurrent ? result.length : _maxConcurrent);
     await Future.wait(List.generate(count, (_) => worker()));
     return result;
   }
