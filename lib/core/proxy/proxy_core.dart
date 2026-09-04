@@ -230,6 +230,28 @@ class ConnectionController extends ChangeNotifier {
     return Future.value();
   }
 
+  /// 订阅定时/启动刷新结果接入（覆盖旧节点配置）。
+  ///
+  /// 已连接且当前线路不在新订阅列表中时保持现状不替换：内核仍按旧配置运行，
+  /// 直接替换会让 UI 丢掉当前线路或被误判离线、打断正在使用的连接；
+  /// 连接建立过程中（connecting/testing 等瞬态）也不动列表，避免与 connect()
+  /// 读取当前节点竞态；断开状态下则无条件覆盖。
+  Future<void> applySubscriptionNodes(List<ProxyNode> fresh) async {
+    if (fresh.isEmpty) return; // 空列表不覆盖：避免清空用户可用线路
+    if (status == ConnStatus.connecting ||
+        status == ConnStatus.testing ||
+        status == ConnStatus.reconnecting ||
+        status == ConnStatus.disconnecting) {
+      return;
+    }
+    if (status == ConnStatus.connected &&
+        current != null &&
+        !fresh.any((n) => n.tag == current!.tag)) {
+      return;
+    }
+    await loadNodes(fresh);
+  }
+
   /// 更新测速结果（节点页独立测速后调用，替换当前展示列表）
   void updateTestedNodes(List<ProxyNode> tested) {
     nodes = tested;

@@ -2,9 +2,13 @@ import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
 import '../proxy/proxy_core.dart';
+import '../../theme/theme_controller.dart';
 import 'account_service.dart';
-import 'settings_store.dart';
+import 'app_data_cleaner.dart';
+import 'crash_logger.dart';
+import 'subscription_scheduler.dart';
 import 'subscription_service.dart';
+import 'user_service.dart';
 
 /// 认证服务：登录 / 注册 / 验证码 / 找回密码 / 改密 / 登出
 class AuthService {
@@ -82,10 +86,14 @@ class AuthService {
     });
   }
 
-  /// 登出（尽力而为：本地清 token，后台调用失败不阻塞）
+  /// 登出 = 出厂级本地重置（尽力而为：后台调用失败不阻塞）。
   ///
-  /// 同时清空本账号残留：账号状态判定、订阅节点缓存、连接器状态与内核，
-  /// 否则下一账号登录后会看到上一个账号的节点/到期状态（切号误判）。
+  /// 客户退出账号后必须**删除原来的配置文件**，保证下次（换号/重登）从零
+  /// 拉取订阅，看不到上一个账号的任何残留：
+  /// 1. 断开内核并删除磁盘上的节点/内核配置、规则集、订阅缓存、日志、
+  ///    token 与全部偏好（AppDataCleaner，保留 install_id —— 它只随卸载消失）；
+  /// 2. 清空内存残留：账号状态判定、订阅节点缓存、仪表盘缓存、连接器状态；
+  /// 3. 停掉「定时更新订阅」调度器；主题回系统默认、崩溃日志开关复位。
   Future<void> logout() async {
     try {
       // _noSessionExpired：logout 自身 401 不触发会话过期回调，
@@ -93,17 +101,19 @@ class AuthService {
       await ApiClient.instance
           .post(Endpoints.logout, extra: {'_noSessionExpired': true});
     } catch (_) {}
-    await ApiClient.clearTokens();
-    AccountService.instance.reset();
-    SubscriptionService.instance.clearCache();
+    // 先停内核再删文件：Windows 上运行中的内核会锁住 config.json/规则集
     try {
       await ConnectionController.instance.resetForLogout();
     } catch (_) {}
-    // 登出后重置 autoConnect，防止下次登录自动连接
-    try {
-      final s = await SettingsStore.instance.load();
-      s['autoConnect'] = false;
-      await SettingsStore.instance.save(s);
-    } catch (_) {}
+    AccountService.instance.reset();
+    SubscriptionService.instance.clearCache();
+    UserService.instance.invalidateCache();
+    SubscriptionScheduler.instance.stop();
+    // 磁盘出厂清理（token/偏好/订阅缓存/内核目录/日志），保留 install_id
+    await AppDataCleaner.wipeForLogout();
+    // 内存态收尾：主题回系统默认（偏好已在上面清空，下次启动即出厂）；
+    // 语言保持当前会话不变（持久化偏好已清，下次启动跟随设备语言）
+    ThemeController.instance.setTheme('system');
+    CrashLogger.setEnabled(false);
   }
 }

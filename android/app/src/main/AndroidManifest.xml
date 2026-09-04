@@ -18,10 +18,16 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- 卸载彻底：关闭系统备份/云恢复/设备迁移 —— 卸载后应用数据不残留、
+         重装不自动恢复旧配置（订阅/节点/自动登录标记都随卸载消失，
+         重装后必须重新登录并重新拉取订阅，不沿用旧账号旧配置） -->
     <application
         android:label="MoneyFly"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"

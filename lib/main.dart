@@ -6,8 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
 import 'core/services/account_service.dart';
+import 'core/services/app_data_cleaner.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/crash_logger.dart';
+import 'core/services/subscription_scheduler.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
 import 'l10n/app_strings.dart';
@@ -49,6 +51,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();
+  // 全新安装检测：卸载残留/数据被清 → 清空旧配置、旧 token、旧缓存，
+  // 保证重装后必须重新登录并重新拉取订阅（不沿用旧配置）；版本升级 →
+  // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。
+  await AppDataCleaner.cleanupOnLaunch();
   runApp(const MoneyFlyApp());
 }
 
@@ -59,12 +65,17 @@ class MoneyFlyApp extends StatefulWidget {
   State<MoneyFlyApp> createState() => _MoneyFlyAppState();
 }
 
-class _MoneyFlyAppState extends State<MoneyFlyApp> {
+class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver {
   final _session = SessionState();
+  bool _wasLoggedIn = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // 登录态变化 → 启停「定时更新订阅」（登录后每 30 分钟静默拉订阅覆盖旧配置，
+    // 登出/会话失效即停）
+    _session.addListener(_onSessionChanged);
     _session.restore();
     // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）+ 恢复主题
     SettingsStore.instance
@@ -81,6 +92,32 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> {
       rootNavigatorKey.currentState?.popUntil((r) => r.isFirst);
       _session.setLoggedIn(false);
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _session.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    final v = _session.loggedIn;
+    if (v == _wasLoggedIn) return;
+    _wasLoggedIn = v;
+    if (v) {
+      SubscriptionScheduler.instance.start();
+    } else {
+      SubscriptionScheduler.instance.stop();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // 回前台：距上次成功拉取 ≥10 分钟则立即静默刷新一次订阅
+      SubscriptionScheduler.instance.onAppResumed();
+    }
   }
 
   @override

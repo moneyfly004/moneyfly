@@ -9,10 +9,10 @@ import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/subscription_service.dart';
+import '../../core/services/user_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../payment/payment_dialog.dart';
-import '../profile/profile_page.dart';
 
 /// 购买套餐：上下列表模式（每行 = 名称/说明/价格/购买）＋ 支付方式。
 /// 真实链路：选套餐 → 下单 → 发起支付 → 二维码轮询 → paid 后刷新订阅
@@ -103,7 +103,7 @@ class _PackagePageState extends State<PackagePage> {
         try {
           // 开通成功后立即刷新账号状态（到期→生效）与节点，首页横幅即时消失
           await AccountService.instance.refresh(force: true);
-          ProfilePage.invalidateCache();
+          UserService.instance.invalidateCache();
           final nodes = await SubscriptionService.instance.fetchNodes(force: true);
           if (mounted) {
             await context.read<ConnectionController>().loadNodes(nodes);

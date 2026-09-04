@@ -14,35 +14,29 @@ import '../notifications/notifications_page.dart';
 import '../orders/orders_page.dart';
 import '../settings/settings_page.dart';
 
-/// 我的页：真实仪表盘数据（本地缓存，进入不重复刷新）+ 各功能入口
+/// 我的页：真实仪表盘数据（UserService 会话内缓存，进入不重复刷新）+ 各功能入口
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
-
-  /// 退出登录 / 套餐开通成功后清空缓存，下次进入重新加载
-  static void invalidateCache() => _ProfilePageState.invalidateCache();
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  /// #9 本地缓存：首次加载后切回本页不再自动刷新（下拉可手动刷新）
-  static DashboardInfo? _cache;
-  DashboardInfo? get _dashboard => _cache;
+  DashboardInfo? get _dashboard => UserService.instance.cachedDashboard;
   bool _loading = false;
 
   @override
   void initState() {
     super.initState();
     // 无缓存才加载；已有缓存直接展示（切 tab 不再闪烁刷新）
-    if (_cache == null) _load();
+    if (_dashboard == null) _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final d = await UserService.instance.dashboard();
-      _cache = d;
+      await UserService.instance.dashboard(force: true);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
@@ -50,9 +44,6 @@ class _ProfilePageState extends State<ProfilePage> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  /// 退出登录时清缓存，下次进入重新加载
-  static void invalidateCache() => _cache = null;
 
   void _toast(String msg) {
     if (!mounted) return;
@@ -381,7 +372,7 @@ class _ProfilePageState extends State<ProfilePage> {
         );
         if (ok == true && context.mounted) {
           await AuthService.instance.logout();
-          _ProfilePageState.invalidateCache();
+          UserService.instance.invalidateCache();
           if (!context.mounted) return;
           // 确保回到根部路由，登录窗口不被残留页面盖住
           Navigator.of(context).popUntil((r) => r.isFirst);
