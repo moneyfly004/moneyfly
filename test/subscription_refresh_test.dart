@@ -6,11 +6,12 @@ import 'package:moneyfly/core/proxy/proxy_core.dart';
 /// 订阅定时/启动刷新结果接入（applySubscriptionNodes）行为测试：
 /// 保证「覆盖旧节点配置」不会误伤正在使用的连接/正在建立的连接。
 void main() {
-  ProxyNode node(String tag) => ProxyNode(
+  ProxyNode node(String tag, {int latencyMs = -1}) => ProxyNode(
         tag: tag,
         type: 'ss',
         server: '1.2.3.4',
         port: 8388,
+        latencyMs: latencyMs,
         raw: const {'type': 'ss', 'server': '1.2.3.4', 'port': 8388},
       );
 
@@ -76,5 +77,40 @@ void main() {
     await c.applySubscriptionNodes([]);
 
     expect(c.nodes.map((n) => n.tag), ['a']);
+  });
+
+  test('订阅刷新后保留已测延迟（快捷国家/延迟徽标不因刷新消失）', () async {
+    final c = ConnectionController.instance;
+    c.nodes = [node('hk-1', latencyMs: 88), node('hk-2')];
+
+    // 模拟 30 分钟定时/回前台静默刷新：返回重新解析的全新对象（无延迟）
+    await c.applySubscriptionNodes([node('hk-1'), node('hk-2'), node('jp-9')]);
+
+    final hk1 = c.nodes.firstWhere((n) => n.tag == 'hk-1');
+    final hk2 = c.nodes.firstWhere((n) => n.tag == 'hk-2');
+    final jp9 = c.nodes.firstWhere((n) => n.tag == 'jp-9');
+    expect(hk1.latencyMs, 88); // 已测延迟被保留
+    expect(hk2.latencyMs, -1); // 本来就未测 → 保持未测
+    expect(jp9.latencyMs, -1); // 新节点未测
+  });
+
+  test('下拉刷新（loadNodes）同样保留已测延迟', () async {
+    final c = ConnectionController.instance;
+    c.nodes = [node('us-1', latencyMs: 120)];
+
+    await c.loadNodes([node('us-1'), node('us-2')]);
+
+    expect(c.nodes.firstWhere((n) => n.tag == 'us-1').latencyMs, 120);
+    expect(c.nodes.firstWhere((n) => n.tag == 'us-2').latencyMs, -1);
+  });
+
+  test('节点自带新测速结果时不被旧延迟覆盖', () async {
+    final c = ConnectionController.instance;
+    c.nodes = [node('a', latencyMs: 300)]; // 旧延迟 300ms
+
+    // 新列表同一 tag 已携带刚测的新值 45ms → 以新值为准
+    await c.applySubscriptionNodes([node('a', latencyMs: 45)]);
+
+    expect(c.nodes.firstWhere((n) => n.tag == 'a').latencyMs, 45);
   });
 }

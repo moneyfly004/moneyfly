@@ -222,12 +222,30 @@ class ConnectionController extends ChangeNotifier {
   bool _autoConnectTried = false;
 
   Future<void> loadNodes(List<ProxyNode> list) {
-    nodes = list;
+    // 保留同 tag 节点已测延迟：订阅刷新/下拉刷新拿到的是重新解析的全新对象
+    // （latencyMs=-1），直接替换会把已测延迟清空 → 首页「快速切换国家」
+    // （要求 latency>=0）与节点列表延迟徽标会"过一段时间就消失"。
+    nodes = _carryMeasuredLatency(list, nodes);
     if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
       current = null;
     }
     notifyListeners();
     return Future.value();
+  }
+
+  /// 新列表节点若本身无测速结果（latencyMs<0），且旧列表存在同 tag 且测过
+  /// 延迟（latencyMs>=0），则沿用旧测速值 —— 测速结果保留到下次真正测速，
+  /// 不被订阅/配置刷新冲掉。自带测速结果的新节点（内核/纯 TCP 回填）不动。
+  List<ProxyNode> _carryMeasuredLatency(
+      List<ProxyNode> fresh, List<ProxyNode> prev) {
+    if (fresh.isEmpty || prev.isEmpty) return fresh;
+    final prevByTag = <String, ProxyNode>{for (final n in prev) n.tag: n};
+    for (final n in fresh) {
+      if (n.latencyMs >= 0) continue;
+      final old = prevByTag[n.tag];
+      if (old != null && old.latencyMs >= 0) n.latencyMs = old.latencyMs;
+    }
+    return fresh;
   }
 
   /// 订阅定时/启动刷新结果接入（覆盖旧节点配置）。
