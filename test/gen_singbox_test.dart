@@ -53,4 +53,29 @@ void main() {
         reason: 'TUN 地址须为 address 数组（sing-box 1.12+）');
     expect((tun['address'] as List), contains('172.19.0.1/30'));
   });
+
+  // 回归：本地 mixed 入站端口可配置（设置页「本地代理端口」，默认 2080）。
+  // 端口必须同时落在：mixed inbound listen_port + 顶层 _localPort 元数据
+  // （ProxyCoreCli 据此管理系统代理指向；Android 启动前剥离）。
+  test('mixed inbound 端口可配置（默认 2080，自定义生效）', () {
+    final node = ProxyNode(
+      tag: 't', type: 'vless', server: '1.1.1.1', port: 443,
+      uuid: '00000000-0000-0000-0000-000000000000',
+      countryCode: 'HK', raw: const {},
+    );
+    Map<String, dynamic> cfgOf(int port) => SingBoxConfigBuilder.build(
+          nodes: [node],
+          selectedTag: 't',
+          smartMode: true,
+          tunMode: 'auto',
+          tunStack: 'gvisor',
+          localPort: port,
+        );
+    Map mixedOf(Map<String, dynamic> cfg) =>
+        (cfg['inbounds'] as List).cast<Map>().firstWhere((i) => i['type'] == 'mixed');
+
+    expect(mixedOf(cfgOf(2080))['listen_port'], 2080); // 默认不变
+    expect(mixedOf(cfgOf(10809))['listen_port'], 10809); // 自定义生效
+    expect(cfgOf(10809)['_localPort'], 10809);
+  });
 }

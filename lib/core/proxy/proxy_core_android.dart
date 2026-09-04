@@ -79,7 +79,9 @@ class ProxyCoreAndroid extends ProxyCore {
   Future<void> start(Map<String, dynamic> config) async {
     if (_running) throw StateError('already running');
     _lastError = null;
+    // 剥离 app 侧元数据（系统代理端口/模式），不传给 libbox 内核
     config.remove('_tunMode');
+    config.remove('_localPort');
     final inbounds = config['inbounds'];
     if (inbounds is List) {
       for (final ib in inbounds) {

@@ -149,6 +149,7 @@ class SingBoxConfigBuilder {
     String dns = '223.5.5.5',
     String tunMode = 'auto',
     bool bypassLan = true,
+    int localPort = 2080,
     String tunStack = 'system', // 桌面端 system；Android 需 gvisor
     String? ruleSetDir,
   }) {
@@ -208,6 +209,9 @@ class SingBoxConfigBuilder {
     return {
       // 元数据：告知 ProxyCoreCli 是否需要管理系统代理
       '_tunMode': tunMode,
+      // 元数据：本机 mixed 入站监听端口（ProxyCoreCli 读它管理系统代理指向；
+      // Android 内核启动前剥离，不会传给 libbox）
+      '_localPort': localPort,
       // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
       'log': {'level': 'warn', 'timestamp': true},
       // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
@@ -224,7 +228,15 @@ class SingBoxConfigBuilder {
         // 不启用 sing-box 的 set_system_proxy，避免双重管理互相覆盖
         // （sing-box 先设、app 再把 sing-box 的代理误记为原始状态）。
         if (tunMode != 'force')
-          {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080},
+          {
+            'type': 'mixed',
+            'tag': 'mixed-in',
+            'listen': '127.0.0.1',
+            'listen_port': localPort,
+            // sing-box mixed/socks 入站 UDP 默认开启（SOCKS5 UDP ASSOCIATE）；
+            // 无开关字段，此处不加。HTTP 系统代理本身不支持 UDP ——
+            // Steam/游戏等 UDP 流量需走 TUN 或 SOCKS5。
+          },
         if (tunMode != 'off')
           {
             'type': 'tun', 'tag': 'tun-in',

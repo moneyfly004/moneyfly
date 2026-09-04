@@ -27,6 +27,7 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     dns: args['dns'] as String,
     tunMode: args['tunMode'] as String,
     bypassLan: args['bypassLan'] as bool,
+    localPort: (args['localPort'] as num?)?.toInt() ?? 2080,
     ruleSetDir: args['ruleSetDir'] as String?,
   );
 }
@@ -323,6 +324,8 @@ class ConnectionController extends ChangeNotifier {
     // 用 defaultMode 覆盖，避免用户在首页的选择被静默重置。
     final settings = await SettingsStore.instance.load();
     final dns = settings['dns']?.toString() ?? '223.5.5.5';
+    // 本机代理监听端口（设置页可改，默认 2080）：mixed 入站 + 系统代理共同指向
+    final localPort = (settings['localPort'] as num?)?.toInt() ?? 2080;
     // 桌面端（macOS/Windows）默认「仅系统代理」：TUN 需要 root 权限，
     // 默认开启会导致用户一点连接就失败（operation not permitted）；
     // Android 默认「TUN + 系统代理双通道」：VpnService 授权后 TUN 接管全部流量。
@@ -364,6 +367,7 @@ class ConnectionController extends ChangeNotifier {
         'dns': dns,
         'tunMode': tunMode,
         'bypassLan': bypassLan,
+        'localPort': localPort,
         'ruleSetDir': ruleDir,
       });
       await _core.start(cfg);

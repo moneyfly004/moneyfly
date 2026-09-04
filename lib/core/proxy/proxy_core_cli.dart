@@ -42,6 +42,10 @@ class ProxyCoreCli extends ProxyCore {
   String? _lastError;
   String? _configPath;
 
+  /// 本机 mixed 入站端口（设置页可改；随配置传入，默认 2080）。
+  /// 系统代理的 apply/保活/探测全部指向该端口。
+  int _localPort = SystemProxyManager.defaultPort;
+
   /// 系统代理保活定时器：连接期间周期检查，被系统/外部关掉就重新开启。
   /// 目标：只要内核在跑，系统代理就保持指向本地端口，直到断开/退出。
   /// 5s 一次：探测是只读的 reg query / networksetup -get，开销极小；
@@ -115,6 +119,9 @@ class ProxyCoreCli extends ProxyCore {
 
     // tunMode='force' 时无 mixed 端口，不管理系统代理
     _tunForceMode = config.remove('_tunMode') == 'force';
+    // 本机监听端口（设置页自定义，默认 2080）
+    _localPort =
+        (config.remove('_localPort') as num?)?.toInt() ?? SystemProxyManager.defaultPort;
 
     final binary = resolveBinary();
     final dir = Directory(workDir);
@@ -147,7 +154,7 @@ class ProxyCoreCli extends ProxyCore {
         if (r.statusCode == 200) {
           // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
           if (manageSystemProxy && !_tunForceMode) {
-            await SystemProxyManager.apply(port: SystemProxyManager.defaultPort);
+            await SystemProxyManager.apply(port: _localPort);
             _startProxyKeepAlive();
           }
           _startStatsTimer();
@@ -199,8 +206,7 @@ class ProxyCoreCli extends ProxyCore {
       if (_proc == null || _tunForceMode || !manageSystemProxy) return;
       _keepAliveInFlight = true;
       try {
-        await SystemProxyManager.ensureApplied(
-            port: SystemProxyManager.defaultPort);
+        await SystemProxyManager.ensureApplied(port: _localPort);
       } catch (_) {
       } finally {
         _keepAliveInFlight = false;

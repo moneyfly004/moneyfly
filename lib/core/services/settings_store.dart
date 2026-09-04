@@ -18,6 +18,8 @@ class SettingsStore {
         'testIntervalMin': 30,
         'dns': '223.5.5.5',
         'defaultMode': 'smart', // smart / global
+        // 本机代理监听端口（mixed 入站 + 系统代理指向的端口），默认 2080
+        'localPort': 2080,
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -124,6 +125,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   onRight: () => _set('defaultMode', 'global'),
                 )),
             _section(AppStrings.t('settings_network')),
+            _row(icon: '🔢', title: AppStrings.t('settings_local_port'),
+                desc: AppStrings.t('settings_local_port_desc'),
+                value: '${_s['localPort'] ?? 2080}',
+                onTap: _pickLocalPort),
             _row(icon: '🚀', title: AppStrings.t('settings_tun'),
                 desc: _tunDesc(),
                 value: switch (_s['tunMode']?.toString()) {
@@ -280,11 +285,66 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String? _tunDesc() {
     final mode = _s['tunMode']?.toString() ?? 'off';
-    if (mode == 'off') return null;
+    if (mode == 'off') return AppStrings.t('tun_off_hint');
     if (Platform.isAndroid || Platform.isIOS) return null;
     if (Platform.isWindows) return AppStrings.t('tun_need_admin');
     if (Platform.isMacOS) return AppStrings.t('tun_need_root');
     return null;
+  }
+
+  /// 自定义本地代理端口（默认 2080）。已连接时改端口 → 自动断开并用新端口重连，
+  /// 否则下次连接生效。端口校验：1024–65535，且不能占用内置 Clash API 9090。
+  Future<void> _pickLocalPort() async {
+    final cur = (_s['localPort'] as num?)?.toInt() ?? 2080;
+    final ctrl = TextEditingController(text: '$cur');
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_local_port'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          style: TextStyle(color: MFColors.txt),
+          decoration: InputDecoration(
+            hintText: '2080',
+            helperText: AppStrings.t('settings_local_port_desc'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppStrings.t('cancel_text')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: Text(AppStrings.t('save'),
+                style: TextStyle(color: MFColors.brandLight)),
+          ),
+        ],
+      ),
+    );
+    if (v == null || v.isEmpty) return;
+    final p = int.tryParse(v);
+    // 9090 为内置 Clash API 端口，被占用时内核起不来
+    if (p == null || p < 1024 || p > 65535 || p == 9090) {
+      _toast(AppStrings.t('local_port_invalid'));
+      return;
+    }
+    await _set('localPort', p);
+    final conn = ConnectionController.instance;
+    if (conn.status == ConnStatus.connected) {
+      _toast(AppStrings.t('local_port_reconnect'));
+      // 端口需重启内核才生效：断开后立刻用新端口重连
+      unawaited(() async {
+        await conn.disconnect();
+        await conn.connect();
+      }());
+    } else {
+      _toast(AppStrings.t('local_port_saved'));
+    }
   }
 
   Future<void> _pickTunMode() async {
@@ -328,6 +388,22 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
             ),
+          // UDP/游戏提示：系统代理（HTTP）不承载 UDP，Steam/游戏需 TUN
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: MFColors.amber.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: MFColors.amber.withValues(alpha: .3)),
+              ),
+              child: Text(
+                AppStrings.t('tun_game_tip'),
+                style: TextStyle(fontSize: 11, color: MFColors.txt2, height: 1.6),
+              ),
+            ),
+          ),
         ],
       ),
     );
