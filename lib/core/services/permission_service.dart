@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -32,7 +30,7 @@ class PermissionService {
     }
   }
 
-  /// 是否已获得电池优化豁免（省电 + 防杀后台）
+  /// 是否已获得电池优化豁免（保留原生查询能力，不再用于自动引导）
   Future<bool> isBatteryOptimizationIgnored() async {
     if (!_isAndroid) return true;
     try {
@@ -42,6 +40,8 @@ class PermissionService {
     }
   }
 
+  /// 请求电池优化豁免（v1.0.19 起不再自动调用 —— 产品要求不做省电提醒；
+  /// 保留方法供未来可选的手动入口使用）
   Future<void> requestIgnoreBatteryOptimization() async {
     if (!_isAndroid) return;
     try {
@@ -49,6 +49,7 @@ class PermissionService {
     } catch (_) {}
   }
 
+  /// 打开系统电池设置页（同上：不再自动调用，仅保留能力）
   Future<void> openBatterySettings() async {
     if (!_isAndroid) return;
     try {
@@ -75,33 +76,18 @@ class PermissionService {
     }
   }
 
-  /// 本会话是否已请求过电池豁免（避免每次都弹系统框把 App 切后台）
-  bool _batteryPromptedThisSession = false;
-
   /// 连接前引导：VPN 授权（必需，前置）+ 通知。
   /// 返回 false 表示用户拒绝 VPN 授权（不继续连接）。
   ///
-  /// 关键修复（v1.0.5 + v1.0.18）：电池豁免会打开系统界面、把 App 切到后台。
-  /// 若在连接瞬间触发，会与 startVpn 竞争 —— Android 12+ 在 Activity 被系统页
-  /// 挤停后拒绝后台启动前台服务，表现为「一点连接就自动缩小、连接不生效」。
-  /// 因此这里**只做** VPN 授权与通知；电池引导移到[maybeRequestBatteryOnce]，
-  /// 由首页在「连接成功之后」触发（此时隧道已建立，弹窗不再影响建连）。
+  /// 设计说明：不再做电池优化豁免引导（v1.0.19 起彻底移除）——
+  /// 1) 电池弹窗会打开系统界面把 App 切后台，曾导致「点连接自动缩小、不生效」
+  ///    （Android 12+ 后台启动前台服务受限）；
+  /// 2) 产品要求：不做任何省电提醒，连接后让 App 后台挂起稳定运行即可
+  ///    （前台服务 + 看门狗保活，功耗交给系统自行处理）。
   Future<bool> ensureAllForConnect() async {
     final vpnOk = await prepareVpn();
     if (!vpnOk) return false;
     await requestNotificationPermission();
     return true;
-  }
-
-  /// 连接成功后的一次性电池豁免引导（每会话至多一次；桌面端 no-op）。
-  /// 在隧道已建立后调用，系统页切后台不再与建连竞争。
-  Future<void> maybeRequestBatteryOnce() async {
-    if (_batteryPromptedThisSession) return;
-    _batteryPromptedThisSession = true;
-    try {
-      if (!await isBatteryOptimizationIgnored()) {
-        await requestIgnoreBatteryOptimization();
-      }
-    } catch (_) {}
   }
 }

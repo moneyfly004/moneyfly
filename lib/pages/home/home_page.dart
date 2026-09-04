@@ -30,8 +30,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
-  /// 上一帧连接状态：用于检测「断开 → 已连接」跃迁
-  bool _wasConnected = false;
 
   /// 连接状态下的呼吸动画（仅连接时运行，断开即停 → 省电 + 流畅）
   late final AnimationController _pulse = AnimationController(
@@ -49,8 +47,6 @@ class _HomePageState extends State<HomePage>
     ConnectionController.instance.addListener(_onConnChanged);
     // 回前台自动刷新订阅（保活页面避免数据过期）
     WidgetsBinding.instance.addObserver(this);
-    // 首帧兜底：进入页面时若已处于连接态（自动连接等），补触发电池引导
-    WidgetsBinding.instance.addPostFrameCallback((_) => _onConnChanged());
   }
 
   @override
@@ -71,16 +67,9 @@ class _HomePageState extends State<HomePage>
   void _onConnChanged() {
     if (!mounted) return;
     final s = ConnectionController.instance.status;
-    final connected = s == ConnStatus.connected;
-    // 「断开 → 已连接」跃迁：隧道已建立后才引导电池豁免 —— 系统页切后台
-    // 不再与 startVpn 竞争（v1.0.18 修复：避免「点连接自动缩小、连接不生效」）
-    if (connected && !_wasConnected) {
-      unawaited(PermissionService.instance.maybeRequestBatteryOnce());
-    }
-    _wasConnected = connected;
-    if (connected && !_pulse.isAnimating) {
+    if (s == ConnStatus.connected && !_pulse.isAnimating) {
       _pulse.repeat(reverse: true);
-    } else if (!connected && _pulse.isAnimating) {
+    } else if (s != ConnStatus.connected && _pulse.isAnimating) {
       _pulse.stop();
     }
   }
