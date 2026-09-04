@@ -171,6 +171,20 @@ class ConnectionController extends ChangeNotifier {
   /// true 后 applySettings 不再用设置里的 defaultMode 覆盖（首页选择优先）。
   bool _modeUserSet = false;
 
+  /// 用户手动选定的国家码（快速切换国家 / 节点选择器手动切换后锁定）。
+  /// 非 null 时，后台测速和自动选优只在该国家范围内切换，不会跳到其他国家。
+  /// 首次连接（自动选最优）/ disconnect / resetForLogout / unlockCountry 时清空。
+  String? lockedCountry;
+
+  /// 解除国家锁定，回到全局自动选优。已连接时立刻测速并切换到全局最优。
+  Future<void> unlockCountry() async {
+    lockedCountry = null;
+    notifyListeners();
+    if (status == ConnStatus.connected && autoTest) {
+      await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
+    }
+  }
+
   /// 后台测速中（已连接状态下并行测速；不阻塞连接，仅用于 UI 提示）
   bool speedTesting = false;
 
@@ -508,7 +522,8 @@ class ConnectionController extends ChangeNotifier {
   }
 
   /// 后台测速 + 自动切换最优节点（不阻塞连接；测速中保持已连接状态，
-  /// UI 通过 speedTesting 标记显示「测速中」）
+  /// UI 通过 speedTesting 标记显示「测速中」）。
+  /// 尊重 [lockedCountry]：用户手动选了国家后，只在该国范围内选最优。
   Future<void> _autoSpeedTestAndSwitch(int epoch, {bool forceBest = false}) async {
     speedTesting = true;
     notifyListeners();
@@ -516,22 +531,26 @@ class ConnectionController extends ChangeNotifier {
       final tested = await testAllNodes(nodes);
       if (epoch != _epoch) return;
       nodes = tested;
-      final best = SpeedTester.selectBest(tested);
+      // 尊重用户锁定的国家：有锁定时只在该国节点中选优
+      final candidates = lockedCountry != null
+          ? tested.where((n) => n.countryCode == lockedCountry).toList()
+          : tested;
+      final best = SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
       lastSpeedTestTime = _now();
       if (best != null && status == ConnStatus.connected) {
         if (forceBest) {
-          await switchNode(best);
+          await switchNode(best, userInitiated: false);
         } else {
           final cur = current;
           if (cur == null) {
-            await switchNode(best);
+            await switchNode(best, userInitiated: false);
           } else {
             final curOnline =
                 nodes.firstWhere((n) => n.tag == cur.tag, orElse: () => cur);
             if (!curOnline.online ||
                 (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
                     best.latencyMs < curOnline.latencyMs - 100)) {
-              await switchNode(best);
+              await switchNode(best, userInitiated: false);
             }
           }
         }
@@ -561,6 +580,7 @@ class ConnectionController extends ChangeNotifier {
     error = null;
     errorKind = ConnErrorKind.none;
     realCountry = null;
+    lockedCountry = null;
     notifyListeners();
   }
 
@@ -583,13 +603,17 @@ class ConnectionController extends ChangeNotifier {
     error = null;
     errorKind = ConnErrorKind.none;
     realCountry = null;
+    lockedCountry = null;
     _autoConnectTried = false;
     notifyListeners();
   }
 
-  /// 切换节点（热切换；失败则提示；成功后重测真实出口国家）
-  Future<void> switchNode(ProxyNode node) async {
+  /// 切换节点（热切换；失败则提示；成功后重测真实出口国家）。
+  /// [userInitiated] 用户手动切换（首页国家/节点选择器）→ 锁定该国家，
+  /// 后台测速不再跳到其他国家；自动选优调用时传 false 不改锁定状态。
+  Future<void> switchNode(ProxyNode node, {bool userInitiated = true}) async {
     current = node;
+    if (userInitiated) lockedCountry = node.countryCode;
     notifyListeners();
     if (status == ConnStatus.connected) {
       try {
@@ -665,7 +689,8 @@ class ConnectionController extends ChangeNotifier {
     speedNotifier.value = SpeedSnapshot(upMbps: upMbps, downMbps: downMbps);
   }
 
-  /// 后台定时测速（设置 testIntervalMin；仅已连接时运行，断开即停 → 省电）
+  /// 后台定时测速（设置 testIntervalMin；仅已连接时运行，断开即停 → 省电）。
+  /// 尊重 [lockedCountry]：用户手动选了国家后，只在该国范围内切换。
   void _startBackgroundTest(int intervalMin) {
     _bgTestTimer?.cancel();
     if (intervalMin <= 0) return;
@@ -674,16 +699,18 @@ class ConnectionController extends ChangeNotifier {
       final tested = await testAllNodes(nodes);
       if (status != ConnStatus.connected) return;
       nodes = tested;
-      final best = SpeedTester.selectBest(tested);
+      final candidates = lockedCountry != null
+          ? tested.where((n) => n.countryCode == lockedCountry).toList()
+          : tested;
+      final best = SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
       final cur = current;
       if (best == null || cur == null) return;
-      // 当前节点劣化（离线 或 比最优慢 100ms 以上）→ 静默切到更优节点
       final curOnline = nodes.firstWhere(
           (n) => n.tag == cur.tag, orElse: () => cur);
       if (!curOnline.online ||
           (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
               best.latencyMs < curOnline.latencyMs - 100)) {
-        await switchNode(best);
+        await switchNode(best, userInitiated: false);
       }
       lastSpeedTestTime = _now();
       notifyListeners();

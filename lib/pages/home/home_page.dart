@@ -898,6 +898,41 @@ class _HomePageState extends State<HomePage>
           spacing: 8,
           runSpacing: 8,
           children: [
+            // 「自动最优」：解除国家锁定，回到全局选优
+            GestureDetector(
+              onTap: () async {
+                await conn.unlockCountry();
+                if (mounted) _toast(AppStrings.t('auto_best_activated'));
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                decoration: BoxDecoration(
+                  color: conn.lockedCountry == null
+                      ? MFColors.green.withValues(alpha: .18)
+                      : MFColors.card,
+                  borderRadius: BorderRadius.circular(99),
+                  border: Border.all(
+                      color: conn.lockedCountry == null
+                          ? MFColors.green.withValues(alpha: .7)
+                          : MFColors.line),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, size: 14,
+                        color: conn.lockedCountry == null ? MFColors.green : MFColors.txt2),
+                    const SizedBox(width: 5),
+                    Text(AppStrings.t('auto_best'),
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: conn.lockedCountry == null
+                                ? MFColors.green
+                                : MFColors.txt)),
+                  ],
+                ),
+              ),
+            ),
             for (final e in entries.take(6))
               GestureDetector(
                 onTap: () async {
