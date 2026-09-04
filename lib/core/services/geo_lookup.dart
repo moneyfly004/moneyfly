@@ -4,21 +4,31 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
 import '../models/models.dart';
+import 'settings_store.dart';
 
-/// 真实出口国家检测：连接成功后，通过隧道（本地混合代理端口 2080）
-/// 请求 IP 地理定位接口，返回**实际出口 IP 所在国家**——不是按节点名猜测。
+/// 真实出口国家检测：连接成功后，通过隧道（本地混合代理端口，设置页可改，
+/// 默认 2080）请求 IP 地理定位接口，返回**实际出口 IP 所在国家**——
+/// 不是按节点名猜测。
 class GeoLookupService {
   GeoLookupService._();
   static final GeoLookupService instance = GeoLookupService._();
 
-  /// 本地混合代理端口（与 sing-box 配置 mixed-in 一致）
-  static const _proxyPort = 2080;
+  /// 本地混合代理端口默认值（与设置默认一致；实际值每次查询时读设置，
+  /// 支持用户在设置页自定义端口）
+  static const defaultPort = 2080;
 
   static String countryName(String? code) =>
       ProxyNode.countryNames[code?.toUpperCase()] ?? code?.toUpperCase() ?? '未知';
 
   /// 走隧道查询真实出口国家码；失败返回 null（不阻塞连接流程）
   Future<String?> lookupViaProxy() async {
+    // 读当前生效的本地代理端口（设置页可改）：出口定位必须走同一个 mixed
+    // 入站，端口不匹配时请求会落到空端口导致定位失败
+    int port = defaultPort;
+    try {
+      final s = await SettingsStore.instance.load();
+      port = (s['localPort'] as num?)?.toInt() ?? defaultPort;
+    } catch (_) {}
     Dio? dio;
     try {
       dio = Dio(BaseOptions(
@@ -31,7 +41,7 @@ class GeoLookupService {
         createHttpClient: () {
           final c = HttpClient();
           c.connectionTimeout = const Duration(seconds: 5);
-          c.findProxy = (uri) => 'PROXY 127.0.0.1:$_proxyPort';
+          c.findProxy = (uri) => 'PROXY 127.0.0.1:$port';
           return c;
         },
       );
