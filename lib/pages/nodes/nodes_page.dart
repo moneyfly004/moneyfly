@@ -23,10 +23,11 @@ class NodesPage extends StatefulWidget {
 }
 
 class _NodesPageState extends State<NodesPage> {
-  bool _autoBest = true;
   bool _testing = false;
   bool _refreshing = false;
   String _query = '';
+  int _testDone = 0;
+  int _testTotal = 0;
   Timer? _debounce; // 搜索防抖
   final _searchCtrl = TextEditingController();
 
@@ -53,15 +54,19 @@ class _NodesPageState extends State<NodesPage> {
       _toast(AppStrings.t('no_nodes'));
       return;
     }
-    setState(() => _testing = true);
+    setState(() {
+      _testing = true;
+      _testDone = 0;
+      _testTotal = conn.nodes.length;
+    });
     try {
-      // 已连接时走内核 delay（真实协议+隧道，UDP/被墙节点都能测准）；
-      // 未连接回退 TCP。统一由 ConnectionController 路由。
-      final tested = await conn.testAllNodes(conn.nodes);
+      final tested = await conn.testAllNodes(conn.nodes, onProgress: (done, total) {
+        if (mounted) setState(() { _testDone = done; _testTotal = total; });
+      });
       conn.updateTestedNodes(tested);
       if (mounted) {
         _toast(AppStrings.t('speed_done'));
-        if (_autoBest) {
+        if (conn.autoTest) {
           final best = conn.selectBestRespectingLock(tested);
           if (best != null) await conn.switchNode(best, userInitiated: false);
         }
@@ -185,58 +190,22 @@ class _NodesPageState extends State<NodesPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(13)),
                       alignment: Alignment.center,
-                      child: Text(_testing ? AppStrings.t('speed_testing') : '⚡ ${AppStrings.t('speed_test')}',
-                          style: const TextStyle(fontSize: 12.5, color: Colors.white, fontWeight: FontWeight.w600)),
+                      child: _testing
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(width: 12, height: 12,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                                const SizedBox(width: 7),
+                                Text('$_testDone/$_testTotal',
+                                    style: const TextStyle(fontSize: 12.5, color: Colors.white, fontWeight: FontWeight.w600, fontFamily: kNumFont)),
+                              ],
+                            )
+                          : Text('⚡ ${AppStrings.t('speed_test')}',
+                              style: const TextStyle(fontSize: 12.5, color: Colors.white, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ],
-              ),
-            ),
-            // 自动选优条
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(13),
-                  gradient: const LinearGradient(colors: [Color(0x24455FE9), Color(0x08455FE9)]),
-                  border: Border.all(color: MFColors.brand.withValues(alpha: .3)),
-                ),
-                child: Row(
-                  children: [
-                    const Text('✨', style: TextStyle(fontSize: 14)),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(AppStrings.t('auto_best'), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                    ),
-                    GestureDetector(
-                      onTap: () => setState(() => _autoBest = !_autoBest),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _autoBest ? MFColors.green.withValues(alpha: .1) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: _autoBest ? MFColors.green.withValues(alpha: .3) : MFColors.line2),
-                        ),
-                        child: Text(_autoBest ? AppStrings.t('auto_test_on') : AppStrings.t('auto_test_off'),
-                            style: TextStyle(fontSize: 9.5,
-                                color: _autoBest ? MFColors.green : MFColors.txt3,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: _runSpeedTest,
-                      child: Container(
-                        height: 28,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(9)),
-                        alignment: Alignment.center,
-                        child: Text(AppStrings.t('pick_best'), style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
             // 节点列表

@@ -231,9 +231,9 @@ class _HomePageState extends State<HomePage>
                 _buildAccountBanner(acc),
                 SizedBox(height: gap),
               ],
-              // 连接卡片：仅 status/current/error/speedTesting 变化时重建
-              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st})>(
-                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting),
+              // 连接卡片(含模式开关)：status/current/error/speedTesting/smartMode 变化时重建
+              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm})>(
+                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode),
                 builder: (ctx, v, child) {
                   final conn = ctx.read<ConnectionController>();
                   final connected = conn.status == ConnStatus.connected;
@@ -241,22 +241,12 @@ class _HomePageState extends State<HomePage>
                   return _buildConnectCard(conn, connected, busy, compact);
                 },
               ),
-              SizedBox(height: gap),
-              Selector<ConnectionController, bool>(
-                selector: (_, c) => c.smartMode,
-                builder: (ctx, v, child) => _buildModeSwitch(ctx.read<ConnectionController>()),
-              ),
               SizedBox(height: gapL),
               RepaintBoundary(child: _buildStats(ConnectionController.instance)),
               SizedBox(height: gapL),
               Selector<ConnectionController, ({int nodesHash, String? curTag, String? lock})>(
                 selector: (_, c) => (nodesHash: c.nodes.length, curTag: c.current?.tag, lock: c.lockedCountry),
                 builder: (ctx, v, child) => _buildQuickCountries(ctx.read<ConnectionController>()),
-              ),
-              SizedBox(height: gapL),
-              Selector<ConnectionController, ({bool at, bool st, String? t})>(
-                selector: (_, c) => (at: c.autoTest, st: c.speedTesting, t: c.lastSpeedTestTime),
-                builder: (ctx, v, child) => _buildAutoTestCard(ctx.read<ConnectionController>()),
               ),
               SizedBox(height: compact ? 10 : 16),
             ],
@@ -766,13 +756,14 @@ class _HomePageState extends State<HomePage>
               _buildErrorActions(conn),
             ],
           ],
+          const SizedBox(height: 10),
+          _buildModeSwitch(conn),
         ],
       ),
     );
   }
 
   /// 错误区按钮：按失败类型分场景引导
-  /// （类型化失败：授权 VPN / 允许通知 / 保持前台重试；未知类型：通用重试）
   Widget _buildErrorActions(ConnectionController conn) {
     final guide = guideForConnError(conn.errorKind);
     final actions = <Widget>[
@@ -994,52 +985,6 @@ class _HomePageState extends State<HomePage>
           ],
         ),
       ],
-    );
-  }
-
-  /// 自动测速开关卡（连接后后台测速选优，不阻塞连接）
-  Widget _buildAutoTestCard(ConnectionController conn) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            colors: [Color(0x29455FE9), Color(0x0A455FE9)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: MFColors.brand.withValues(alpha: .35)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(9)),
-            child: const Icon(Icons.bolt, size: 16, color: Colors.white),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(AppStrings.t('auto_test_title'),
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-                Text(
-                  conn.lastSpeedTestTime == null
-                      ? AppStrings.t('auto_test_desc')
-                      : '${AppStrings.t('last_test')} ${conn.lastSpeedTestTime}',
-                  style: TextStyle(fontSize: 10, color: MFColors.txt3),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: conn.autoTest,
-            activeTrackColor: MFColors.brand,
-            onChanged: (v) => conn.setAutoTest(v),
-          ),
-        ],
-      ),
     );
   }
 
