@@ -33,6 +33,7 @@ class SettingsStore {
         'notify': true,
         'crashReport': false,
         'analytics': false,
+        'launchAtStartup': false,
       };
 
   Future<Map<String, dynamic>> load() async {

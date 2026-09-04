@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
@@ -9,7 +12,10 @@ import 'core/services/account_service.dart';
 import 'core/services/app_data_cleaner.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/crash_logger.dart';
+import 'core/services/local_notify.dart';
+import 'core/services/network_monitor.dart';
 import 'core/services/subscription_scheduler.dart';
+import 'core/services/tray_service.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
 import 'l10n/app_strings.dart';
@@ -49,6 +55,14 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 桌面端窗口管理（关闭=隐藏到托盘，不退出进程）
+  if (!Platform.environment.containsKey('FLUTTER_TEST') &&
+      (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    await windowManager.ensureInitialized();
+    windowManager.setPreventClose(true);
+    windowManager.setTitle('MoneyFly');
+    windowManager.setMinimumSize(const Size(380, 620));
+  }
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();
   // 全新安装检测：卸载残留/数据被清 → 清空旧配置、旧 token、旧缓存，
@@ -65,14 +79,31 @@ class MoneyFlyApp extends StatefulWidget {
   State<MoneyFlyApp> createState() => _MoneyFlyAppState();
 }
 
-class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver {
+class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, WindowListener {
   final _session = SessionState();
   bool _wasLoggedIn = false;
+
+  static bool get _isDesktopRuntime =>
+      !Platform.environment.containsKey('FLUTTER_TEST') &&
+      (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (_isDesktopRuntime) {
+      windowManager.addListener(this);
+      TrayService.instance.init(
+        showWindow: () async {
+          await windowManager.show();
+          await windowManager.focus();
+        },
+        quit: () async {
+          await windowManager.setPreventClose(false);
+          await windowManager.close();
+        },
+      );
+    }
     // 登录态变化 → 启停「定时更新订阅」（登录后每 30 分钟静默拉订阅覆盖旧配置，
     // 登出/会话失效即停）
     _session.addListener(_onSessionChanged);
@@ -85,6 +116,10 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver {
     ThemeController.instance.restore();
     // 崩溃日志（设置开关控制）
     CrashLogger.init();
+    // 本地通知初始化（到期提醒 / 连接异常）
+    LocalNotify.instance.init();
+    // 网络变化监听（WiFi↔蜂窝切换自动重连）
+    NetworkMonitor.instance.start();
     // 会话失效（refresh 失败）→ 清空路由栈强制回登录页
     // （push 在栈上的设置/订单等页面会残留盖住登录页，需先 pop 到根）
     ApiClient.instance.onSessionExpired(() {
@@ -97,8 +132,16 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (_isDesktopRuntime) {
+      windowManager.removeListener(this);
+    }
     _session.removeListener(_onSessionChanged);
     super.dispose();
+  }
+
+  @override
+  void onWindowClose() async {
+    await windowManager.hide();
   }
 
   void _onSessionChanged() {

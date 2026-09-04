@@ -6,6 +6,7 @@ import '../../l10n/app_strings.dart';
 import '../api/api_client.dart';
 import '../models/models.dart';
 import '../proxy/proxy_core.dart';
+import 'local_notify.dart';
 import 'subscription_service.dart';
 
 /// 账号可用状态（三端统一判定「能否连接 VPN / 该给什么提示」）：
@@ -141,6 +142,10 @@ class AccountService extends ChangeNotifier {
     try {
       final prev = status;
       await refresh(force: true);
+      // 到期通知（7/3/1/0 天，每 5 分钟巡检但仅到期态推一次）
+      if (sub != null && sub!.remainingDays <= 7 && sub!.remainingDays >= 0) {
+        LocalNotify.instance.showExpiryWarning(sub!.remainingDays);
+      }
       if (prev == AccountStatus.ok && isBlocked) {
         await conn.disconnect();
       }

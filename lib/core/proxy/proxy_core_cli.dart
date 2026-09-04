@@ -20,8 +20,6 @@ import 'system_proxy.dart';
 ///   Windows  `exe 同目录/sing-box.exe`
 ///   可用环境变量 MONEYFLY_SINGBOX 覆盖（开发调试用）。
 class ProxyCoreCli extends ProxyCore {
-  /// Clash API 地址（与 SingBoxConfigBuilder 中 external_controller 一致）
-  static const clashApi = 'http://127.0.0.1:9090';
 
   /// 是否由 app 管理系统代理（连接时设置、断开时恢复）。
   /// 集成测试置 false，避免改动真实系统代理。
@@ -32,7 +30,7 @@ class ProxyCoreCli extends ProxyCore {
   static const _readyTimeout = Duration(seconds: 10);
 
   final Dio _api = Dio(BaseOptions(
-    baseUrl: clashApi,
+    baseUrl: 'http://127.0.0.1:9090',
     connectTimeout: const Duration(seconds: 3),
     receiveTimeout: const Duration(seconds: 3),
   ));
@@ -127,7 +125,11 @@ class ProxyCoreCli extends ProxyCore {
         (config.remove('_localPort') as num?)?.toInt() ?? SystemProxyManager.defaultPort;
     // Clash API 管理端口（设置页自定义，默认 9090）
     _clashApiPort = (config.remove('_clashApiPort') as num?)?.toInt() ?? 9090;
+    final clashSecret = config.remove('_clashApiSecret')?.toString() ?? '';
     _api.options.baseUrl = 'http://127.0.0.1:$_clashApiPort';
+    if (clashSecret.isNotEmpty) {
+      _api.options.headers['Authorization'] = 'Bearer $clashSecret';
+    }
 
     final binary = resolveBinary();
     final dir = Directory(workDir);

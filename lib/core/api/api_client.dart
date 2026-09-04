@@ -30,7 +30,10 @@ class ApiClient {
     // 请求日志（写入 App Support 目录 http.log，登录/网络问题排查用）
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (o, h) {
-        _logHttp('>>> ${o.method} ${o.uri}\n    body: ${o.data}');
+        const sensitive = ['/auth/login', '/auth/register', '/auth/reset-password',
+            '/auth/forgot-password', '/users/change-password', '/auth/verification'];
+        final isSensitive = sensitive.any((p) => o.path.contains(p));
+        _logHttp('>>> ${o.method} ${o.uri}\n    body: ${isSensitive ? '[REDACTED]' : o.data}');
         h.next(o);
       },
       onResponse: (r, h) {

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import '../models/models.dart';
 
@@ -112,6 +113,7 @@ class SingBoxConfigBuilder {
       case 'wireguard':
         base['private_key'] = raw['private-key'] ?? '';
       case 'shadowsocksr':
+      case 'ssr':
         base['method'] = n.cipher ?? 'aes-128-cfb';
         base['password'] = n.password ?? '';
         base['obfs'] = raw['obfs']?.toString() ?? 'plain';
@@ -134,7 +136,18 @@ class SingBoxConfigBuilder {
       };
     } else if (network == 'grpc') {
       base['transport'] = {'type': 'grpc', 'service_name': n.wsPath ?? ''};
+    } else if (network == 'http' || network == 'h2') {
+      base['transport'] = {
+        'type': 'http',
+        'host': [n.host ?? n.server],
+        'path': n.wsPath ?? '/',
+      };
     }
+  }
+
+  static String generateSecret() {
+    final rng = Random.secure();
+    return List.generate(16, (_) => rng.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
   }
 
   /// 生成完整配置
@@ -142,6 +155,7 @@ class SingBoxConfigBuilder {
   /// [bypassLan] true = 局域网流量直连（默认）
   /// [ruleSetDir] 本地规则集目录（内置 geoip/geosite .srs 的落盘路径）；
   ///              为空时回退远程地址（开发/降级用）
+  /// [clashApiSecret] Clash API 鉴权密钥（防同机 App 未授权访问）
   static Map<String, dynamic> build({
     required List<ProxyNode> nodes,
     required String selectedTag,
@@ -153,7 +167,9 @@ class SingBoxConfigBuilder {
     int clashApiPort = 9090,
     String tunStack = 'system', // 桌面端 system；Android 需 gvisor
     String? ruleSetDir,
+    String? clashApiSecret,
   }) {
+    final secret = clashApiSecret ?? generateSecret();
     final initialMode = smartMode ? 'Rule' : 'Global';
     final outbounds = buildOutbounds(nodes);
     // selector：包含全部节点 → 支持 clash-api 热切换到任意节点
@@ -215,6 +231,8 @@ class SingBoxConfigBuilder {
       '_localPort': localPort,
       // 元数据：Clash API 管理端口（切节点/测速/流量统计用；内核启动前剥离）
       '_clashApiPort': clashApiPort,
+      // 元数据：Clash API 鉴权密钥（内核启动前剥离，ProxyCore 用它设 Bearer header）
+      '_clashApiSecret': secret,
       // 生产日志 warn：减少磁盘与 CPU 开销（调试时改 info）
       'log': {'level': 'warn', 'timestamp': true},
       // sing-box 1.14：DNS 服务器用 type+server 结构（address 字段已移除）
@@ -262,7 +280,7 @@ class SingBoxConfigBuilder {
         'clash_api': {
           'external_controller': '127.0.0.1:$clashApiPort',
           'external_ui': '',
-          'secret': '',
+          'secret': secret,
           'default_mode': initialMode,
         },
       },

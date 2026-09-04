@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -108,6 +109,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _section(AppStrings.t('settings_conn')),
             _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
                 trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v))),
+            if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+              _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
+                  trailing: _switch(_s['launchAtStartup'] == true, (v) async {
+                    await _set('launchAtStartup', v);
+                    if (v) { launchAtStartup.enable(); } else { launchAtStartup.disable(); }
+                  })),
             _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
                 trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
             _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),

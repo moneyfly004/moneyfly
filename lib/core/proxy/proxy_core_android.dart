@@ -41,10 +41,9 @@ WatchdogAction decideWatchdog({
 /// 切模式/切节点走 Clash API 热更新，流量统计从 /traffic 流拉取。
 class ProxyCoreAndroid extends ProxyCore {
   static const _channel = MethodChannel('top.moneyfly/vpn_core');
-  static const clashApi = 'http://127.0.0.1:9090';
 
   final Dio _api = Dio(BaseOptions(
-    baseUrl: clashApi,
+    baseUrl: 'http://127.0.0.1:9090',
     connectTimeout: const Duration(seconds: 3),
     receiveTimeout: const Duration(seconds: 3),
   ));
@@ -85,7 +84,11 @@ class ProxyCoreAndroid extends ProxyCore {
     config.remove('_localPort');
     final clashPort =
         (config.remove('_clashApiPort') as num?)?.toInt() ?? 9090;
+    final clashSecret = config.remove('_clashApiSecret')?.toString() ?? '';
     _api.options.baseUrl = 'http://127.0.0.1:$clashPort';
+    if (clashSecret.isNotEmpty) {
+      _api.options.headers['Authorization'] = 'Bearer $clashSecret';
+    }
     final inbounds = config['inbounds'];
     if (inbounds is List) {
       for (final ib in inbounds) {

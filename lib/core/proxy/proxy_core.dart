@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/models.dart';
 import '../services/account_service.dart';
 import '../services/geo_lookup.dart';
+import '../services/local_notify.dart';
 import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
 import 'proxy_core_android.dart';
@@ -231,6 +233,7 @@ class ConnectionController extends ChangeNotifier {
 
   Timer? _reconnectTimer;
   Timer? _bgTestTimer;
+  Timer? _wakeLockTimer;
   int _reconnectCount = 0;
   int _epoch = 0;
   bool _autoConnectTried = false;
@@ -303,6 +306,21 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
+  /// WakeLock：连接/重连时短暂持有（<5s），防止 Doze 打断握手
+  void _acquireWakeLock() {
+    if (!Platform.isAndroid) return;
+    _wakeLockTimer?.cancel();
+    try { WakelockPlus.enable(); } catch (_) {}
+    _wakeLockTimer = Timer(const Duration(seconds: 5), _releaseWakeLock);
+  }
+
+  void _releaseWakeLock() {
+    _wakeLockTimer?.cancel();
+    _wakeLockTimer = null;
+    if (!Platform.isAndroid) return;
+    try { WakelockPlus.disable(); } catch (_) {}
+  }
+
   /// 连接（Hiddify 模式）：立即启动内核 → 已连接 → 后台自动测速切换最优节点。
   /// 测速绝不阻塞连接：点连接立刻生效，测速在后台并行，完成后自动切换更优节点。
   /// [fromReconnect] 由断线重连调度发起：失败时继续重试（不中断重连链）。
@@ -358,6 +376,7 @@ class ConnectionController extends ChangeNotifier {
     status = ConnStatus.connecting;
     error = null;
     errorKind = ConnErrorKind.none;
+    _acquireWakeLock();
     notifyListeners();
 
     // 优先选延迟最优（已有测速数据时）；否则先连可用节点，后台测速后自动切最优
@@ -529,6 +548,7 @@ class ConnectionController extends ChangeNotifier {
     _epoch++;
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
+    _releaseWakeLock();
     AccountService.instance.stopExpiryWatch();
     status = ConnStatus.disconnecting;
     notifyListeners();
@@ -600,6 +620,13 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
+  /// 网络环境变化（WiFi↔蜂窝切换）：已连接时触发快速重连
+  void onNetworkChanged() {
+    if (status != ConnStatus.connected || !_core.isRunning) return;
+    _reconnectCount = 0;
+    _scheduleReconnect();
+  }
+
   /// 断线重连调度（内核异常退出时由 core 回调）
   /// 断线重连调度（内核异常退出时由 core 回调，或重连失败后继续重试）
   void onDisconnectedUnexpectedly() {
@@ -610,9 +637,8 @@ class ConnectionController extends ChangeNotifier {
       status = ConnStatus.disconnected;
       error = autoReconnect ? AppStrings.t('reconnect_exhausted') : AppStrings.t('disconnected_hint');
       errorKind = ConnErrorKind.none;
-      // 内核已死且不再重连 → 必须恢复系统代理，否则残留指向死端口，
-      // 整个系统流量中断（设置页「断线自动重连」关闭或重连超限时必现）
       unawaited(SystemProxyManager.restore());
+      LocalNotify.instance.showReconnectFailed();
       notifyListeners();
       return;
     }
@@ -673,6 +699,7 @@ class ConnectionController extends ChangeNotifier {
   void dispose() {
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
+    _wakeLockTimer?.cancel();
     _core.dispose();
     super.dispose();
   }
