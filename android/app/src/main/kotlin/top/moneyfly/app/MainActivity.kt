@@ -64,12 +64,23 @@ class MainActivity : FlutterActivity() {
                             action = MoneyFlyVpnService.ACTION_START
                             putExtra(MoneyFlyVpnService.EXTRA_CONFIG, config)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
+                        try {
+                            // Android 12+ 后台启动前台服务受限：若连接瞬间 App 被系统页
+                            // （如电池豁免框）挤到后台，这里会抛异常 —— 必须回传真实
+                            // 原因，否则 Dart 侧只能等到 15s 轮询超时（表现为「连接不生效」）
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error(
+                                "start_failed",
+                                "无法启动 VPN 服务：${e.message ?: e.javaClass.simpleName}",
+                                null,
+                            )
                         }
-                        result.success(true)
                     }
                     "stopVpn" -> {
                         startService(Intent(this, MoneyFlyVpnService::class.java).apply {

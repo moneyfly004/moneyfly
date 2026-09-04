@@ -95,7 +95,12 @@ class ProxyCoreAndroid extends ProxyCore {
     try {
       await _channel.invokeMethod('startVpn', {'config': jsonEncode(config)});
     } catch (e) {
-      _lastError = AppStrings.t('vpn_start_fail', {'err': '$e'});
+      // start_failed（原生侧返回，如 Android 12+ 后台启动前台服务受限）：
+      // 直接透传原生原因，避免被笼统的「内核启动超时」掩盖
+      final detail = e is PlatformException && e.code == 'start_failed'
+          ? (e.message?.toString() ?? '')
+          : '$e';
+      _lastError = AppStrings.t('vpn_start_fail', {'err': detail});
       throw UnsupportedError(_lastError!);
     }
     final sw = Stopwatch()..start();
