@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
 import '../proxy/proxy_core.dart';
+import 'app_log.dart';
 
 /// 网络变化监听：WiFi↔蜂窝切换 / 断网→恢复时通知 ConnectionController
 /// 触发快速重连（3s 去抖，避免切换瞬间连续触发）
@@ -32,6 +33,7 @@ class NetworkMonitor {
 
   void _onChange(List<ConnectivityResult> results) {
     if (_prev != null && !listEquals(results, _prev) && !results.contains(ConnectivityResult.none)) {
+      AppLog.net('network changed: $_prev → $results');
       _debounce?.cancel();
       _debounce = Timer(const Duration(seconds: 3), () {
         ConnectionController.instance.onNetworkChanged();

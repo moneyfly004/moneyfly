@@ -11,6 +11,7 @@ import 'core/proxy/proxy_core.dart';
 import 'core/services/account_service.dart';
 import 'core/services/app_data_cleaner.dart';
 import 'core/services/auth_service.dart';
+import 'core/services/app_log.dart';
 import 'core/services/crash_logger.dart';
 import 'core/services/local_notify.dart';
 import 'core/services/network_monitor.dart';
@@ -69,6 +70,7 @@ void main() async {
   // 保证重装后必须重新登录并重新拉取订阅（不沿用旧配置）；版本升级 →
   // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。
   await AppDataCleaner.cleanupOnLaunch();
+  AppLog.log('APP', 'launched v${UpdateInfo.currentVersion}, ${Platform.operatingSystem}');
   runApp(const MoneyFlyApp());
 }
 

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'proxy_core.dart';
 import 'rule_assets.dart';
 import 'system_proxy.dart';
+import '../services/app_log.dart';
 
 /// 方案 A：sing-box CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
 ///
@@ -292,6 +293,7 @@ class ProxyCoreCli extends ProxyCore {
       _proc = null;
       _trafficCancel?.cancel();
       _lastError = '内核进程退出（code $code）：${_tail()}';
+      AppLog.kernel('process exited unexpectedly, code=$code, log=${_tail()}');
       _onUnexpectedExit?.call();
     }
   }

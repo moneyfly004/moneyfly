@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_strings.dart';
+import '../services/app_log.dart';
 import '../services/permission_service.dart';
 import 'proxy_core.dart';
 
@@ -253,6 +254,7 @@ class ProxyCoreAndroid extends ProxyCore {
     _watchdogFailures = 0;
     _lastError = AppStrings.t('kernel_exit');
     _trafficCancel?.cancel();
+    AppLog.kernel('watchdog declared dead, failures=$_watchdogDeadThreshold');
     _onUnexpectedExit?.call();
   }
 

@@ -6,6 +6,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/models.dart';
 import '../services/account_service.dart';
+import '../services/app_log.dart';
 import '../services/geo_lookup.dart';
 import '../services/local_notify.dart';
 import '../services/settings_store.dart';
@@ -418,6 +419,7 @@ class ConnectionController extends ChangeNotifier {
       }
       status = ConnStatus.connected;
       _reconnectCount = 0;
+      AppLog.conn('connected via ${current?.tag} (${current?.type})');
       // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
       if (runSpeedTest && autoTest) {
         unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: true));
@@ -428,8 +430,7 @@ class ConnectionController extends ChangeNotifier {
       if (epoch != _epoch) return;
       _releaseWakeLock();
       status = ConnStatus.error;
-      // 类型化失败（TypedConnError）→ 保留类型供首页分场景引导；
-      // 其余走通用路径（未知类型，仅显示文案 + 重试）
+      AppLog.error('connect failed: $e');
       final TypedConnError? typedErr = e is TypedConnError ? e : null;
       errorKind = typedErr?.kind ?? ConnErrorKind.unknown;
       var errMsg = typedErr?.message ??
@@ -563,6 +564,7 @@ class ConnectionController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _epoch++;
+    AppLog.conn('disconnect requested');
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
     _releaseWakeLock();
@@ -634,6 +636,7 @@ class ConnectionController extends ChangeNotifier {
 
   /// 内核异常退出回调：未连接/用户主动断开时忽略，否则走重连或放弃
   void onDisconnectedUnexpectedly() {
+    AppLog.kernel('unexpected exit, status=$status, autoReconnect=$autoReconnect, count=$_reconnectCount');
     if (status != ConnStatus.connected && status != ConnStatus.reconnecting) {
       return; // 用户主动断开/未连接时不重连
     }

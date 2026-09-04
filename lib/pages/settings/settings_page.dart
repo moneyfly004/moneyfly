@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/app_log.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
@@ -183,6 +185,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '⏻', title: AppStrings.t('logout'), danger: true, onTap: _logout),
             _section(AppStrings.t('settings_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
+            _row(icon: '📋', title: AppStrings.t('settings_log'), desc: AppStrings.t('settings_log_desc'), onTap: _showLog),
             const SizedBox(height: 12),
              Center(
               child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
@@ -604,6 +607,50 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (v != null) onSelected(v);
+  }
+
+  Future<void> _showLog() async {
+    final content = await AppLog.read();
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Row(
+          children: [
+            Text(AppStrings.t('settings_log'), style: const TextStyle(fontSize: 16)),
+            const Spacer(),
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: content));
+                if (mounted) _toast(AppStrings.t('log_copied'));
+              },
+              child: Text(AppStrings.t('copy'), style: const TextStyle(fontSize: 12)),
+            ),
+            TextButton(
+              onPressed: () async {
+                await AppLog.clear();
+                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                if (mounted) _toast(AppStrings.t('log_cleared'));
+              },
+              child: Text(AppStrings.t('clear_log'), style: const TextStyle(fontSize: 12, color: MFColors.red)),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: SingleChildScrollView(
+            reverse: true,
+            child: SelectableText(
+              content.isEmpty ? AppStrings.t('log_empty') : content,
+              style: TextStyle(fontSize: 10, color: MFColors.txt2, fontFamily: kNumFont, height: 1.6),
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: Text(AppStrings.t('ok_btn')))],
+      ),
+    );
   }
 
   void _toast(String msg) {
