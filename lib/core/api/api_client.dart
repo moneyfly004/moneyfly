@@ -177,8 +177,10 @@ class ApiClient {
       final r = await _dio.post(Endpoints.refresh, data: {'refresh_token': rt});
       final data = _unwrap(r.data);
       if (data is Map && data['access_token'] != null) {
+        final newAccess = data['access_token'].toString();
+        if (newAccess.isEmpty) return false;
         await saveTokens(
-          data['access_token'].toString(),
+          newAccess,
           (data['refresh_token'] as String?) ?? rt,
         );
         return true;

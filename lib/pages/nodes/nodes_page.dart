@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/account_service.dart';
-import '../../core/services/speed_tester.dart';
 import '../../core/models/models.dart';
 import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
@@ -63,8 +62,8 @@ class _NodesPageState extends State<NodesPage> {
       if (mounted) {
         _toast(AppStrings.t('speed_done'));
         if (_autoBest) {
-          final best = SpeedTester.selectBest(tested);
-          if (best != null) await conn.switchNode(best);
+          final best = conn.selectBestRespectingLock(tested);
+          if (best != null) await conn.switchNode(best, userInitiated: false);
         }
       }
     } finally {
@@ -85,7 +84,9 @@ class _NodesPageState extends State<NodesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final conn = context.watch<ConnectionController>();
+    // 精准订阅：仅 nodes 列表/current 节点变化时重建列表
+    context.select((ConnectionController c) => (n: c.nodes.length, t: c.current?.tag));
+    final conn = context.read<ConnectionController>();
     final filtered = conn.nodes
         .where((n) => n.tag.toLowerCase().contains(_query.toLowerCase()))
         .toList();
@@ -258,9 +259,14 @@ class _NodesPageState extends State<NodesPage> {
     );
   }
 
+  static final _nodeRadius = BorderRadius.circular(15);
+  static final _nodeMargin = const EdgeInsets.fromLTRB(22, 0, 22, 8);
+  static final _nodePadding = const EdgeInsets.symmetric(horizontal: 13, vertical: 12);
+  static final _flagRadius = BorderRadius.circular(11);
+  static final _latencyRadius = BorderRadius.circular(20);
+
   Widget _buildNodeRow(ConnectionController conn, dynamic n) {
     final isCurrent = conn.current?.tag == n.tag;
-    // 未测速（latencyMs < 0）显示中性色，避免误导为“极低延迟”
     final untested = n.online && n.latencyMs < 0;
     final latencyColor = untested
         ? MFColors.txt3
@@ -273,11 +279,11 @@ class _NodesPageState extends State<NodesPage> {
         if (mounted) _toast(AppStrings.t('switched_to', {'name': n.tag}));
       },
       child: Container(
-        margin: const EdgeInsets.fromLTRB(22, 0, 22, 8),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        margin: _nodeMargin,
+        padding: _nodePadding,
         decoration: BoxDecoration(
           color: isCurrent ? MFColors.brand.withValues(alpha: .09) : MFColors.card,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: _nodeRadius,
           border: Border.all(color: isCurrent ? MFColors.brand.withValues(alpha: .6) : MFColors.line),
         ),
         child: Row(
@@ -285,7 +291,7 @@ class _NodesPageState extends State<NodesPage> {
             Container(
               width: 34,
               height: 34,
-              decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(11)),
+              decoration: BoxDecoration(color: MFColors.card2, borderRadius: _flagRadius),
               alignment: Alignment.center,
               child: CountryFlag(n.countryCode, size: 17),
             ),
@@ -310,7 +316,7 @@ class _NodesPageState extends State<NodesPage> {
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
               decoration: BoxDecoration(
                 color: latencyColor.withValues(alpha: .1),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: _latencyRadius,
                 border: Border.all(color: latencyColor.withValues(alpha: .25)),
               ),
               child: Text(n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '— ms',

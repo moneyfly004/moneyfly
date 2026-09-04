@@ -89,7 +89,7 @@ class SubscriptionService {
       return await ApiClient.instance.fetchText(subscribeUrl);
     } catch (e) {
       final cached = await SubscriptionCache.instance.readLatest();
-      if (cached == null) rethrow; // 无有效缓存：保持原始错误向上抛
+      if (cached == null || cached.subscribeUrl != subscribeUrl) rethrow;
       return cached.raw;
     }
   }

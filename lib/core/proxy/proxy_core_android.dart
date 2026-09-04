@@ -139,6 +139,7 @@ class ProxyCoreAndroid extends ProxyCore {
 
   @override
   Future<void> stop() async {
+    _running = false;
     _watchdog?.cancel();
     _watchdog = null;
     _trafficCancel?.cancel();
@@ -146,7 +147,6 @@ class ProxyCoreAndroid extends ProxyCore {
     try {
       await _channel.invokeMethod('stopVpn');
     } catch (_) {}
-    _running = false;
   }
 
   @override
@@ -273,6 +273,7 @@ class ProxyCoreAndroid extends ProxyCore {
         await for (final chunk in stream) {
           if (cancel.isCancelled || !_running) break;
           _trafficBuf.addAll(chunk);
+          if (_trafficBuf.length > 64 * 1024) _trafficBuf.removeRange(0, _trafficBuf.length - 4096);
           while (true) {
             final nl = _trafficBuf.indexOf(0x0A);
             if (nl < 0) break;

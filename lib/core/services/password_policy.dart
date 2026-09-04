@@ -1,5 +1,9 @@
 import '../../l10n/app_strings.dart';
 
+/// 邮箱格式校验（与后端一致的宽松正则，拦截明显输入错误）
+bool looksLikeEmail(String s) =>
+    RegExp(r'^[\w.+-]+@[\w-]+(\.[\w-]+)+$').hasMatch(s.trim());
+
 /// 密码强度策略 —— 与后端完全一致，避免「客户端只查长度、服务端返回强度不足」的落差：
 ///
 /// 1. 长度 ≥ 8（后端 min_password_length 可配置，默认 8，客户端按默认值校验）；

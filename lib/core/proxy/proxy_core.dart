@@ -96,48 +96,30 @@ class ProxyCoreFactory {
 
 /// Android 占位实现（VpnService 骨架已就绪，待 libcore aar 接入）
 class _UnavailableCore implements ProxyCore {
-  bool _running = false;
-  String? _error = '当前平台的内核尚未接入：Android 需 libcore（下一阶段）；桌面端已内置 sing-box。';
-
   @override
-  Future<void> start(Map<String, dynamic> config) async {
-    _error = '当前平台的内核尚未接入：Android 需 libcore（下一阶段）；桌面端已内置 sing-box。';
-    throw UnsupportedError('当前平台内核未接入');
-  }
-
+  Future<void> start(Map<String, dynamic> config) async =>
+      throw UnsupportedError('当前平台内核未接入');
   @override
-  Future<void> stop() async {
-    _running = false;
-  }
-
+  Future<void> stop() async {}
   @override
   Future<void> switchMode(bool smart) async {}
-
   @override
   Future<void> switchNode(String tag) async {}
-
   @override
   Future<int> testNodeDelay(String tag,
       {Duration timeout = const Duration(seconds: 5), String? url}) async => -1;
-
   @override
-  bool get isRunning => _running;
-
+  bool get isRunning => false;
   @override
-  String? get lastError => _error;
-
+  String? get lastError => '当前平台的内核尚未接入';
   @override
   VoidCallback? get onUnexpectedExit => null;
-
   @override
   set onUnexpectedExit(VoidCallback? cb) {}
-
   @override
-  void Function(double upMbps, double downMbps)? get onTraffic => null;
-
+  void Function(double, double)? get onTraffic => null;
   @override
-  set onTraffic(void Function(double upMbps, double downMbps)? cb) {}
-
+  set onTraffic(void Function(double, double)? cb) {}
   @override
   void dispose() {}
 }
@@ -252,16 +234,12 @@ class ConnectionController extends ChangeNotifier {
   int _epoch = 0;
   bool _autoConnectTried = false;
 
-  Future<void> loadNodes(List<ProxyNode> list) {
-    // 保留同 tag 节点已测延迟：订阅刷新/下拉刷新拿到的是重新解析的全新对象
-    // （latencyMs=-1），直接替换会把已测延迟清空 → 首页「快速切换国家」
-    // （要求 latency>=0）与节点列表延迟徽标会"过一段时间就消失"。
+  Future<void> loadNodes(List<ProxyNode> list) async {
     nodes = _carryMeasuredLatency(list, nodes);
     if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
       current = null;
     }
     notifyListeners();
-    return Future.value();
   }
 
   /// 新列表节点若本身无测速结果（latencyMs<0），且旧列表存在同 tag 且测过
@@ -366,6 +344,10 @@ class ConnectionController extends ChangeNotifier {
     }
     final epoch = ++_epoch;
     _reconnectTimer?.cancel();
+    // 重连时确保旧内核已停干净（上次 start 可能半途失败留下残留进程）
+    if (_core.isRunning) {
+      try { await _core.stop(); } catch (_) {}
+    }
     // 从设置读取内核启动参数。smartMode / autoTest / autoReconnect 是运行时
     // 状态（启动时 applySettings 同步、设置页/首页开关即时更新），连接时不再
     // 用 defaultMode 覆盖，避免用户在首页的选择被静默重置。
@@ -445,6 +427,7 @@ class ConnectionController extends ChangeNotifier {
       unawaited(refreshRealCountry()); // 实测真实出口国家
     } catch (e) {
       if (epoch != _epoch) return;
+      _releaseWakeLock();
       status = ConnStatus.error;
       // 类型化失败（TypedConnError）→ 保留类型供首页分场景引导；
       // 其余走通用路径（未知类型，仅显示文案 + 重试）
@@ -491,14 +474,17 @@ class ConnectionController extends ChangeNotifier {
   /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）
   Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress}) async {
+    if (nodes.isEmpty) return nodes;
     final result = List<ProxyNode>.of(nodes);
-    final queue = List<int>.generate(result.length, (i) => i);
+    var nextIdx = 0;
     var done = 0;
     const maxConcurrent = 16;
 
     Future<void> worker() async {
-      while (queue.isNotEmpty) {
-        final idx = queue.removeLast();
+      while (true) {
+        final idx = nextIdx;
+        if (idx >= result.length) break;
+        nextIdx++;
         final ms = await _core.testNodeDelay(result[idx].tag, url: testUrl);
         result[idx].latencyMs = ms;
         result[idx].online = ms >= 0;
@@ -507,11 +493,16 @@ class ConnectionController extends ChangeNotifier {
       }
     }
 
-    final count = result.isEmpty
-        ? 1
-        : (result.length < maxConcurrent ? result.length : maxConcurrent);
+    final count = result.length < maxConcurrent ? result.length : maxConcurrent;
     await Future.wait(List.generate(count, (_) => worker()));
     return result;
+  }
+
+  /// 在 [tested] 中按 lockedCountry 过滤后选延迟最优节点
+  ProxyNode? selectBestRespectingLock(List<ProxyNode> tested) {
+    if (lockedCountry == null) return SpeedTester.selectBest(tested);
+    final candidates = tested.where((n) => n.countryCode == lockedCountry).toList();
+    return SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
   }
 
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
@@ -531,13 +522,9 @@ class ConnectionController extends ChangeNotifier {
       final tested = await testAllNodes(nodes);
       if (epoch != _epoch) return;
       nodes = tested;
-      // 尊重用户锁定的国家：有锁定时只在该国节点中选优
-      final candidates = lockedCountry != null
-          ? tested.where((n) => n.countryCode == lockedCountry).toList()
-          : tested;
-      final best = SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
+      final best = selectBestRespectingLock(tested);
       lastSpeedTestTime = _now();
-      if (best != null && status == ConnStatus.connected) {
+      if (best != null && status == ConnStatus.connected && _core.isRunning) {
         if (forceBest) {
           await switchNode(best, userInitiated: false);
         } else {
@@ -563,6 +550,18 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
+  void _clearState() {
+    speedTesting = false;
+    upSpeedMbps = 0;
+    downSpeedMbps = 0;
+    speedNotifier.value = const SpeedSnapshot();
+    status = ConnStatus.disconnected;
+    error = null;
+    errorKind = ConnErrorKind.none;
+    realCountry = null;
+    lockedCountry = null;
+  }
+
   Future<void> disconnect() async {
     _epoch++;
     _reconnectTimer?.cancel();
@@ -571,39 +570,23 @@ class ConnectionController extends ChangeNotifier {
     AccountService.instance.stopExpiryWatch();
     status = ConnStatus.disconnecting;
     notifyListeners();
-    speedTesting = false;
-    upSpeedMbps = 0;
-    downSpeedMbps = 0;
-    speedNotifier.value = const SpeedSnapshot();
-    await _core.stop();
-    status = ConnStatus.disconnected;
-    error = null;
-    errorKind = ConnErrorKind.none;
-    realCountry = null;
-    lockedCountry = null;
+    _clearState();
+    try {
+      await _core.stop();
+    } catch (_) {}
     notifyListeners();
   }
 
-  /// 登出/切号时重置：断开内核并清空节点与连接状态，
-  /// 防止上一个账号的节点/状态残留到下一个账号
   Future<void> resetForLogout() async {
     _epoch++;
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
-    speedTesting = false;
-    upSpeedMbps = 0;
-    downSpeedMbps = 0;
-    speedNotifier.value = const SpeedSnapshot();
+    _clearState();
     try {
       await _core.stop();
     } catch (_) {}
     nodes = [];
     current = null;
-    status = ConnStatus.disconnected;
-    error = null;
-    errorKind = ConnErrorKind.none;
-    realCountry = null;
-    lockedCountry = null;
     _autoConnectTried = false;
     notifyListeners();
   }
@@ -615,7 +598,7 @@ class ConnectionController extends ChangeNotifier {
     current = node;
     if (userInitiated) lockedCountry = node.countryCode;
     notifyListeners();
-    if (status == ConnStatus.connected) {
+    if (status == ConnStatus.connected && _core.isRunning) {
       try {
         await _core.switchNode(node.tag);
         realCountry = null;
@@ -630,10 +613,10 @@ class ConnectionController extends ChangeNotifier {
 
   /// 切换模式（智能/全局）
   Future<void> toggleMode(bool smart) async {
-    _modeUserSet = true; // 用户手动选择优先，连接/设置不再覆盖
+    _modeUserSet = true;
     smartMode = smart;
     notifyListeners();
-    if (status == ConnStatus.connected) {
+    if (status == ConnStatus.connected && _core.isRunning) {
       try {
         await _core.switchMode(smart);
       } catch (e) {
@@ -644,15 +627,14 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
-  /// 网络环境变化（WiFi↔蜂窝切换）：已连接时触发快速重连
+  /// 网络环境变化（WiFi↔蜂窝切换）：已连接且内核在跑时，不重启内核，
+  /// 仅重新测速选优（内核的 TCP/UDP 连接会自动恢复，重启反而断流）。
   void onNetworkChanged() {
     if (status != ConnStatus.connected || !_core.isRunning) return;
-    _reconnectCount = 0;
-    _scheduleReconnect();
+    unawaited(retest());
   }
 
-  /// 断线重连调度（内核异常退出时由 core 回调）
-  /// 断线重连调度（内核异常退出时由 core 回调，或重连失败后继续重试）
+  /// 内核异常退出回调：未连接/用户主动断开时忽略，否则走重连或放弃
   void onDisconnectedUnexpectedly() {
     if (status != ConnStatus.connected && status != ConnStatus.reconnecting) {
       return; // 用户主动断开/未连接时不重连
@@ -695,14 +677,11 @@ class ConnectionController extends ChangeNotifier {
     _bgTestTimer?.cancel();
     if (intervalMin <= 0) return;
     _bgTestTimer = Timer.periodic(Duration(minutes: intervalMin), (_) async {
-      if (status != ConnStatus.connected || nodes.isEmpty) return;
+      if (status != ConnStatus.connected || nodes.isEmpty || !_core.isRunning) return;
       final tested = await testAllNodes(nodes);
       if (status != ConnStatus.connected) return;
       nodes = tested;
-      final candidates = lockedCountry != null
-          ? tested.where((n) => n.countryCode == lockedCountry).toList()
-          : tested;
-      final best = SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
+      final best = selectBestRespectingLock(tested);
       final cur = current;
       if (best == null || cur == null) return;
       final curOnline = nodes.firstWhere(

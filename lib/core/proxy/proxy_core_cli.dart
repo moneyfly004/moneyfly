@@ -185,10 +185,18 @@ class ProxyCoreCli extends ProxyCore {
     final p = _proc;
     _proc = null;
 
-    // 杀进程与恢复系统代理并行：两者互不依赖，串行会白白叠加耗时。
-    // 内核收到 SIGTERM 实测 ~20ms 退出，1.5s 超时兜底即可（原 3s 过长）。
     final killFut = () async {
       if (p == null) return;
+      // 优先通过 Clash API 请求内核优雅退出（sing-box 清理 TUN/WinTun），
+      // SIGTERM 在 Windows 上无效，直接 kill 会残留虚拟网卡。
+      try {
+        await _api.request('/shutdown',
+            options: Options(method: 'POST', validateStatus: (_) => true,
+                receiveTimeout: const Duration(milliseconds: 800)));
+        await p.exitCode.timeout(const Duration(milliseconds: 1500));
+        return;
+      } catch (_) {}
+      // API 退出失败：回退信号/强杀
       try {
         p.kill(ProcessSignal.sigterm);
         await p.exitCode.timeout(const Duration(milliseconds: 1500));
@@ -196,7 +204,6 @@ class ProxyCoreCli extends ProxyCore {
         p.kill(ProcessSignal.sigkill);
       }
     }();
-    // 恢复系统代理（sing-box set_system_proxy 被终止后不会自动恢复）
     final restoreFut =
         manageSystemProxy ? SystemProxyManager.restore() : Future.value();
 
@@ -312,6 +319,7 @@ class ProxyCoreCli extends ProxyCore {
         await for (final chunk in stream) {
           if (cancel.isCancelled || _proc == null) break;
           _trafficBuf.addAll(chunk);
+          if (_trafficBuf.length > 64 * 1024) _trafficBuf.removeRange(0, _trafficBuf.length - 4096);
           // 按行解析 JSON（流式，跨 chunk 的行由缓冲区拼接）
           while (true) {
             final nl = _trafficBuf.indexOf(0x0A); // '\n'

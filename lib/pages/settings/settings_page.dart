@@ -28,6 +28,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Map<String, dynamic> _s = {};
   bool _loaded = false;
 
+  static final _rowRadius = BorderRadius.circular(14);
+  static final _iconRadius = BorderRadius.circular(9);
+
   @override
   void initState() {
     super.initState();
@@ -213,10 +216,10 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: const EdgeInsets.symmetric(horizontal: 15),
       height: 52,
       decoration: BoxDecoration(
-          color: MFColors.card, borderRadius: BorderRadius.circular(14),
+          color: MFColors.card, borderRadius: _rowRadius,
           border: Border.all(color: MFColors.line)),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: _rowRadius,
         onTap: onTap,
         child: Row(
           children: [
@@ -224,7 +227,7 @@ class _SettingsPageState extends State<SettingsPage> {
               width: 28, height: 28,
               decoration: BoxDecoration(
                   color: danger ? MFColors.red.withValues(alpha: .12) : MFColors.card2,
-                  borderRadius: BorderRadius.circular(9)),
+                  borderRadius: _iconRadius),
               alignment: Alignment.center,
               child: Text(icon, style: const TextStyle(fontSize: 12)),
             ),

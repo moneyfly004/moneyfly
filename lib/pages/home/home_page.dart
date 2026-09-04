@@ -31,6 +31,8 @@ class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
 
+  static final _pillRadius = BorderRadius.circular(99);
+
   /// 连接状态下的呼吸动画（仅连接时运行，断开即停 → 省电 + 流畅）
   late final AnimationController _pulse = AnimationController(
     vsync: this,
@@ -207,11 +209,11 @@ class _HomePageState extends State<HomePage>
 
   @override
   Widget build(BuildContext context) {
-    final conn = context.watch<ConnectionController>();
     final acc = context.watch<AccountService>();
-    final connected = conn.status == ConnStatus.connected;
-    final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting || conn.status == ConnStatus.disconnecting;
-    final compact = MediaQuery.of(context).size.height < 820;
+    final compact = MediaQuery.sizeOf(context).height < 820;
+    final pad = compact ? 16.0 : 22.0;
+    final gap = compact ? 8.0 : 12.0;
+    final gapL = compact ? 8.0 : 14.0;
 
     return Scaffold(
       body: SafeArea(
@@ -219,25 +221,43 @@ class _HomePageState extends State<HomePage>
           onRefresh: () => _ensureNodes(force: true),
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.symmetric(horizontal: compact ? 16 : 22),
+            padding: EdgeInsets.symmetric(horizontal: pad),
             children: [
               _buildHeader(),
               SizedBox(height: compact ? 4 : 6),
               _buildSubInfoBar(acc),
-              SizedBox(height: compact ? 8 : 12),
+              SizedBox(height: gap),
               if (acc.isBlocked) ...[
                 _buildAccountBanner(acc),
-                SizedBox(height: compact ? 8 : 12),
+                SizedBox(height: gap),
               ],
-              _buildConnectCard(conn, connected, busy, compact),
-              SizedBox(height: compact ? 8 : 12),
-              _buildModeSwitch(conn),
-              SizedBox(height: compact ? 8 : 14),
-              _buildStats(conn),
-              SizedBox(height: compact ? 8 : 14),
-              _buildQuickCountries(conn),
-              SizedBox(height: compact ? 8 : 14),
-              _buildAutoTestCard(conn),
+              // 连接卡片：仅 status/current/error/speedTesting 变化时重建
+              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st})>(
+                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting),
+                builder: (ctx, v, child) {
+                  final conn = ctx.read<ConnectionController>();
+                  final connected = conn.status == ConnStatus.connected;
+                  final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting || conn.status == ConnStatus.disconnecting;
+                  return _buildConnectCard(conn, connected, busy, compact);
+                },
+              ),
+              SizedBox(height: gap),
+              Selector<ConnectionController, bool>(
+                selector: (_, c) => c.smartMode,
+                builder: (ctx, v, child) => _buildModeSwitch(ctx.read<ConnectionController>()),
+              ),
+              SizedBox(height: gapL),
+              RepaintBoundary(child: _buildStats(ConnectionController.instance)),
+              SizedBox(height: gapL),
+              Selector<ConnectionController, ({int nodesHash, String? curTag, String? lock})>(
+                selector: (_, c) => (nodesHash: c.nodes.length, curTag: c.current?.tag, lock: c.lockedCountry),
+                builder: (ctx, v, child) => _buildQuickCountries(ctx.read<ConnectionController>()),
+              ),
+              SizedBox(height: gapL),
+              Selector<ConnectionController, ({bool at, bool st, String? t})>(
+                selector: (_, c) => (at: c.autoTest, st: c.speedTesting, t: c.lastSpeedTestTime),
+                builder: (ctx, v, child) => _buildAutoTestCard(ctx.read<ConnectionController>()),
+              ),
               SizedBox(height: compact ? 10 : 16),
             ],
           ),
@@ -830,16 +850,15 @@ class _HomePageState extends State<HomePage>
     return ValueListenableBuilder<SpeedSnapshot>(
       valueListenable: conn.speedNotifier,
       builder: (context, snap, _) {
-        final connected = conn.status == ConnStatus.connected;
-        final up = connected ? snap.upMbps : 0.0;
-        final down = connected ? snap.downMbps : 0.0;
+        final up = snap.upMbps;
+        final down = snap.downMbps;
         return Row(
           children: [
             Expanded(
               child: _StatCard(
                 label: AppStrings.t('up_speed'),
-                value: _formatSpeed(up, connected),
-                unit: _speedUnit(up, connected),
+                value: _formatSpeed(up),
+                unit: _speedUnit(up),
                 icon: Icons.arrow_upward_rounded,
                 color: MFColors.brandLight,
               ),
@@ -848,8 +867,8 @@ class _HomePageState extends State<HomePage>
             Expanded(
               child: _StatCard(
                 label: AppStrings.t('down_speed'),
-                value: _formatSpeed(down, connected),
-                unit: _speedUnit(down, connected),
+                value: _formatSpeed(down),
+                unit: _speedUnit(down),
                 icon: Icons.arrow_downward_rounded,
                 color: MFColors.green,
               ),
@@ -860,15 +879,14 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  String _formatSpeed(double mbps, bool connected) {
-    if (!connected) return '0.0';
+  String _formatSpeed(double mbps) {
     if (mbps <= 0) return '0.0';
     if (mbps < 0.1) return (mbps * 1024).toStringAsFixed(0);
     return mbps.toStringAsFixed(1);
   }
 
-  String _speedUnit(double mbps, bool connected) {
-    if (!connected || mbps <= 0) return 'MB/s';
+  String _speedUnit(double mbps) {
+    if (mbps <= 0) return 'MB/s';
     if (mbps < 0.1) return 'KB/s';
     return 'MB/s';
   }
@@ -910,7 +928,7 @@ class _HomePageState extends State<HomePage>
                   color: conn.lockedCountry == null
                       ? MFColors.green.withValues(alpha: .18)
                       : MFColors.card,
-                  borderRadius: BorderRadius.circular(99),
+                  borderRadius: _pillRadius,
                   border: Border.all(
                       color: conn.lockedCountry == null
                           ? MFColors.green.withValues(alpha: .7)
@@ -945,7 +963,7 @@ class _HomePageState extends State<HomePage>
                     color: conn.current?.countryCode == e.key
                         ? MFColors.brand.withValues(alpha: .2)
                         : MFColors.card,
-                    borderRadius: BorderRadius.circular(99),
+                    borderRadius: _pillRadius,
                     border: Border.all(
                         color: conn.current?.countryCode == e.key
                             ? MFColors.brand.withValues(alpha: .7)

@@ -9,10 +9,6 @@ import '../../core/api/endpoints.dart';
 import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
 
-/// 校验邮箱格式（与后端一致的宽松正则，拦截明显输入错误）
-bool _looksLikeEmail(String s) =>
-    RegExp(r'^[\w.+-]+@[\w-]+(\.[\w-]+)+$').hasMatch(s.trim());
-
 /// 找回密码（设计稿 08）：邮箱验证码两步重置
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -45,7 +41,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   Future<void> _sendCode() async {
     final email = _email.text.trim();
-    if (!_looksLikeEmail(email)) return _toast(AppStrings.t('email_reg_invalid'));
+    if (!looksLikeEmail(email)) return _toast(AppStrings.t('email_reg_invalid'));
     setState(() => _sending = true);
     try {
       await ApiClient.instance.post(Endpoints.forgotPassword, data: {'email': email});
@@ -76,7 +72,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     final pwdErr = PasswordPolicy.errorFor(_newPassword.text);
     if (pwdErr != null) return _toast(pwdErr);
     if (_newPassword.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
-    if (!_looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_reg_invalid'));
+    if (!looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_reg_invalid'));
     setState(() => _loading = true);
     try {
       await ApiClient.instance.post(Endpoints.resetPassword, data: {

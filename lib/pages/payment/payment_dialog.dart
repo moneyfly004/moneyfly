@@ -49,10 +49,15 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
     super.dispose();
   }
 
+  bool _pollInFlight = false;
+
   /// 轮询：2.5s 一次，最长 15 分钟；paid → 回调并关闭
   void _startPolling() {
+    _timer?.cancel();
+    _pollInFlight = false;
     _timer = Timer.periodic(const Duration(milliseconds: 2500), (_) async {
-      if (!_polling || !mounted) return;
+      if (!_polling || !mounted || _pollInFlight) return;
+      _pollInFlight = true;
       setState(() => _elapsed += 2);
       if (_elapsed >= 900) {
         _timer?.cancel();
@@ -76,6 +81,8 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
         }
       } catch (e) {
         if (mounted) setState(() => _pollError = ApiClient.errorMsg(e));
+      } finally {
+        _pollInFlight = false;
       }
     });
   }

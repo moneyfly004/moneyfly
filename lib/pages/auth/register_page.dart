@@ -9,10 +9,6 @@ import '../../core/api/endpoints.dart';
 import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
 
-/// 校验邮箱格式（与后端一致的宽松正则，拦截明显输入错误）
-bool _looksLikeEmail(String s) =>
-    RegExp(r'^[\w.+-]+@[\w-]+(\.[\w-]+)+$').hasMatch(s.trim());
-
 /// 注册页（设计稿 07）：邮箱 + 验证码（60s 倒计时）+ 用户名 + 密码 + 邀请码
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -48,7 +44,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   Future<void> _sendCode() async {
     final email = _email.text.trim();
-    if (!_looksLikeEmail(email)) {
+    if (!looksLikeEmail(email)) {
       _toast(AppStrings.t('email_invalid'));
       return;
     }
@@ -83,7 +79,7 @@ class _RegisterPageState extends State<RegisterPage> {
     final pwdErr = PasswordPolicy.errorFor(_password.text);
     if (pwdErr != null) return _toast(pwdErr);
     if (_password.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
-    if (!_looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_invalid'));
+    if (!looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_invalid'));
     if (!_agreed) return _toast(AppStrings.t('agree_required'));
     setState(() => _loading = true);
     try {
