@@ -1,12 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../../l10n/app_strings.dart';
 import '../api/api_client.dart';
 import '../models/models.dart';
-import '../proxy/proxy_core.dart';
-import 'local_notify.dart';
 import 'subscription_service.dart';
 
 /// 账号可用状态（三端统一判定「能否连接 VPN / 该给什么提示」）：
@@ -113,43 +109,11 @@ class AccountService extends ChangeNotifier {
 
   /// 登出 / 切换账号时清理，防止旧账号状态残留
   void reset() {
-    stopExpiryWatch();
     sub = null;
     status = AccountStatus.unknown;
     loaded = false;
     serverMessage = null;
     notifyListeners();
-  }
-
-  // ---------- 运行时到期巡检（VPN 连接期间每 5 分钟检查一次） ----------
-  Timer? _expiryTimer;
-
-  /// 启动到期巡检（首页连接成功后调用）
-  void startExpiryWatch() {
-    _expiryTimer?.cancel();
-    _expiryTimer = Timer.periodic(const Duration(minutes: 5), (_) => _checkExpiry());
-  }
-
-  /// 停止巡检（断开/登出时调用）
-  void stopExpiryWatch() {
-    _expiryTimer?.cancel();
-    _expiryTimer = null;
-  }
-
-  Future<void> _checkExpiry() async {
-    final conn = ConnectionController.instance;
-    if (conn.status != ConnStatus.connected) return;
-    try {
-      final prev = status;
-      await refresh(force: true);
-      // 到期通知（7/3/1/0 天，每 5 分钟巡检但仅到期态推一次）
-      if (sub != null && sub!.remainingDays <= 7 && sub!.remainingDays >= 0) {
-        LocalNotify.instance.showExpiryWarning(sub!.remainingDays);
-      }
-      if (prev == AccountStatus.ok && isBlocked) {
-        await conn.disconnect();
-      }
-    } catch (_) {}
   }
 
   /// 受限状态对应的「连接被拒」提示正文（首页横幅 / 弹窗 / 内核错误共用）

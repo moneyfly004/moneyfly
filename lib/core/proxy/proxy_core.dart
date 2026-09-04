@@ -418,7 +418,6 @@ class ConnectionController extends ChangeNotifier {
       }
       status = ConnStatus.connected;
       _reconnectCount = 0;
-      AccountService.instance.startExpiryWatch();
       // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
       if (runSpeedTest && autoTest) {
         unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: true));
@@ -567,7 +566,6 @@ class ConnectionController extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
     _releaseWakeLock();
-    AccountService.instance.stopExpiryWatch();
     status = ConnStatus.disconnecting;
     notifyListeners();
     _clearState();
