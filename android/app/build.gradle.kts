@@ -91,7 +91,17 @@ flutter {
 }
 
 dependencies {
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    // libmihomo.aar（mihomo 内核库）由 CI 编译（.github/workflows/release.yml）
+    // 或本地脚本 tool/build_mihomo_aar.sh 生成。缺失时构建出的 APK 无内核，
+    // 属残次包 —— 直接报错给出清晰指引。
+    val coreAar = file("libs/libmihomo.aar")
+    if (!coreAar.exists()) {
+        throw GradleException(
+            "缺少 android/app/libs/libmihomo.aar（mihomo 内核库）。\n" +
+                "CI 构建会自动编译；本地调试请先运行: bash tool/build_mihomo_aar.sh"
+        )
+    }
+    implementation(files(coreAar))
     // flutter_local_notifications（java.time）要求的 core library desugaring
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

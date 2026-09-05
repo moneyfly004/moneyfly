@@ -12,152 +12,148 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import top.moneyfly.app.MainActivity
 import top.moneyfly.app.R
-import top.moneyfly.libbox.BridgeOptions
-import top.moneyfly.libbox.BridgeSession
-import top.moneyfly.libbox.CommandServer
-import top.moneyfly.libbox.CommandServerHandler
-import top.moneyfly.libbox.ConnectionOwner
-import top.moneyfly.libbox.InterfaceUpdateListener
-import top.moneyfly.libbox.Libbox
-import top.moneyfly.libbox.LocalDNSTransport
-import top.moneyfly.libbox.NeighborUpdateListener
-import top.moneyfly.libbox.NetworkInterface
-import top.moneyfly.libbox.NetworkInterfaceIterator
-import top.moneyfly.libbox.Notification as BoxNotification
-import top.moneyfly.libbox.OverrideOptions
-import top.moneyfly.libbox.PlatformInterface
-import top.moneyfly.libbox.PlatformUser
-import top.moneyfly.libbox.RoutePrefixIterator
-import top.moneyfly.libbox.SetupOptions
-import top.moneyfly.libbox.ShellSession
-import top.moneyfly.libbox.StringIterator
-import top.moneyfly.libbox.SystemProxyStatus
-import top.moneyfly.libbox.TunOptions
-import top.moneyfly.libbox.WIFIState
+import top.moneyfly.mihomelib.Mihomelib
 import java.io.File
-import java.net.NetworkInterface as JavaNetworkInterface
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
 
 /**
- * MoneyFly 的 Android VPN 服务：TUN 通道 + libmoneyfly（sing-box 1.14 核心，Go→Java 由 gomobile 生成）。
+ * MoneyFly 的 Android VPN 服务：VpnService + libmihomo（官方 MetaCubeX/mihomo
+ * v1.19.30 经 gomobile bind 的进程内库，CI 编译自官方源码，无 fork）。
  *
- * 架构与 sing-box-for-android (SFA) 一致：
- *  - 本服务实现 [PlatformInterface]：Go 侧要开 TUN / 保护 socket 时回调到这里；
- *  - 同时实现 [CommandServerHandler]：Go 侧的服务启停 / 代理状态查询回传；
- *  - CommandServer 内部自带 Clash API（127.0.0.1:9090），Flutter 侧用它做
- *    模式热切换、节点热切换、实时流量统计。
+ * 架构与桌面端对齐：
+ *  - Flutter 侧生成 mihomo Clash YAML，经 MethodChannel 传给本服务；
+ *  - 非 root 全局代理的关键：本服务用 VpnService.establish() 建立 TUN 拿到 fd，
+ *    把 fd 注入内核（tun.file-descriptor），mihomo 直接用该 fd 收发包；
+ *  - 地址/路由/DNS 由 VpnService 全量下发（172.19.0.1/30 + 0.0.0.0/0），
+ *    内核配置里 auto-route=false，避免非 root 改路由表；
+ *  - 内核自带 Clash API（external-controller 127.0.0.1:9090），Flutter 侧用它
+ *    做模式/节点热切换、实时流量统计 —— 与桌面端完全同一套 Dart 代码。
  */
 @Suppress("UNUSED_PARAMETER")
-class MoneyFlyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
+class MoneyFlyVpnService : VpnService() {
     companion object {
         private const val TAG = "MoneyFlyVpnService"
 
         const val ACTION_START = "top.moneyfly.vpn.START"
         const val ACTION_STOP = "top.moneyfly.vpn.STOP"
-        const val EXTRA_CONFIG = "config_json"
+        const val EXTRA_CONFIG = "config_yaml"
+        const val EXTRA_NEED_TUN = "need_tun"
         const val CHANNEL_ID = "moneyfly_vpn_channel"
         private const val NOTIFY_ID = 1001
+
+        /** TUN 网段（与 mihomo 配置的 fake-ip/dns 逻辑配套，参考 Clash Meta for Android） */
+        private const val TUN_GATEWAY = "172.19.0.1"
+        private const val TUN_PREFIX = 30
+        /** 虚拟 DNS：系统 DNS 查询发往它 → 进入 TUN → 内核 dns-hijack 接管（fake-ip） */
+        private const val TUN_DNS = "172.19.0.2"
 
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        /** 内置内核版本（任何时候可读，用于设置页「内核管理」） */
+        fun kernelVersion(): String =
+            try {
+                Mihomelib.version() ?: ""
+            } catch (e: Exception) {
+                Log.w(TAG, "kernelVersion: ${e.message}")
+                ""
+            }
     }
 
-    private var commandServer: CommandServer? = null
     private var tunPfd: ParcelFileDescriptor? = null
 
-    /** 最近一次成功加载的 sing-box 配置（serviceReload 时重载用） */
-    @Volatile
-    private var currentConfig: String? = null
+    /** 内核启动/停止串行化（gomobile 调用需避免并发；Start 内部有锁，这里防重入） */
+    private val coreExecutor = Executors.newSingleThreadExecutor()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopBox()
-                stopSelf()
+                coreExecutor.execute {
+                    stopBox()
+                    stopForegroundCompat()
+                    stopSelf()
+                }
                 return START_NOT_STICKY
             }
         }
         startForeground(NOTIFY_ID, buildNotification())
-        val configJson = intent?.getStringExtra(EXTRA_CONFIG)
-        if (configJson != null && commandServer == null) {
-            startBox(configJson)
+        val configYaml = intent?.getStringExtra(EXTRA_CONFIG)
+        val needTun = intent?.getBooleanExtra(EXTRA_NEED_TUN, true) ?: true
+        if (configYaml != null && !Mihomelib.running()) {
+            coreExecutor.execute {
+                try {
+                    startBox(configYaml, needTun)
+                } catch (e: Exception) {
+                    Log.e(TAG, "startBox failed", e)
+                    isRunning = false
+                    stopForegroundCompat()
+                    stopSelf()
+                }
+            }
         }
         return START_STICKY
     }
 
     @Synchronized
-    private fun startBox(configJson: String) {
+    private fun startBox(configYaml: String, needTun: Boolean) {
         try {
-            if (commandServer == null) {
-                // libmoneyfly 全局初始化只做一次（base/working/temp 目录）
-                val opts = SetupOptions().apply {
-                    basePath = filesDir.absolutePath
-                    workingPath = File(filesDir, "work").also { it.mkdirs() }.absolutePath
-                    tempPath = cacheDir.absolutePath
-                }
-                Libbox.setup(opts)
+            // 1) 内核工作目录（config.yaml 由 mihomo 内部管理；geo 数据落这里）
+            val workDir = File(filesDir, "work")
+            workDir.mkdirs()
+
+            // 2) 离线分流数据从 Flutter assets 同步（幂等：已存在且非空则跳过）。
+            //    缺文件时内核仍能启动（智能规则降级在 Dart 侧处理），仅警告。
+            syncGeoAssets(workDir)
+
+            // 3) 需要全局代理时建立 TUN；fd 注入内核（tun.file-descriptor）
+            var fd = 0
+            if (needTun) {
+                tunPfd = establishTun()
+                fd = tunPfd!!.fd
             }
-            val server = CommandServer(this, this)
-            server.start()
-            server.startOrReloadService(configJson, OverrideOptions())
-            commandServer = server
-            currentConfig = configJson
+
+            // 4) 启动内核（阻塞直到配置解析完成/失败；listener 异步运行）
+            Mihomelib.start(
+                workDir.absolutePath,
+                configYaml.toByteArray(Charsets.UTF_8),
+                fd,
+            )
             isRunning = true
-            Log.d(TAG, "libmoneyfly service started")
+            Log.i(TAG, "libmihomo started (tunFd=$fd, version=${Mihomelib.version()})")
         } catch (e: Exception) {
-            Log.e(TAG, "startBox failed", e)
+            // 失败清理：释放 TUN，保证下次连接是干净状态
+            cleanupTun()
             isRunning = false
-            currentConfig = null
-            try {
-                commandServer?.close()
-            } catch (_: Exception) {}
-            commandServer = null
+            throw e
         }
     }
 
     @Synchronized
     private fun stopBox() {
         isRunning = false
-        currentConfig = null
         try {
-            commandServer?.closeService()
+            Mihomelib.stop()
         } catch (e: Exception) {
-            Log.d(TAG, "closeService: ${e.message}")
+            Log.d(TAG, "stop: ${e.message}")
         }
-        try {
-            commandServer?.close()
-        } catch (_: Exception) {}
-        commandServer = null
+        cleanupTun()
+    }
+
+    private fun cleanupTun() {
         try {
             tunPfd?.close()
         } catch (_: Exception) {}
         tunPfd = null
     }
 
-    // ================= PlatformInterface =================
-
-    override fun autoDetectInterfaceControl(fd: Int) {
-        try {
-            protect(fd)
-        } catch (e: Exception) {
-            Log.e(TAG, "protect failed", e)
+    /** 建立 TUN：地址 172.19.0.1/30 + 全量路由 + 虚拟 DNS 172.19.0.2 */
+    @SuppressLint("MissingPermission")
+    private fun establishTun(): ParcelFileDescriptor {
+        if (prepare(this) != null) {
+            throw IllegalStateException("android: missing vpn permission")
         }
-    }
-
-    override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
-
-    override fun useProcFS(): Boolean = false
-
-    override fun underNetworkExtension(): Boolean = false
-
-    override fun includeAllNetworks(): Boolean = false
-
-    override fun usePlatformBridge(): Boolean = false
-
-    override fun usePlatformShell(): Boolean = false
-
-    override fun openTun(options: TunOptions): Int {
-        if (prepare(this) != null) error("android: missing vpn permission")
         val builder =
             Builder()
                 .setSession("MoneyFly")
@@ -167,138 +163,38 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface, CommandServerHandler
                         PendingIntent.FLAG_IMMUTABLE,
                     ),
                 )
-                .setMtu(options.mtu)
-
-        forEachPrefix(options.inet4Address) { address, prefix -> builder.addAddress(address, prefix) }
-        forEachPrefix(options.inet6Address) { address, prefix -> builder.addAddress(address, prefix) }
-
-        if (options.autoRoute) {
-            // sing-box 已算好路由，精确下发（排除路由需 API29+ IpPrefix，
-            // 运行时 Flutter 端 auto_route=false 走不到这里，保持 addRoute 即可）
-            forEachPrefix(options.inet4RouteAddress) { address, prefix -> builder.addRoute(address, prefix) }
-            forEachPrefix(options.inet6RouteAddress) { address, prefix -> builder.addRoute(address, prefix) }
-        } else {
-            // Flutter 端配置 tun.auto_route=false（路由交回平台侧）：
-            // 走全量路由，保证所有流量进入 TUN
-            builder.addRoute("0.0.0.0", 0)
-            builder.addRoute("::", 0)
-        }
-
-        try {
-            val dns = options.dnsServerAddress
-            while (dns.hasNext()) {
-                builder.addDnsServer(dns.next())
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "dns server iterate: ${e.message}")
-        }
-
+                .setMtu(1500)
+                .addAddress(TUN_GATEWAY, TUN_PREFIX)
+                // 全量路由：除应用自身外的所有流量进入 TUN（App 控制通道保持直连）
+                .addRoute("0.0.0.0", 0)
+                // 虚拟 DNS：Android 的 DNS 查询发给它 → 进 TUN → 内核 hijack 处理 fake-ip
+                .addDnsServer(TUN_DNS)
         // 本应用自身流量不进入 TUN，保证控制通道（后端 API / Clash API）永远可用
         try {
             builder.addDisallowedApplication(packageName)
         } catch (e: Exception) {
             Log.d(TAG, "addDisallowedApplication failed: ${e.message}")
         }
-
-        val pfd = builder.establish() ?: error("android: the application is not prepared or is revoked")
-        tunPfd = pfd
-        return pfd.fd
+        return builder.establish()
+            ?: throw IllegalStateException("android: the application is not prepared or is revoked")
     }
 
-    private inline fun forEachPrefix(iter: RoutePrefixIterator?, block: (String, Int) -> Unit) {
-        if (iter == null) return
-        while (iter.hasNext()) {
-            val prefix = iter.next()
-            block(prefix.address(), prefix.prefix())
+    /** 从 Flutter assets 复制 geo 数据（APK 内路径 flutter_assets/assets/rules/...） */
+    private fun syncGeoAssets(dir: File) {
+        val names = listOf("country.mmdb", "geosite.dat")
+        for (name in names) {
+            val target = File(dir, name)
+            if (target.exists() && target.length() > 0) continue
+            try {
+                assets.open("flutter_assets/assets/rules/$name").use { input ->
+                    FileOutputStream(target).use { output -> input.copyTo(output) }
+                }
+                Log.d(TAG, "geo asset synced: $name -> ${target.absolutePath}")
+            } catch (e: Exception) {
+                Log.w(TAG, "geo asset $name 复制失败（智能模式 CN 分流会降级）: ${e.message}")
+            }
         }
     }
-
-    override fun clearDNSCache() {}
-
-    override fun readWIFIState(): WIFIState? = null
-
-    override fun localDNSTransport(): LocalDNSTransport? = null
-
-    override fun getInterfaces(): NetworkInterfaceIterator = EmptyNetworkInterfaceIterator()
-
-    override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
-
-    override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {}
-
-    override fun startNeighborMonitor(listener: NeighborUpdateListener) {}
-
-    override fun closeNeighborMonitor(listener: NeighborUpdateListener) {}
-
-    @SuppressLint("MissingPermission")
-    override fun findConnectionOwner(
-        ipProtocol: Int,
-        sourceAddress: String,
-        sourcePort: Int,
-        destinationAddress: String,
-        destinationPort: Int,
-    ): ConnectionOwner {
-        // 非 API 29+ / 无法识别时返回空 owner（Go 侧按「找不到连接归属」处理，
-        // 不影响基本 TUN 连接；per-app 路由未启用时此方法不会被调用）
-        return ConnectionOwner()
-    }
-
-    override fun sendNotification(notification: BoxNotification) {}
-
-    override fun cancelNotification(identifier: String, typeID: Int) {}
-
-    override fun checkPlatformShell() {}
-
-    override fun openShellSession(
-        user: PlatformUser?,
-        command: String?,
-        environ: StringIterator?,
-        term: String?,
-        rows: Int,
-        cols: Int,
-    ): ShellSession = error("android: shell session not supported")
-
-    override fun createBridge(options: BridgeOptions): BridgeSession =
-        error("android: platform bridge not supported")
-
-    override fun lookupUser(username: String): PlatformUser =
-        error("android: user lookup not supported")
-
-    override fun lookupSFTPServer(): String = error("android: sftp not supported")
-
-    override fun readSystemSSHHostKey(): String = error("android: ssh host key not supported")
-
-    override fun tailscaleHostname(): String =
-        "${Build.MANUFACTURER} ${Build.MODEL}".trim()
-
-    override fun registerMyInterface(name: String) {}
-
-    // ================= CommandServerHandler =================
-
-    override fun serviceReload() {
-        val config = currentConfig ?: return
-        try {
-            commandServer?.startOrReloadService(config, OverrideOptions())
-        } catch (e: Exception) {
-            Log.e(TAG, "serviceReload failed", e)
-        }
-    }
-
-    override fun serviceStop() {
-        stopBox()
-        stopSelf()
-    }
-
-    override fun getSystemProxyStatus(): SystemProxyStatus? = SystemProxyStatus()
-
-    override fun setSystemProxyEnabled(isEnabled: Boolean) {}
-
-    override fun writeDebugMessage(message: String) {
-        Log.d(TAG, message)
-    }
-
-    override fun connectSSHAgent(): Int = 0
-
-    override fun triggerNativeCrash() {}
 
     // ================= Foreground notification =================
 
@@ -333,14 +229,22 @@ class MoneyFlyVpnService : VpnService(), PlatformInterface, CommandServerHandler
         }
     }
 
+    private fun stopForegroundCompat() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
-        stopBox()
+        coreExecutor.execute {
+            stopBox()
+        }
+        coreExecutor.shutdown()
         super.onDestroy()
     }
-}
-
-/** 空接口迭代器：未启用「包含所有网络/接口监控」时的占位返回 */
-private class EmptyNetworkInterfaceIterator : NetworkInterfaceIterator {
-    override fun hasNext(): Boolean = false
-    override fun next(): NetworkInterface = error("empty")
 }

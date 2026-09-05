@@ -79,9 +79,10 @@ flutter:
 
   assets:
     - assets/moneyfly-logo.png
-    # 智能模式规则集（内置，避免运行时依赖被墙的远程地址）
-    - assets/rules/geoip-cn.srs
-    - assets/rules/geosite-cn.srs
+    # mihomo 离线分流数据（内置，避免运行时依赖被墙的远程地址；
+    # CI 构建时从 MetaCubeX/meta-rules-dat 下载，本地用 tool/fetch_geodata.sh）
+    - assets/rules/geosite.dat
+    - assets/rules/country.mmdb
     # 国旗图片（Windows 上 emoji 国旗显示为字母，用图片兜底）
     - assets/flags/
 

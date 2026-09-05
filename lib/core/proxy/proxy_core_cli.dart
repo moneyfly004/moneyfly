@@ -6,29 +6,39 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'proxy_core.dart';
-import 'rule_assets.dart';
+import 'geo_assets.dart';
+import 'mihomo_config.dart';
 import 'system_proxy.dart';
 import '../services/app_log.dart';
 
-/// 方案 A：sing-box CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
+/// mihomo CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
 ///
-/// 连接 = 写配置 → 启动 `sing-box run -c` → 轮询 Clash API 就绪；
+/// 连接 = 写 config.yaml → 启动 `mihomo -d <workDir>` → 轮询 Clash API 就绪；
 /// 切模式/切节点走 Clash API 热更新，不重启内核不断网；
 /// 流量统计 1s 拉一次 /traffic（仅连接时，断开即停）。
 ///
-/// 内核二进制位置（CI 打包进安装包；本地开发用 tool/fetch_singbox.sh 获取）：
-///   macOS    `App.app/Contents/MacOS/sing-box`
-///   Windows  `exe 同目录/sing-box.exe`
-///   可用环境变量 MONEYFLY_SINGBOX 覆盖（开发调试用）。
+/// 内核二进制位置（CI 打包进安装包；本地开发用 tool/fetch_mihomo.sh 获取）：
+///   macOS    `App.app/Contents/MacOS/mihomo`
+///   Windows  `exe 同目录/mihomo.exe`
+///   可用环境变量 MONEYFLY_MIHOMO 覆盖（开发调试用）。
 class ProxyCoreCli extends ProxyCore {
 
   /// 是否由 app 管理系统代理（连接时设置、断开时恢复）。
   /// 集成测试置 false，避免改动真实系统代理。
   static bool manageSystemProxy = true;
 
-  /// 内核工作目录（配置文件 + 内置规则集落盘处）
+  /// 内核工作目录（config.yaml + 离线 geo 数据 country.mmdb/geosite.dat 落盘处；
+  /// mihomo -d 以此为 homeDir，默认文件名直接加载 geo）
   static final String workDir = '${Directory.systemTemp.path}/moneyfly_core';
   static const _readyTimeout = Duration(seconds: 10);
+
+  /// 当前智能(rule)/全局(global)状态 —— 决定热切节点时打 select 组还是 GLOBAL 组。
+  /// 启动时从配置 mode 字段同步；switchMode 时更新。
+  bool _smartMode = true;
+
+  /// 最近一次成功切换/选中的节点 tag（切全局模式时把 GLOBAL 组指过来，
+  /// 避免全局模式仍走内核默认第一节点导致线路跳变）
+  String? _lastNodeTag;
 
   final Dio _api = Dio(BaseOptions(
     baseUrl: 'http://127.0.0.1:9090',
@@ -87,25 +97,23 @@ class ProxyCoreCli extends ProxyCore {
   @override
   String? get lastError => _lastError;
 
-  /// 定位 sing-box 可执行文件；找不到时给出可读的修复指引
+  /// 定位 mihomo 可执行文件
   String resolveBinary() {
-    final override = Platform.environment['MONEYFLY_SINGBOX'];
+    final override = Platform.environment['MONEYFLY_MIHOMO'];
     if (override != null && override.isNotEmpty && File(override).existsSync()) {
       return override;
     }
     final exe = Platform.resolvedExecutable;
     final candidates = <String>[
-      // macOS: 与主程序同目录（Contents/MacOS/sing-box）
-      if (Platform.isMacOS) '${Directory(exe).parent.path}/sing-box',
-      // Windows / Linux: 与 exe 同目录
-      '${Directory(exe).parent.path}/sing-box${Platform.isWindows ? '.exe' : ''}',
+      if (Platform.isMacOS) '${Directory(exe).parent.path}/mihomo',
+      '${Directory(exe).parent.path}/mihomo${Platform.isWindows ? '.exe' : ''}',
     ];
     for (final c in candidates) {
       if (File(c).existsSync()) return c;
     }
     throw FileSystemException(
-      '未找到 sing-box 内核二进制。\n'
-      '开发环境请运行: bash tool/fetch_singbox.sh\n'
+      '未找到 mihomo 内核二进制。\n'
+      '开发环境请运行: bash tool/fetch_mihomo.sh\n'
       '发布包由 CI 自动内置内核，无需额外操作。',
     );
   }
@@ -119,6 +127,8 @@ class ProxyCoreCli extends ProxyCore {
     _lastError = null;
     _logTail.clear();
 
+    // 从配置同步当前模式（rule=智能 / global=全局），热切节点时选对组
+    _smartMode = config['mode']?.toString() != 'global';
     // tunMode='force' 时无 mixed 端口，不管理系统代理
     _tunForceMode = config.remove('_tunMode') == 'force';
     // 本机监听端口（设置页自定义，默认 2080）
@@ -135,16 +145,18 @@ class ProxyCoreCli extends ProxyCore {
     final binary = resolveBinary();
     final dir = Directory(workDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    _configPath = '${dir.path}/config.json';
+    _configPath = '${dir.path}/config.yaml';
 
-    // 确保内置规则集落盘（connect 路径会提前调 RuleAssets.materialize，
-    // 但集成测试/外部直接调 start 时不经 connect，需自保）
-    await RuleAssets.materialize(preferDir: workDir);
-    await File(_configPath!).writeAsString(jsonEncode(config), flush: true);
+    // 确保离线 geo 数据就位（connect 路径会提前落盘；集成测试/外部直接调
+    // start 时自保。幂等：文件已存在且非空则跳过）
+    await GeoAssets.materialize(preferDir: workDir);
+
+    // mihomo 原生读 Clash YAML，配置用 MihomoConfigBuilder.encode 序列化
+    await File(_configPath!).writeAsString(MihomoConfigBuilder.encode(config), flush: true);
 
     _proc = await Process.start(
       binary,
-      ['run', '-c', _configPath!, '--disable-color'],
+      ['-d', dir.path],
       environment: {'PATH': Platform.environment['PATH'] ?? ''},
     );
 
@@ -188,7 +200,7 @@ class ProxyCoreCli extends ProxyCore {
 
     final killFut = () async {
       if (p == null) return;
-      // 优先通过 Clash API 请求内核优雅退出（sing-box 清理 TUN/WinTun），
+      // 优先通过 Clash API 请求内核优雅退出（mihomo 清理 TUN/虚拟网卡），
       // SIGTERM 在 Windows 上无效，直接 kill 会残留虚拟网卡。
       try {
         await _api.request('/shutdown',
@@ -237,12 +249,30 @@ class ProxyCoreCli extends ProxyCore {
 
   @override
   Future<void> switchMode(bool smart) async {
-    await _clash('PATCH', '/configs', {'mode': smart ? 'Rule' : 'Global'});
+    _smartMode = smart;
+    // mihomo: rule=智能(规则分流) / global=全局(全部走 GLOBAL 组)。
+    // 热切换 PATCH /configs 即可，内核不重启不断网。
+    await _clash('PATCH', '/configs', {'mode': smart ? 'rule' : 'global'});
+    if (!smart) {
+      // 全局模式下流量走内置 GLOBAL 组：把 GLOBAL 指向当前节点，
+      // 否则会回落到内核默认第一节点，线路跳变
+      final tag = _lastNodeTag;
+      if (tag != null) {
+        try {
+          await _clash('PUT', '/proxies/GLOBAL', {'name': tag});
+        } catch (_) {
+          // GLOBAL 组缺失/不可用时忽略（内核内置组通常总是存在）
+        }
+      }
+    }
   }
 
   @override
   Future<void> switchNode(String tag) async {
-    await _clash('PUT', '/proxies/select', {'name': tag});
+    _lastNodeTag = tag;
+    // 智能模式切 select 组；全局模式切内置 GLOBAL 组
+    final group = _smartMode ? 'select' : 'GLOBAL';
+    await _clash('PUT', '/proxies/$group', {'name': tag});
   }
 
   @override
@@ -298,7 +328,7 @@ class ProxyCoreCli extends ProxyCore {
     }
   }
 
-  /// 流量统计：sing-box 1.14 的 /traffic 是持续流（每秒推送一行
+  /// 流量统计：mihomo 的 /traffic 是持续流（每秒推送一行
   /// {"up":Δ,"down":Δ}，单位字节/秒），流式解析直接换算 MB/s 回调。
   /// 断开/出错后重连流，直到内核停止。
   void _startStatsTimer() {

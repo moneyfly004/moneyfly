@@ -6,9 +6,9 @@ import 'package:flutter/foundation.dart';
 
 /// 系统代理管理器（macOS / Windows / Android）
 ///
-/// 职责：连接 VPN 时把系统代理指向本地 sing-box mixed 端口，
+/// 职责：连接 VPN 时把系统代理指向本地 mihomo mixed 端口，
 /// 断开/退出时恢复原代理配置。参考 Hiddify：app 自己管理系统代理，
-/// 不依赖 sing-box 的 set_system_proxy（实测 sing-box CLI 被终止后
+/// 不依赖内核自带的 set_system_proxy（实测内核进程被终止后
 /// 不会恢复系统代理，导致残留）。
 ///
 /// - macOS：`networksetup` 设置所有网络服务的 web/secure/socks 代理

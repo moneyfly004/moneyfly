@@ -12,9 +12,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
 
-  final env = Platform.environment['MONEYFLY_SINGBOX'];
+  final env = Platform.environment['MONEYFLY_MIHOMO'];
   final hasBinary = env != null && File(env).existsSync();
-  final skip = hasBinary ? null : '未找到 sing-box 内核';
+  final skip = hasBinary ? null : '未找到 mihomo 内核';
 
   test('连接立即生效 + 后台测速不阻塞（Hiddify 模式）', skip: skip, () async {
     // mock 设置存储（测试环境无插件）

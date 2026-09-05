@@ -50,7 +50,7 @@ Filename: "{app}\moneyfly.exe"; Description: "{cm:LaunchProgram,MoneyFly}"; Flag
 
 ; ===== 卸载彻底：删除应用数据残留 =====
 ; path_provider 在 Windows 上：支持目录 %APPDATA%\top.moneyfly\MoneyFly、
-; 缓存目录 %LOCALAPPDATA%\top.moneyfly\MoneyFly；sing-box 内核工作目录在
+; 缓存目录 %LOCALAPPDATA%\top.moneyfly\MoneyFly；mihomo 内核工作目录在
 ; 系统临时目录 moneyfly_core。卸载时一并删除，保证重装后为全新状态
 ; （重新登录 + 重新拉取订阅），不沿用旧订阅/节点配置 ——
 ; 与客户端首启 install_id 检测互为兜底。

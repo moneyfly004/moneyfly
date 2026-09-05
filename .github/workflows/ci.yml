@@ -30,13 +30,13 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 下载规则集
+      - name: 下载 mihomo 离线分流数据（assets 声明依赖，缺失会导致 test/构建失败）
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
       - name: 校验

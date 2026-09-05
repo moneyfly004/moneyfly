@@ -11,21 +11,20 @@ import '../services/geo_lookup.dart';
 import '../services/local_notify.dart';
 import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
+import 'geo_assets.dart';
 import 'proxy_core_android.dart';
 import 'proxy_core_cli.dart';
-import 'rule_assets.dart';
-import 'singbox_config.dart';
+import 'mihomo_config.dart';
 import 'system_proxy.dart';
 import '../../l10n/app_strings.dart';
 import 'conn_error.dart';
 export 'conn_error.dart';
 
-/// 后台 isolate 入口：构建 sing-box JSON 配置（800+ outbound 时 ~50-100ms，
-/// 放后台避免阻塞 UI 线程导致连接按钮卡顿）。compute 要求顶层/静态函数。
+/// 后台 isolate 入口：构建 mihomo YAML 配置。compute 要求顶层/静态函数。
 Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
   final proxies = (args['proxies'] as List).cast<Map<String, dynamic>>();
   final nodes = proxies.map((m) => ProxyNode.fromClashMap(m)).toList();
-  return SingBoxConfigBuilder.build(
+  return MihomoConfigBuilder.build(
     nodes: nodes,
     selectedTag: args['selectedTag'] as String,
     smartMode: args['smartMode'] as bool,
@@ -34,7 +33,7 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     bypassLan: args['bypassLan'] as bool,
     localPort: (args['localPort'] as num?)?.toInt() ?? 2080,
     clashApiPort: (args['clashApiPort'] as num?)?.toInt() ?? 9090,
-    ruleSetDir: args['ruleSetDir'] as String?,
+    geoReady: args['geoReady'] != false,
   );
 }
 
@@ -48,7 +47,8 @@ class SpeedSnapshot {
   final double downMbps;
 }
 
-/// 代理核心抽象：各平台实现（macOS/Windows/Linux 走 sing-box CLI；Android 待 libcore）
+/// 代理核心抽象：各平台实现（macOS/Windows/Linux 走 mihomo CLI 子进程；
+/// Android 走原生 VpnService + libmihomo gomobile 库）
 abstract class ProxyCore {
   /// 启动内核并加载配置
   Future<void> start(Map<String, dynamic> config);
@@ -95,7 +95,7 @@ class ProxyCoreFactory {
   }
 }
 
-/// Android 占位实现（VpnService 骨架已就绪，待 libcore aar 接入）
+/// iOS 暂未接入内核的占位实现
 class _UnavailableCore implements ProxyCore {
   @override
   Future<void> start(Map<String, dynamic> config) async =>
@@ -389,14 +389,14 @@ class ConnectionController extends ChangeNotifier {
     }
 
     try {
-      // 内置规则集落盘（智能模式的 CN 分流；所有平台都落地本地文件，
-      // 避免回退 GitHub 远程下载在国内超时导致内核起不来）。
-      // 桌面端落到内核 workDir；移动端落到 app 私有目录。失败则回退远程。
-      final ruleDir = await RuleAssets.materialize(
-        preferDir: (Platform.isAndroid || Platform.isIOS)
-            ? null
-            : ProxyCoreCli.workDir,
-      );
+      if (epoch != _epoch) return;
+      // 离线 Geo 数据落盘（智能模式的 CN 分流；桌面端落到内核 workDir，
+      // 由 mihomo -d 默认文件名加载；Android 由原生 VpnService 复制，
+      // Dart 不落盘避免 12MB 走 MethodChannel）。
+      // 落盘失败时 geoReady=false → 智能规则降级为全代理，保证能连上。
+      final geoReady = (Platform.isAndroid || Platform.isIOS)
+          ? true
+          : await GeoAssets.materialize(preferDir: ProxyCoreCli.workDir);
       if (epoch != _epoch) return;
       final cfg = await compute(_buildConfigInIsolate, {
         'proxies': [for (final n in nodes) n.raw],
@@ -407,7 +407,7 @@ class ConnectionController extends ChangeNotifier {
         'bypassLan': bypassLan,
         'localPort': localPort,
         'clashApiPort': clashApiPort,
-        'ruleSetDir': ruleDir,
+        'geoReady': geoReady,
       });
       await _core.start(cfg);
       if (epoch != _epoch) {

@@ -17,6 +17,7 @@ import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../auth/change_password_page.dart';
+import 'kernel_page.dart';
 
 /// 设置页（设计稿 09）：完整清单 + 持久化
 class SettingsPage extends StatefulWidget {
@@ -158,6 +159,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _pickTunMode),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
+            _section(AppStrings.t('settings_kernel')),
+            _row(icon: '🧩', title: AppStrings.t('settings_kernel'),
+                desc: 'MetaCubeX/mihomo',
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const KernelPage()))),
             _section(AppStrings.t('settings_appearance')),
             _row(icon: '🎨', title: AppStrings.t('settings_theme'),
                 value: switch (_s['theme']?.toString()) {

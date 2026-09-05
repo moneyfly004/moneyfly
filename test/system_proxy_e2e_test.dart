@@ -3,16 +3,16 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:moneyfly/core/models/models.dart';
+import 'package:moneyfly/core/proxy/mihomo_config.dart';
 import 'package:moneyfly/core/proxy/proxy_core_cli.dart';
-import 'package:moneyfly/core/proxy/singbox_config.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
 
-  final env = Platform.environment['MONEYFLY_SINGBOX'];
+  final env = Platform.environment['MONEYFLY_MIHOMO'];
   final hasBinary = env != null && File(env).existsSync();
-  final skip = hasBinary ? null : '未找到 sing-box 内核';
+  final skip = hasBinary ? null : '未找到 mihomo 内核';
 
   test('端到端：连接设置系统代理 → 断开恢复', skip: skip, () async {
     if (!Platform.isMacOS) {
@@ -31,12 +31,11 @@ void main() {
         countryCode: 'HK',
         raw: const {},
       );
-      final cfg = SingBoxConfigBuilder.build(
+      final cfg = MihomoConfigBuilder.build(
         nodes: [node],
         selectedTag: '测试节点',
         smartMode: true,
         tunMode: 'off',
-        ruleSetDir: ProxyCoreCli.workDir,
       );
 
       // 连接 → 系统代理应被设置

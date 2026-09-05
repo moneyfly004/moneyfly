@@ -14,6 +14,13 @@ name: Build Release (Android / Windows / macOS)
 #   keytool -genkey -v -keystore release.keystore -alias moneyfly \
 #     -keyalg RSA -keysize 2048 -validity 10000 -storetype JKS
 #   base64 -i release.keystore | pbcopy   # 填入 KEYSTORE_BASE64
+#
+# 内核（MIHOMO_VERSION）：官方 MetaCubeX/mihomo 预编译 release。
+#   - 桌面端（Windows/macOS）直接下载官方编译好的二进制内置进安装包；
+#   - Android 官方没有可嵌入 VpnService 的 .so/.aar（只有可执行文件），
+#     故在 CI 上用官方 v1.19.30 源码 + gomobile bind 编译 libmihomo.aar
+#     （源码官方原版，无 fork；编译只发生在 Actions 服务器，本地零 Go 依赖）。
+# 离线分流数据：MetaCubeX/meta-rules-dat（geosite.dat / country.mmdb）。
 
 on:
   push:
@@ -28,8 +35,8 @@ on:
 
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
-  SING_BOX_VERSION: '1.14.0' # 代理内核版本（随配置格式同步升级）
-  HIDDIFY_CORE_VERSION: '4.1.0' # hiddify-core libbox.aar（Android 专用）
+  MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里）
+  GO_VERSION: '1.26.6' # 与 android/mihomo-core/go.mod 及官方构建一致
 
 jobs:
   # ================= Android：多 ABI 分版本 =================
@@ -50,24 +57,44 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: 依赖
-        run: flutter pub get
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: android/mihomo-core/go.sum
 
-      - name: 下载规则集（构建时从 GitHub 拉最新，不在仓库里存二进制）
+      - name: 下载离线分流数据（构建时从 GitHub 拉最新，不在仓库里存二进制）
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
-      - name: 下载 libmoneyfly.aar
+      - name: 安装 Android NDK（gomobile 编译 libmihomo.aar 需要）
+        run: |
+          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --install "ndk;27.2.12479018" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: 编译 libmihomo.aar（官方 mihomo 源码 gomobile bind，无 fork）
         run: |
           mkdir -p android/app/libs
-          curl -fL --max-time 300 -o android/app/libs/libmoneyfly.aar \
-            "https://github.com/moneyfly004/sing-box-lib/releases/download/v$SING_BOX_VERSION/libmoneyfly-$SING_BOX_VERSION.aar"
-          ls -lh android/app/libs/libmoneyfly.aar
+          cd android/mihomo-core
+          go mod download
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init
+          gomobile bind \
+            -target=android \
+            -androidapi 21 \
+            -tags with_gvisor \
+            -javapkg top.moneyfly \
+            -o ../app/libs/libmihomo.aar .
+          ls -lh ../app/libs/libmihomo.aar
+
+      - name: 依赖
+        run: flutter pub get
 
       - name: 测试
         run: |
@@ -125,31 +152,31 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 下载规则集
+      - name: 下载离线分流数据
         shell: bash
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
       # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
-      - name: 下载 sing-box 内核
+      - name: 下载 mihomo 内核（官方预编译）
         shell: bash
         run: |
-          mkdir -p build/sing-box
-          curl -fL --max-time 300 -o sing-box.zip \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-windows-amd64.zip"
-          unzip -o sing-box.zip -d sb
-          cp sb/sing-box-*/sing-box.exe build/sing-box/sing-box.exe
-          ls -la build/sing-box/
+          mkdir -p build/mihomo
+          curl -fL --max-time 300 -o mihomo.zip \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-v$MIHOMO_VERSION.zip"
+          unzip -o mihomo.zip -d sb
+          find sb -name "mihomo.exe" -exec cp {} build/mihomo/mihomo.exe \;
+          ls -la build/mihomo/
 
       - name: 测试（含真实内核端到端验证）
         shell: bash
         run: |
-          export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box.exe"
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo.exe"
           flutter analyze
           flutter test --concurrency=1
 
@@ -157,12 +184,12 @@ jobs:
         run: flutter build windows --release
 
       # ---- 内核放入 exe 同目录（安装包/zip 随 App 分发）----
-      - name: 内置 sing-box 内核
+      - name: 内置 mihomo 内核
         shell: bash
         run: |
           RELEASE_DIR="build/windows/x64/runner/Release"
-          cp build/sing-box/sing-box.exe "$RELEASE_DIR/sing-box.exe"
-          ls -la "$RELEASE_DIR/sing-box.exe"
+          cp build/mihomo/mihomo.exe "$RELEASE_DIR/mihomo.exe"
+          ls -la "$RELEASE_DIR/mihomo.exe"
 
       - name: 安装 Inno Setup
         run: choco install innosetup --no-progress -y
@@ -214,29 +241,29 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 下载规则集
+      - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 60 -o assets/rules/geoip-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-          curl -fL --max-time 60 -o assets/rules/geosite-cn.srs \
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
       # ---- 先下载内核（arm64 即可）：让 flutter test 真实启动内核做端到端验证 ----
-      - name: 下载 sing-box 内核（测试用）
+      - name: 下载 mihomo 内核（测试用，官方预编译）
         run: |
-          mkdir -p build/sing-box
-          curl -fL --max-time 300 -o sb-arm64.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
-          tar -xzf sb-arm64.tar.gz
-          cp sing-box-*/sing-box build/sing-box/sing-box
-          chmod +x build/sing-box/sing-box
-          ls -la build/sing-box/
+          mkdir -p build/mihomo
+          curl -fL --max-time 300 -o mihomo-arm64.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo-arm64.gz
+          mv mihomo-arm64 build/mihomo/mihomo
+          chmod +x build/mihomo/mihomo
+          ls -la build/mihomo/
 
       - name: 测试（含真实内核端到端验证）
         run: |
-          export MONEYFLY_SINGBOX="$PWD/build/sing-box/sing-box"
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
           flutter analyze
           flutter test --concurrency=1
 
@@ -247,24 +274,24 @@ jobs:
       - name: 校验双架构
         run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
 
-      # ---- 内置 sing-box 内核（universal 合并后放入 Contents/MacOS，
+      # ---- 内置 mihomo 内核（universal 合并后放入 Contents/MacOS，
       #      thin_app.sh 会按目标架构自动裁剪）----
-      - name: 下载并内置 sing-box 内核
+      - name: 下载并内置 mihomo 内核（universal）
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
           mkdir -p sb && cd sb
-          curl -fL --max-time 300 -o sb-arm64.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
-          curl -fL --max-time 300 -o sb-amd64.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-amd64.tar.gz"
-          # 官方压缩包解压后是 sing-box-<版本>-darwin-<arch>/sing-box 目录结构
-          tar -xzf sb-arm64.tar.gz && mv sing-box-*-arm64/sing-box sing-box-arm64
-          tar -xzf sb-amd64.tar.gz && mv sing-box-*-amd64/sing-box sing-box-amd64
-          lipo -create sing-box-arm64 sing-box-amd64 -output sing-box
+          curl -fL --max-time 300 -o mihomo-arm64.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
+          curl -fL --max-time 300 -o mihomo-amd64.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-v$MIHOMO_VERSION.gz"
+          # 官方 .gz 解压后就是单文件可执行（非目录结构）
+          gunzip -f mihomo-arm64.gz mihomo-amd64.gz
+          lipo -create mihomo-arm64 mihomo-amd64 -output mihomo
+          chmod +x mihomo
           cd ..
-          cp sb/sing-box "$APP/Contents/MacOS/sing-box"
-          chmod +x "$APP/Contents/MacOS/sing-box"
-          lipo "$APP/Contents/MacOS/sing-box" -verify_arch arm64 x86_64
+          cp sb/mihomo "$APP/Contents/MacOS/mihomo"
+          chmod +x "$APP/Contents/MacOS/mihomo"
+          lipo "$APP/Contents/MacOS/mihomo" -verify_arch arm64 x86_64
 
       - name: 生成三个版本 DMG（Apple 芯片 / Intel / 通用）
         run: |

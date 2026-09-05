@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_strings.dart';
 import '../services/app_log.dart';
 import '../services/permission_service.dart';
+import 'mihomo_config.dart';
 import 'proxy_core.dart';
 
 /// 看门狗单次巡检后的决策（纯逻辑，便于单元测试）
@@ -38,8 +39,11 @@ WatchdogAction decideWatchdog({
   return WatchdogAction.declareDead;
 }
 
-/// Android 内核：通过 MethodChannel 驱动 VpnService + libbox（sing-box 共享库），
-/// 切模式/切节点走 Clash API 热更新，流量统计从 /traffic 流拉取。
+/// Android 内核：VpnService(原生 Kotlin) + libmihomo(gomobile 库，mihomo 官方源码 CI 编译)。
+///
+/// Flutter 侧把 mihomo YAML 配置与 TUN 开关经 MethodChannel 交给原生；
+/// 原生负责：VpnService 授权 → 建立 TUN(拿到 fd) → libmihomo.Start(homeDir, yaml, fd)。
+/// 切模式/切节点/测速/流量统计走 Clash API(127.0.0.1:9090)，与桌面端一致。
 class ProxyCoreAndroid extends ProxyCore {
   static const _channel = MethodChannel('top.moneyfly/vpn_core');
 
@@ -48,6 +52,12 @@ class ProxyCoreAndroid extends ProxyCore {
     connectTimeout: const Duration(seconds: 3),
     receiveTimeout: const Duration(seconds: 3),
   ));
+
+  /// 当前智能(rule)/全局(global)状态 —— 决定热切节点时打 select 组还是 GLOBAL 组
+  bool _smartMode = true;
+
+  /// 最近一次切换的节点 tag（切全局模式时把 GLOBAL 组指过来）
+  String? _lastNodeTag;
 
   bool _running = false;
   String? _lastError;
@@ -80,8 +90,10 @@ class ProxyCoreAndroid extends ProxyCore {
   Future<void> start(Map<String, dynamic> config) async {
     if (_running) throw StateError('already running');
     _lastError = null;
-    // 剥离 app 侧元数据（系统代理端口/模式），不传给 libbox 内核
-    config.remove('_tunMode');
+    // 从配置同步模式（rule=智能 / global=全局）
+    _smartMode = config['mode']?.toString() != 'global';
+    // 剥离 app 侧元数据（系统代理端口/模式/TUN 开关），不写入 YAML
+    final tunMode = config.remove('_tunMode')?.toString() ?? 'auto';
     config.remove('_localPort');
     final clashPort =
         (config.remove('_clashApiPort') as num?)?.toInt() ?? 9090;
@@ -90,16 +102,9 @@ class ProxyCoreAndroid extends ProxyCore {
     if (clashSecret.isNotEmpty) {
       _api.options.headers['Authorization'] = 'Bearer $clashSecret';
     }
-    final inbounds = config['inbounds'];
-    if (inbounds is List) {
-      for (final ib in inbounds) {
-        if (ib is Map && ib['type'] == 'tun') {
-          ib['auto_route'] = false;
-          ib['strict_route'] = false;
-          ib['stack'] = 'gvisor';
-        }
-      }
-    }
+    // 序列化为 mihomo YAML（原生 libmihomo 只吃 Clash YAML）
+    final configYaml = MihomoConfigBuilder.encode(config);
+    final needTun = tunMode != 'off';
     // 前置检查：VPN 授权缺失/被撤销（重装、清数据、系统里关闭授权）时，
     // 直接在 Dart 侧给出类型化失败，避免走 15s 轮询超时才知道失败
     if (!await PermissionService.instance.isVpnPrepared()) {
@@ -107,7 +112,10 @@ class ProxyCoreAndroid extends ProxyCore {
           ConnErrorKind.noVpnPermission, AppStrings.t('vpn_permission_needed'));
     }
     try {
-      await _channel.invokeMethod('startVpn', {'config': jsonEncode(config)});
+      await _channel.invokeMethod('startVpn', {
+        'configYaml': configYaml,
+        'needTun': needTun,
+      });
     } on PlatformException catch (e) {
       // start_failed（原生侧返回，如 Android 12+ 后台启动前台服务受限）：
       // 类型化后交给首页分场景引导（保持前台重试等）
@@ -152,12 +160,26 @@ class ProxyCoreAndroid extends ProxyCore {
 
   @override
   Future<void> switchMode(bool smart) async {
-    await _clash('PATCH', '/configs', {'mode': smart ? 'Rule' : 'Global'});
+    _smartMode = smart;
+    // mihomo: rule=智能 / global=全局，热切换不断网
+    await _clash('PATCH', '/configs', {'mode': smart ? 'rule' : 'global'});
+    if (!smart) {
+      // 全局模式流量走内置 GLOBAL 组：把 GLOBAL 指向当前节点，避免线路跳变
+      final tag = _lastNodeTag;
+      if (tag != null) {
+        try {
+          await _clash('PUT', '/proxies/GLOBAL', {'name': tag});
+        } catch (_) {}
+      }
+    }
   }
 
   @override
   Future<void> switchNode(String tag) async {
-    await _clash('PUT', '/proxies/select', {'name': tag});
+    _lastNodeTag = tag;
+    // 智能模式切 select 组；全局模式切内置 GLOBAL 组
+    final group = _smartMode ? 'select' : 'GLOBAL';
+    await _clash('PUT', '/proxies/$group', {'name': tag});
   }
 
   @override
