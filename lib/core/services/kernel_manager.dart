@@ -228,11 +228,14 @@ class KernelManager {
         'Expand-Archive -Path "$winZip" -DestinationPath "$winDest" -Force',
       ]);
       if (r.exitCode != 0) return null;
-      // 定位 mihomo.exe（zip 内可能单文件或带目录）
+      // 定位内核 exe（官方 zip 内文件名带平台前缀：mihomo-windows-amd64.exe，
+      // 按 .exe 扩展名取唯一文件）
       final found = Directory(dest)
           .listSync(recursive: true)
           .whereType<File>()
-          .where((f) => f.path.endsWith('mihomo.exe'))
+          .where((f) =>
+              f.path.toLowerCase().endsWith('.exe') &&
+              !f.path.toLowerCase().endsWith('mihomo.exe.old'))
           .toList();
       if (found.isEmpty) return null;
       final exe = found.first.path;

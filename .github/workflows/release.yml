@@ -151,7 +151,9 @@ jobs:
           curl -fL --max-time 300 -o mihomo.zip \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-v$MIHOMO_VERSION.zip"
           unzip -o mihomo.zip -d sb
-          find sb -name "mihomo.exe" -exec cp {} build/mihomo/mihomo.exe \;
+          # 官方 zip 内文件名带平台前缀（mihomo-windows-amd64.exe），按扩展名取
+          EXE=$(find sb -iname "*.exe" | head -1)
+          [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
           ls -la build/mihomo/
 
       - name: 测试（含真实内核端到端验证）
