@@ -25,6 +25,12 @@ class SubscriptionService {
   DateTime _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
   static const _cacheTtl = Duration(minutes: 30);
 
+  /// 最近一次成功拉取订阅的时间（首页「节点更新于 xx:xx」展示用）
+  DateTime? get lastUpdatedAt {
+    final t = _cacheTime;
+    return t.millisecondsSinceEpoch <= 0 ? null : t;
+  }
+
   /// 清缓存/登出代次：拉取在途期间登出 → 结果作废，禁止把旧账号数据写回
   /// 内存或磁盘缓存（防止登出竞态让旧缓存"复活"到下一个账号）
   int _epoch = 0;

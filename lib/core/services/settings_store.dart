@@ -27,6 +27,10 @@ class SettingsStore {
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',
+        // TUN 用户态栈（Android 机型兼容性切换：gvisor 兼容性最好 / mixed 更快）
+        'tunStack': 'gvisor',
+        // 用户自定义「直连名单」（域名后缀列表，命中直接不走代理）
+        'bypassDomains': <String>[],
         'bypassLan': true,
         'theme': 'system',
         'language': 'zh',

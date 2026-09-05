@@ -141,6 +141,39 @@ void main() {
     expect(dns.containsKey('listen'), isFalse, reason: '桌面 dns 不监听端口');
   });
 
+  test('直连名单注入: 域名后缀规则置于最前(优先级最高)', () {
+    final cfg = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        bypassDomains: ['company.com', 'internal.net']);
+    final rules = (cfg['rules'] as List).cast<String>();
+    expect(rules.first, 'DOMAIN-SUFFIX,company.com,DIRECT');
+    expect(rules[1], 'DOMAIN-SUFFIX,internal.net,DIRECT');
+    expect(rules.contains('IP-CIDR,127.0.0.0/8,DIRECT'), isTrue);
+    // 不传时无名单规则
+    final plain = MihomoConfigBuilder.build(
+        nodes: [vlessNode], selectedTag: vlessNode.tag, smartMode: true);
+    expect((plain['rules'] as List).cast<String>().first,
+        'IP-CIDR,127.0.0.0/8,DIRECT');
+  });
+
+  test('tunStack 参数生效(TUN 模式 stack 可切换)', () {
+    final gvisor = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        tunMode: 'auto');
+    expect((gvisor['tun'] as Map)['stack'], 'gvisor');
+    final mixed = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        tunMode: 'auto',
+        tunStack: 'mixed');
+    expect((mixed['tun'] as Map)['stack'], 'mixed');
+  });
+
   test('YAML 编码: 特殊字符节点名被正确引用且可被 yaml 解析', () {
     final tricky = ProxyNode(
         tag: '香港#1: 直连 [测试] {VIP}, true',

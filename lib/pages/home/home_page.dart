@@ -302,9 +302,57 @@ class _HomePageState extends State<HomePage>
             flex: 2,
             highlight: !warn && !expired,
           ),
+          // 节点更新：显示最近成功拉取订阅的时间，点击立即刷新
+          GestureDetector(
+            onTap: _refreshSubManual,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6, right: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _refreshing
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(Icons.refresh, size: 15, color: color),
+                  const SizedBox(height: 3),
+                  Text(
+                    _fmtSubTime(),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: MFColors.txt3,
+                        fontFamily: kNumFont),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  bool _refreshing = false;
+
+  Future<void> _refreshSubManual() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      await _ensureNodes(force: true);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  String _fmtSubTime() {
+    final t = SubscriptionService.instance.lastUpdatedAt;
+    if (t == null) return '--:--';
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
   }
 
   /// 受限账号顶部引导条：只有「确实受限」才出现，且按钮按状态区分 ——

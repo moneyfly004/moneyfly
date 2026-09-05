@@ -17,6 +17,7 @@ import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../auth/change_password_page.dart';
+import 'bypass_page.dart';
 import 'kernel_page.dart';
 
 /// 设置页（设计稿 09）：完整清单 + 持久化
@@ -161,6 +162,22 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _pickTunMode),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
+            _row(icon: '🚫', title: AppStrings.t('settings_bypass'),
+                desc: AppStrings.t('settings_bypass_desc'),
+                value: '${((_s['bypassDomains'] as List?)?.length ?? 0)}',
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const BypassPage()))),
+            if (Platform.isAndroid)
+              _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
+                  desc: AppStrings.t('settings_tun_stack_desc'),
+                  value: (_s['tunStack']?.toString() ?? 'gvisor') == 'mixed'
+                      ? AppStrings.t('tun_stack_mixed')
+                      : AppStrings.t('tun_stack_gvisor'),
+                  onTap: () => _picker([
+                    AppStrings.t('tun_stack_gvisor'),
+                    AppStrings.t('tun_stack_mixed'),
+                  ], (v) => _set('tunStack',
+                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'))),
             _section(AppStrings.t('settings_kernel')),
             _row(icon: '🧩', title: AppStrings.t('settings_kernel'),
                 desc: 'MetaCubeX/mihomo',

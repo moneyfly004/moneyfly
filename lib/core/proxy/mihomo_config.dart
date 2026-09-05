@@ -41,6 +41,10 @@ class MihomoConfigBuilder {
     int clashApiPort = 9090,
     bool geoReady = true,
     String? clashApiSecret,
+    /// TUN 栈（Android 机型兼容性切换；桌面 TUN 场景也可用）
+    String tunStack = 'gvisor',
+    /// 用户自定义直连名单（域名后缀；命中 DIRECT，优先级最高）
+    List<String> bypassDomains = const [],
   }) {
     final secret = clashApiSecret ?? generateSecret();
     final mode = smartMode ? 'rule' : 'global';
@@ -94,6 +98,8 @@ class MihomoConfigBuilder {
 
     // 规则列表（mihomo 首条匹配即停）
     final rules = <String>[
+      // 用户自定义「直连名单」：优先级最高，名单内域名不走代理
+      for (final d in bypassDomains) 'DOMAIN-SUFFIX,$d,DIRECT',
       // 回环地址永远直连（内核 API / 本机服务必须可达）
       'IP-CIDR,127.0.0.0/8,DIRECT',
       // 局域网按设置直连
@@ -182,7 +188,7 @@ class MihomoConfigBuilder {
     if (isTun) {
       cfg['tun'] = {
         'enable': true,
-        'stack': 'gvisor',
+        'stack': tunStack,
         'auto-route': false,
         'auto-detect-interface': true,
         'dns-hijack': ['any:53'],

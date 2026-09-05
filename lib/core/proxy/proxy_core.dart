@@ -34,6 +34,8 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     localPort: (args['localPort'] as num?)?.toInt() ?? 2080,
     clashApiPort: (args['clashApiPort'] as num?)?.toInt() ?? 9090,
     geoReady: args['geoReady'] != false,
+    tunStack: args['tunStack']?.toString() ?? 'gvisor',
+    bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
   );
 }
 
@@ -414,6 +416,8 @@ class ConnectionController extends ChangeNotifier {
         'localPort': localPort,
         'clashApiPort': clashApiPort,
         'geoReady': geoReady,
+        'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
+        'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
       });
       await _core.start(cfg);
       if (epoch != _epoch) {
