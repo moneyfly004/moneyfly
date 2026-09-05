@@ -32,6 +32,15 @@ class ProxyCoreCli extends ProxyCore {
   static final String workDir = '${Directory.systemTemp.path}/moneyfly_core';
   static const _readyTimeout = Duration(seconds: 10);
 
+  /// 内核日志实时流（广播）：_onLog 收到的每行都推送，
+  /// 「内核日志」实时页订阅展示
+  static final StreamController<String> kernelLogStream =
+      StreamController<String>.broadcast();
+
+  /// 最近内核日志快照（实时页初始历史用，环形保留末尾 ~200 行）
+  static List<String> logTailSnapshot() =>
+      List.unmodifiable(_lastCoreLogs);
+
   /// 当前智能(rule)/全局(global)状态 —— 决定热切节点时打 select 组还是 GLOBAL 组。
   /// 启动时从配置 mode 字段同步；switchMode 时更新。
   bool _smartMode = true;
@@ -90,6 +99,9 @@ class ProxyCoreCli extends ProxyCore {
   /// 最近内核日志（错误排查用，环形保留末尾 ~40 行）
   final List<String> _logTail = [];
   static const _logKeep = 40;
+  /// 进程级内核日志环形缓冲（日志实时页跨实例读取；上限 200 行）
+  static final List<String> _lastCoreLogs = [];
+  static const _coreLogKeep = 200;
 
   @override
   bool get isRunning => _proc != null;
@@ -276,6 +288,12 @@ class ProxyCoreCli extends ProxyCore {
   }
 
   @override
+  Future<void> setKernelLogLevel(String level) async {
+    // mihomo PATCH /configs 支持 log-level 热更（debug/info/warning/error/silent）
+    await _clash('PATCH', '/configs', {'log-level': level});
+  }
+
+  @override
   Future<int> testNodeDelay(String tag,
       {Duration timeout = const Duration(seconds: 5), String? url}) async {
     if (_proc == null) return -1;
@@ -310,6 +328,11 @@ class ProxyCoreCli extends ProxyCore {
   void _onLog(String line) {
     _logTail.add(line);
     if (_logTail.length > _logKeep) _logTail.removeAt(0);
+    _lastCoreLogs.add(line);
+    if (_lastCoreLogs.length > _coreLogKeep) _lastCoreLogs.removeAt(0);
+    if (!kernelLogStream.isClosed) {
+      kernelLogStream.add(line);
+    }
   }
 
   String _tail() => _logTail.isEmpty ? '（无输出）' : _logTail.join(' | ');

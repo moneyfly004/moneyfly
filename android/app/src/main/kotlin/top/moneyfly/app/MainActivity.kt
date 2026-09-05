@@ -103,6 +103,8 @@ class MainActivity : FlutterActivity() {
                     }
                     "isVpnRunning" -> result.success(MoneyFlyVpnService.isRunning)
                     "kernelVersion" -> result.success(MoneyFlyVpnService.kernelVersion())
+                    "fetchKernelLogs" -> result.success(MoneyFlyVpnService.fetchKernelLogs())
+                    "getInstalledApps" -> result.success(getInstalledApps())
                     else -> result.notImplemented()
                 }
             }
@@ -173,6 +175,32 @@ class MainActivity : FlutterActivity() {
         if (requestCode == REQ_NOTIFY) {
             pendingNotifyResult?.success(grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
             pendingNotifyResult = null
+        }
+    }
+
+    /** 已安装应用列表（含桌面启动器的应用）：label + package，按 label 排序。
+     *  供「按 App 分流/排除」设置页勾选。 */
+    private fun getInstalledApps(): List<Map<String, String>> {
+        return try {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val resolved = packageManager.queryIntentActivities(intent, 0)
+            val seen = LinkedHashMap<String, String>()
+            val pm = packageManager
+            for (ri in resolved) {
+                val pkg = ri.activityInfo.packageName ?: continue
+                if (seen.containsKey(pkg)) continue
+                val label = try {
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                } catch (_: Exception) {
+                    pkg
+                }
+                seen[pkg] = label
+            }
+            seen.entries
+                .sortedBy { it.value.lowercase() }
+                .map { mapOf("package" to it.key, "label" to it.value) }
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 

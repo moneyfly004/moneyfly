@@ -29,6 +29,13 @@ class SettingsStore {
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',
         // TUN 用户态栈（Android 机型兼容性切换：gvisor 兼容性最好 / mixed 更快）
         'tunStack': 'gvisor',
+        // 内核日志级别（debug/info/warning/error；连接启动与实时页热更共用）
+        'kernelLogLevel': 'warning',
+        // DNS 解析模式：auto / fake-ip / redir-host
+        'dnsMode': 'auto',
+        // 按 App 分流/排除（Android）：all / selected / denied + 包名列表
+        'accessControlMode': 'all',
+        'accessControlApps': <String>[],
         // 用户自定义「直连名单」（域名后缀列表，命中直接不走代理）
         'bypassDomains': <String>[],
         'bypassLan': true,

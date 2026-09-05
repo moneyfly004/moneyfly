@@ -17,7 +17,9 @@ import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../auth/change_password_page.dart';
+import 'access_page.dart';
 import 'bypass_page.dart';
+import 'kernel_log_page.dart';
 import 'kernel_page.dart';
 
 /// 设置页（设计稿 09）：完整清单 + 持久化
@@ -133,6 +135,23 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _pickTestUrl),
             _row(icon: '🌐', title: AppStrings.t('settings_dns'), value: _s['dns']?.toString() ?? '223.5.5.5',
                 onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
+            _row(icon: '🧭', title: AppStrings.t('settings_dns_mode'),
+                desc: AppStrings.t('settings_dns_mode_desc'),
+                value: switch (_s['dnsMode']?.toString()) {
+                  'fake-ip' => AppStrings.t('dns_mode_fakeip'),
+                  'redir-host' => AppStrings.t('dns_mode_redirhost'),
+                  _ => AppStrings.t('dns_mode_auto'),
+                },
+                onTap: () => _picker([
+                  AppStrings.t('dns_mode_auto'),
+                  AppStrings.t('dns_mode_fakeip'),
+                  AppStrings.t('dns_mode_redirhost'),
+                ], (v) => _set('dnsMode',
+                    v == AppStrings.t('dns_mode_fakeip')
+                        ? 'fake-ip'
+                        : (v == AppStrings.t('dns_mode_redirhost')
+                            ? 'redir-host'
+                            : 'auto')))),
             _section(AppStrings.t('settings_mode')),
             _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
                 trailing: _seg2(
@@ -167,6 +186,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 value: '${((_s['bypassDomains'] as List?)?.length ?? 0)}',
                 onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const BypassPage()))),
+            if (Platform.isAndroid)
+              _row(icon: '📱', title: AppStrings.t('settings_access'),
+                  desc: AppStrings.t('settings_access_desc'),
+                  value: _accessModeValue(),
+                  onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AccessPage()))),
             if (Platform.isAndroid)
               _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
                   desc: AppStrings.t('settings_tun_stack_desc'),
@@ -210,6 +235,10 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '⏻', title: AppStrings.t('logout'), danger: true, onTap: _logout),
             _section(AppStrings.t('settings_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
+            _row(icon: '🧾', title: AppStrings.t('settings_kernel_log'),
+                desc: AppStrings.t('settings_kernel_log_desc'),
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const KernelLogPage()))),
             _row(icon: '📋', title: AppStrings.t('settings_log'), desc: AppStrings.t('settings_log_desc'), onTap: _showLog),
             const SizedBox(height: 12),
              Center(
@@ -326,6 +355,14 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  String _accessModeValue() {
+    return switch (_s['accessControlMode']?.toString()) {
+      'selected' => AppStrings.t('access_mode_selected'),
+      'denied' => AppStrings.t('access_mode_denied'),
+      _ => AppStrings.t('access_mode_all'),
+    };
   }
 
   String? _tunDesc() {

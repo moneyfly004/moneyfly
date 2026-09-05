@@ -10,6 +10,7 @@
 package mihomelib
 
 import (
+	"strings"
 	"fmt"
 	"sync"
 
@@ -20,6 +21,56 @@ import (
 	"github.com/metacubex/mihomo/log"
 	"gopkg.in/yaml.v3"
 )
+
+// ================= 内核日志采集 =================
+// mihomo 的日志经 observable 广播：订阅后必须持续消费，否则 subscriber 缓冲
+// (200 条)满会阻塞内核日志路径。这里起常驻 goroutine drain 并保留环形缓冲，
+// 供 Flutter 侧轮询拉取（FetchLogs）做「实时内核日志」面板。
+var (
+	logOnce     sync.Once
+	logRing     []string
+	logMu       sync.Mutex
+	logConsumed int
+	logCap      = 1000
+)
+
+func startLogCapture() {
+	logOnce.Do(func() {
+		sub := log.Subscribe()
+		go func() {
+			for ev := range sub {
+				logMu.Lock()
+				logRing = append(logRing, ev.Payload)
+				if len(logRing) > logCap {
+					drop := len(logRing) - logCap
+					logRing = logRing[drop:]
+					logConsumed -= drop
+					if logConsumed < 0 {
+						logConsumed = 0
+					}
+				}
+				logMu.Unlock()
+			}
+		}()
+	})
+}
+
+// 包加载即开始采集：mihomo log 包 init 先于本包执行（依赖先初始化），
+// 保证内核启动日志不丢失。
+func init() {
+	startLogCapture()
+}
+
+// Logs 返回自上次调用以来的新增内核日志（首次调用返回已采集的全部历史）。
+// 供 Flutter 侧「内核日志」页轮询。
+func Logs() string {
+	startLogCapture()
+	logMu.Lock()
+	defer logMu.Unlock()
+	out := strings.Join(logRing[logConsumed:], "\n")
+	logConsumed = len(logRing)
+	return out
+}
 
 var (
 	mu      sync.Mutex

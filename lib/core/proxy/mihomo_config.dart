@@ -36,6 +36,9 @@ class MihomoConfigBuilder {
     required bool smartMode,
     String dns = '223.5.5.5',
     String tunMode = 'off',
+    String logLevel = 'warning',
+    /// DNS 模式：auto / fake-ip / redir-host
+    String dnsMode = 'auto',
     bool bypassLan = true,
     int localPort = 2080,
     int clashApiPort = 9090,
@@ -49,6 +52,9 @@ class MihomoConfigBuilder {
     final secret = clashApiSecret ?? generateSecret();
     final mode = smartMode ? 'rule' : 'global';
     final isTun = tunMode != 'off';
+    // fake-ip 生效条件：显式选择，或 auto 且走 TUN（桌面 auto 保持传统解析）
+    final useFakeIp =
+        dnsMode == 'fake-ip' || (dnsMode != 'redir-host' && isTun);
 
     // 过滤掉面板伪节点（📢官网/⏰到期 等信息节点，server=baidu.com 等）
     final validNodes =
@@ -132,7 +138,7 @@ class MihomoConfigBuilder {
       'secret': secret,
       // 智能 = rule；全局 = global（PATCH /configs 热切换）
       'mode': mode,
-      'log-level': 'warning',
+      'log-level': logLevel,
       'ipv6': false,
       'allow-lan': false,
       // 入站连接不查进程（省资源；find-process-mode 需管理员权限）
@@ -149,9 +155,15 @@ class MihomoConfigBuilder {
       // 注意：不配置 fallback 到 8.8.8.8/1.1.1.1 —— 国内网络直连被墙，
       // 依赖 fallback 的解析会超时（实测会让 ssr 等「本地解析型」链路
       // 的 delay/建连全部失败）；nameserver 单源即可，规则走域名直传。
+      //
+      // DNS 模式（dnsMode）：
+      //   auto      默认 —— TUN 用 fake-ip；桌面不写 enhanced-mode
+      //             （mihomo 默认 redir-host 传统解析，行为与旧版一致）
+      //   fake-ip   全端 fake-ip（域名映射 198.18.x.x，TUN/防泄漏场景推荐）
+      //   redir-host 全端传统模式（域名真实解析后直连）
       'dns': {
         'enable': true,
-        if (isTun) ...{
+        if (useFakeIp) ...{
           'enhanced-mode': 'fake-ip',
           'fake-ip-range': '198.18.0.1/16',
           'fake-ip-filter': [
@@ -159,7 +171,8 @@ class MihomoConfigBuilder {
             '*.local',
             'localhost.ptlogin2.qq.com',
           ],
-        },
+        } else if (dnsMode == 'redir-host')
+          'enhanced-mode': 'redir-host',
         'nameserver': [dns],
       },
 

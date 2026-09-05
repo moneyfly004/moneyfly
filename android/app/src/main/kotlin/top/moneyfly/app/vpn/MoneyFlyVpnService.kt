@@ -10,6 +10,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import org.json.JSONObject
 import top.moneyfly.app.MainActivity
 import top.moneyfly.app.R
 import top.moneyfly.mihomelib.Mihomelib
@@ -58,6 +59,15 @@ class MoneyFlyVpnService : VpnService() {
                 Mihomelib.version() ?: ""
             } catch (e: Exception) {
                 Log.w(TAG, "kernelVersion: ${e.message}")
+                ""
+            }
+
+        /** 自上次调用以来的内核日志增量（「内核日志」实时页轮询） */
+        fun fetchKernelLogs(): String =
+            try {
+                Mihomelib.logs() ?: ""
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchKernelLogs: ${e.message}")
                 ""
             }
     }
@@ -185,7 +195,11 @@ class MoneyFlyVpnService : VpnService() {
         tunPfd = null
     }
 
-    /** 建立 TUN：地址 172.19.0.1/30 + 全量路由 + 虚拟 DNS 172.19.0.2 */
+    /** 建立 TUN：地址 172.19.0.1/30 + 全量路由 + 虚拟 DNS 172.19.0.2。
+     *  按 Flutter 侧「按 App 分流/排除」设置决定哪些应用进入 TUN：
+     *   - all（默认）：仅本应用自身不走 VPN（控制通道直连）
+     *   - selected（仅以下应用走代理）：allowed = 勾选 + 本应用
+     *   - denied（排除以下应用）：disallowed = 勾选（不含本应用，本应用始终直连） */
     @SuppressLint("MissingPermission")
     private fun establishTun(): ParcelFileDescriptor {
         if (prepare(this) != null) {
@@ -206,14 +220,53 @@ class MoneyFlyVpnService : VpnService() {
                 .addRoute("0.0.0.0", 0)
                 // 虚拟 DNS：Android 的 DNS 查询发给它 → 进 TUN → 内核 hijack 处理 fake-ip
                 .addDnsServer(TUN_DNS)
-        // 本应用自身流量不进入 TUN，保证控制通道（后端 API / Clash API）永远可用
-        try {
-            builder.addDisallowedApplication(packageName)
-        } catch (e: Exception) {
-            Log.d(TAG, "addDisallowedApplication failed: ${e.message}")
-        }
+        applyAccessControl(builder)
         return builder.establish()
             ?: throw IllegalStateException("android: the application is not prepared or is revoked")
+    }
+
+    private fun applyAccessControl(builder: VpnService.Builder) {
+        val (mode, apps) = readAccessSettings()
+        try {
+            when (mode) {
+                "selected" -> {
+                    // 仅勾选应用走代理；本应用始终放行（控制通道/登录 API）
+                    (apps + packageName).forEach { builder.addAllowedApplication(it) }
+                }
+                "denied" -> {
+                    // 排除勾选应用；本应用自身也排除（直连控制通道）
+                    (apps - packageName).forEach { builder.addDisallowedApplication(it) }
+                    builder.addDisallowedApplication(packageName)
+                }
+                else -> {
+                    // 全部走代理：仅本应用自身不走（避免控制通道进隧道死锁）
+                    builder.addDisallowedApplication(packageName)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "applyAccessControl: ${e.message}")
+        }
+    }
+
+    /** 从 Flutter 设置读取访问控制（SharedPreferences 的 moneyfly_settings_v1 JSON） */
+    private fun readAccessSettings(): Pair<String, List<String>> {
+        return try {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            val raw = prefs.getString("flutter.moneyfly_settings_v1", null)
+            if (raw == null) return "all" to emptyList()
+            val json = JSONObject(raw)
+            val mode = json.optString("accessControlMode", "all")
+            val arr = json.optJSONArray("accessControlApps")
+            val apps = mutableListOf<String>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).takeIf { it.isNotBlank() }?.let { apps.add(it) }
+                }
+            }
+            mode to apps
+        } catch (_: Exception) {
+            "all" to emptyList()
+        }
     }
 
     /** 从 Flutter assets 复制 geo 数据（APK 内路径 flutter_assets/assets/rules/...） */

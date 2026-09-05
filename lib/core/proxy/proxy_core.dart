@@ -34,6 +34,8 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     localPort: (args['localPort'] as num?)?.toInt() ?? 2080,
     clashApiPort: (args['clashApiPort'] as num?)?.toInt() ?? 9090,
     geoReady: args['geoReady'] != false,
+    logLevel: args['logLevel']?.toString() ?? 'warning',
+    dnsMode: args['dnsMode']?.toString() ?? 'auto',
     tunStack: args['tunStack']?.toString() ?? 'gvisor',
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
   );
@@ -69,6 +71,9 @@ abstract class ProxyCore {
   /// [url] 测速探测地址（设置页可改，默认 gstatic 204）。
   Future<int> testNodeDelay(String tag,
       {Duration timeout = const Duration(seconds: 5), String? url});
+
+  /// 热更内核日志级别（debug/info/warning/error）。未连接时为 no-op。
+  Future<void> setKernelLogLevel(String level) async {}
 
   /// 当前是否运行中
   bool get isRunning;
@@ -108,6 +113,8 @@ class _UnavailableCore implements ProxyCore {
   Future<void> switchMode(bool smart) async {}
   @override
   Future<void> switchNode(String tag) async {}
+  @override
+  Future<void> setKernelLogLevel(String level) async {}
   @override
   Future<int> testNodeDelay(String tag,
       {Duration timeout = const Duration(seconds: 5), String? url}) async => -1;
@@ -416,6 +423,8 @@ class ConnectionController extends ChangeNotifier {
         'localPort': localPort,
         'clashApiPort': clashApiPort,
         'geoReady': geoReady,
+        'logLevel': settings['kernelLogLevel']?.toString() ?? 'warning',
+        'dnsMode': settings['dnsMode']?.toString() ?? 'auto',
         'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
       });
@@ -638,6 +647,21 @@ class ConnectionController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 热更内核日志级别（「内核日志」实时页用）：连接时即时生效并持久化，
+  /// 下次连接按该级别启动。
+  Future<void> setKernelLogLevel(String level) async {
+    try {
+      if (status == ConnStatus.connected && _core.isRunning) {
+        await _core.setKernelLogLevel(level);
+      }
+    } catch (_) {}
+    try {
+      final s = await SettingsStore.instance.load();
+      s['kernelLogLevel'] = level;
+      await SettingsStore.instance.save(s);
+    } catch (_) {}
   }
 
   /// 网络环境变化（WiFi↔蜂窝切换）：已连接且内核在跑时，不重启内核，

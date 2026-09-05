@@ -17,6 +17,8 @@
     <!-- 电池优化豁免（省电同时防杀后台） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 「按 App 分流/排除」需要枚举已安装应用（Android 11+ 包可见性） -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- 卸载彻底：关闭系统备份/云恢复/设备迁移 —— 卸载后应用数据不残留、
          重装不自动恢复旧配置（订阅/节点/自动登录标记都随卸载消失，

@@ -158,6 +158,39 @@ void main() {
         'IP-CIDR,127.0.0.0/8,DIRECT');
   });
 
+  test('DNS 模式: auto/fake-ip/redir-host', () {
+    // auto + 桌面(无 TUN)：不写 enhanced-mode（mihomo 默认传统解析）
+    final auto = MihomoConfigBuilder.build(
+        nodes: [vlessNode], selectedTag: vlessNode.tag, smartMode: true);
+    final dnsAuto = auto['dns'] as Map;
+    expect(dnsAuto.containsKey('enhanced-mode'), isFalse);
+
+    // auto + TUN：fake-ip
+    final autoTun = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        tunMode: 'auto');
+    expect((autoTun['dns'] as Map)['enhanced-mode'], 'fake-ip');
+
+    // 显式 fake-ip（桌面也开）
+    final fip = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        dnsMode: 'fake-ip');
+    expect((fip['dns'] as Map)['enhanced-mode'], 'fake-ip');
+
+    // 显式 redir-host（TUN 也关 fake-ip）
+    final rh = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        tunMode: 'auto',
+        dnsMode: 'redir-host');
+    expect((rh['dns'] as Map)['enhanced-mode'], 'redir-host');
+  });
+
   test('tunStack 参数生效(TUN 模式 stack 可切换)', () {
     final gvisor = MihomoConfigBuilder.build(
         nodes: [vlessNode],

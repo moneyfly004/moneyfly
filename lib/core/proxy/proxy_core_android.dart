@@ -188,6 +188,12 @@ class ProxyCoreAndroid extends ProxyCore {
   }
 
   @override
+  Future<void> setKernelLogLevel(String level) async {
+    // mihomo PATCH /configs 支持 log-level 热更
+    await _clash('PATCH', '/configs', {'log-level': level});
+  }
+
+  @override
   Future<int> testNodeDelay(String tag,
       {Duration timeout = const Duration(seconds: 5), String? url}) async {
     if (!_running) return -1;
