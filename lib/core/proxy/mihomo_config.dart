@@ -5,10 +5,9 @@ import '../models/models.dart';
 /// mihomo (Clash.Meta) 配置生成器。
 ///
 /// mihomo 原生读 Clash YAML，订阅解析出的节点 raw（Clash map）直接可用，
-/// 不需要像 sing-box 那样逐协议转换；SSR/VMess/VLESS/Trojan/Hysteria2/TUIC/
-/// AnyTLS/WireGuard 等协议全部由内核原生支持。
+/// SSR/VMess/VLESS/Trojan/Hysteria2/TUIC/AnyTLS/WireGuard 等协议全部由内核原生支持。
 ///
-/// 路由设计（与旧 sing-box 版行为对齐）：
+/// 路由设计：
 /// - 智能模式（rule）：本地/局域网直连 + 国内(GEOSITE/GEOIP cn)直连 + 其余走代理
 /// - 全局模式（global）：mihomo 内核 mode=global 时全部流量走内置 GLOBAL 组，
 ///   由 Clash API PATCH /configs 热切换，不断网。
@@ -140,6 +139,10 @@ class MihomoConfigBuilder {
       // 桌面（系统代理/无 TUN）：内核内部解析用于 GEOSITE/GEOIP 规则匹配；
       // 不 listen（避免与本地 53/1053 冲突），不启用 fake-ip。
       // Android(TUN)：enhanced-mode fake-ip，域名路由防泄漏。
+      //
+      // 注意：不配置 fallback 到 8.8.8.8/1.1.1.1 —— 国内网络直连被墙，
+      // 依赖 fallback 的解析会超时（实测会让 ssr 等「本地解析型」链路
+      // 的 delay/建连全部失败）；nameserver 单源即可，规则走域名直传。
       'dns': {
         'enable': true,
         if (isTun) ...{
@@ -152,14 +155,6 @@ class MihomoConfigBuilder {
           ],
         },
         'nameserver': [dns],
-        'fallback': ['8.8.8.8', '1.1.1.1'],
-        if (geoReady) ...{
-          // 国内域名用国内 DNS 的结果（geoip 判断），防止污染
-          'fallback-filter': {
-            'geoip': true,
-            'geoip-code': 'CN',
-          },
-        },
       },
 
       // ===== 节点 =====

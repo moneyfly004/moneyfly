@@ -16,10 +16,10 @@ name: Build Release (Android / Windows / macOS)
 #   base64 -i release.keystore | pbcopy   # 填入 KEYSTORE_BASE64
 #
 # 内核（MIHOMO_VERSION）：官方 MetaCubeX/mihomo 预编译 release。
-#   - 桌面端（Windows/macOS）直接下载官方编译好的二进制内置进安装包；
-#   - Android 官方没有可嵌入 VpnService 的 .so/.aar（只有可执行文件），
-#     故在 CI 上用官方 v1.19.30 源码 + gomobile bind 编译 libmihomo.aar
-#     （源码官方原版，无 fork；编译只发生在 Actions 服务器，本地零 Go 依赖）。
+#   - 桌面端（Windows/macOS）构建时直接下载官方编译好的二进制内置进安装包；
+#   - Android：官方没有可嵌入 VpnService 的 .so/.aar，故由 moneyfly004/mihomo-lib
+#     发布仓库负责「官方源码 + gomobile bind 预编译」（每日自动跟随官方新版，
+#     无 fork），本 workflow 只做秒级下载，不每次现编内核。
 # 离线分流数据：MetaCubeX/meta-rules-dat（geosite.dat / country.mmdb）。
 
 on:
@@ -35,8 +35,7 @@ on:
 
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
-  MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里）
-  GO_VERSION: '1.26.6' # 与 android/mihomo-core/go.mod 及官方构建一致
+  MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里；需与 mihomo-lib release tag 一致）
 
 jobs:
   # ================= Android：多 ABI 分版本 =================
@@ -57,11 +56,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: android/mihomo-core/go.sum
-
       - name: 下载离线分流数据（构建时从 GitHub 拉最新，不在仓库里存二进制）
         run: |
           mkdir -p assets/rules
@@ -71,27 +65,14 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
-      - name: 安装 Android NDK（gomobile 编译 libmihomo.aar 需要）
-        run: |
-          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --install "ndk;27.2.12479018" > /dev/null
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-
-      - name: 编译 libmihomo.aar（官方 mihomo 源码 gomobile bind，无 fork）
+      # ---- libmihomo.aar：从 mihomo-lib 发布仓库下载（官方源码预编译，无需每次现编）。
+      #      编译与自动跟随官方新版由 moneyfly004/mihomo-lib 的 workflow 负责。----
+      - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
         run: |
           mkdir -p android/app/libs
-          cd android/mihomo-core
-          go mod download
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          gomobile init
-          gomobile bind \
-            -target=android \
-            -androidapi 21 \
-            -tags with_gvisor \
-            -javapkg top.moneyfly \
-            -o ../app/libs/libmihomo.aar .
-          ls -lh ../app/libs/libmihomo.aar
+          curl -fL --max-time 120 -o android/app/libs/libmihomo.aar \
+            "https://github.com/moneyfly004/mihomo-lib/releases/download/v$MIHOMO_VERSION/libmihomo.aar"
+          ls -lh android/app/libs/libmihomo.aar
 
       - name: 依赖
         run: flutter pub get

@@ -1,6 +1,7 @@
 #!/bin/bash
 # 本地编译 libmihomo.aar（Android 内核库，官方 MetaCubeX/mihomo 源码 + gomobile bind）。
-# 通常无需手动执行：CI（release.yml）构建时自动完成。本脚本供本地调试 Android 用。
+# 发布链路：moneyfly004/mihomo-lib 仓库预编译发布（每日自动跟随官方新版），
+# MoneyFly 的 CI 直接下载该 aar，不现编。本脚本仅供本地调试 Android 时用。
 #
 # 依赖：
 #   - Go >= 1.24（android/mihomo-core/go.mod 声明）
