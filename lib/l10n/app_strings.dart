@@ -166,6 +166,9 @@ class AppStrings {
     'kernel_log_level': '级别',
     'kernel_log_empty': '暂无日志\n连接后实时产生（切 debug 可看更多）',
     'kernel_log_copied': '日志已复制',
+    'log_center_title': '日志中心',
+    'log_center_desc': '内核引擎与 App 运行日志',
+    'log_clear_confirm': '清空全部运行日志？',
     // 内核管理（mihomo）
     'settings_kernel': '内核管理',
     // 直连名单 / TUN 栈
@@ -194,6 +197,10 @@ class AppStrings {
     'access_none': '未找到应用',
     'access_sel_count': '已选 {n} 个',
     'access_reconnect_btn': '重连生效',
+    'access_hint_all': '所有应用的流量都走代理',
+    'access_hint_selected': '✓ 勾选的应用走代理 · 未勾选的应用直连（含 MoneyFly 自身）',
+    'access_hint_denied': '勾选的应用直连（绕过代理）· 其余应用走代理',
+    'access_empty_perm': '未能读取应用列表\n请到系统设置 → 应用 → MoneyFly → 权限，允许「查看所有应用」后重新进入',
     'access_saved_tip': '更改已保存 · 重连或下次连接后生效',
     'tun_stack_gvisor': 'gvisor（兼容优先）',
     'tun_stack_mixed': 'mixed（速度优先）',
@@ -411,9 +418,7 @@ class AppStrings {
     'connecting_tip': '正在自动测速并选择最优节点…',
     'notify_reconnect_failed': '重连失败，请手动重试',
     // 硬编码补全
-    'logout_body': '确定要退出当前账号吗？',
     'cancel_text': '取消',
-    'logout_btn': '退出',
     'settings_title': '设置',
     'tun_title': 'TUN 虚拟网卡',
     'real_exit': '真实出口',
@@ -613,6 +618,9 @@ class AppStrings {
     'kernel_log_level': 'Level',
     'kernel_log_empty': 'No log yet\nGenerated live while connected (debug shows more)',
     'kernel_log_copied': 'Log copied',
+    'log_center_title': 'Log Center',
+    'log_center_desc': 'Kernel engine & app runtime logs',
+    'log_clear_confirm': 'Clear all runtime logs?',
     // Kernel management (mihomo)
     'settings_kernel': 'Kernel',
     // Bypass list / TUN stack
@@ -641,6 +649,10 @@ class AppStrings {
     'access_none': 'No apps found',
     'access_sel_count': '{n} selected',
     'access_reconnect_btn': 'Reconnect to apply',
+    'access_hint_all': 'All app traffic goes through the proxy',
+    'access_hint_selected': 'Checked apps use the proxy · unchecked apps connect directly (MoneyFly itself always direct)',
+    'access_hint_denied': 'Checked apps bypass the proxy (direct) · others use the proxy',
+    'access_empty_perm': 'Could not read app list\nAllow "View all apps" for MoneyFly in System settings → Apps → MoneyFly → Permissions, then reopen',
     'access_saved_tip': 'Saved · applies after reconnect or next connection',
     'tun_stack_gvisor': 'gvisor (compatibility first)',
     'tun_stack_mixed': 'mixed (speed first)',
@@ -856,9 +868,8 @@ class AppStrings {
     'connected_tip': 'Connected',
     'connecting_tip': 'Auto-testing and selecting the best node…',
     'notify_reconnect_failed': 'Reconnect failed. Please retry manually.',
-    'logout_body': 'Sign out of this account?',
     'cancel_text': 'Cancel',
-    'logout_btn': 'Sign Out',
+
     'settings_title': 'Settings',
     'tun_title': 'TUN Virtual NIC',
     'real_exit': 'Real exit',

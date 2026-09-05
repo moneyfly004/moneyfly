@@ -11,6 +11,7 @@ import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_input.dart';
 import '../../widgets/country_flag.dart';
 import '../devices/devices_page.dart';
 
@@ -148,12 +149,8 @@ class _NodesPageState extends State<NodesPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Container(
-                      height: 44,
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                      decoration: BoxDecoration(
-                          color: MFColors.card, borderRadius: BorderRadius.circular(13),
-                          border: Border.all(color: MFColors.line2)),
+                    child: SizedBox(
+                      height: 46,
                       child: TextField(
                         controller: _searchCtrl,
                         onChanged: (v) {
@@ -162,16 +159,15 @@ class _NodesPageState extends State<NodesPage> {
                             if (mounted) setState(() => _query = v.trim());
                           });
                         },
-                        style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 13.5),
-                        decoration: InputDecoration(
-                          hintText: AppStrings.t('search_hint'),
-                          hintStyle:  TextStyle(fontSize: 13, color: MFColors.txt3),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          filled: false,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                          prefixIcon:  Icon(Icons.search, size: 17, color: MFColors.txt3),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                            fontSize: 13.5),
+                        decoration: mfInput(hint: AppStrings.t('search_hint'))
+                            .copyWith(
+                          prefixIcon: Icon(Icons.search,
+                              size: 17, color: MFColors.txt3),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 11),
                           suffixIcon: _query.isEmpty
                               ? null
                               : GestureDetector(
@@ -180,7 +176,8 @@ class _NodesPageState extends State<NodesPage> {
                                     _debounce?.cancel();
                                     setState(() => _query = '');
                                   },
-                                  child:  Icon(Icons.close, size: 16, color: MFColors.txt3),
+                                  child: Icon(Icons.close,
+                                      size: 16, color: MFColors.txt3),
                                 ),
                         ),
                       ),

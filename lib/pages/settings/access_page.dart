@@ -5,6 +5,7 @@ import '../../core/proxy/proxy_core.dart';
 import '../../core/services/settings_store.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_input.dart';
 
 /// 按 App 分流/排除（Android AccessControl）：
 /// 控制哪些应用走代理（VpnService allowed/disallowed）。
@@ -161,6 +162,31 @@ class _AccessPageState extends State<AccessPage> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: MFColors.brand.withValues(alpha: .07),
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: MFColors.brand.withValues(alpha: .18)),
+                ),
+                child: Text(
+                  switch (_mode) {
+                    'selected' => AppStrings.t('access_hint_selected'),
+                    'denied' => AppStrings.t('access_hint_denied'),
+                    _ => AppStrings.t('access_hint_all'),
+                  },
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: MFColors.txt2,
+                      height: 1.5),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
               child: Text(
                 '${AppStrings.t('access_sel_count', {'n': '${_selected.length}'})}'
                 ' · ${AppStrings.t('access_saved_tip')}',
@@ -169,22 +195,17 @@ class _AccessPageState extends State<AccessPage> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-              child: Container(
-                height: 40,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                    color: MFColors.card,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: MFColors.line)),
+              child: SizedBox(
+                height: 44,
                 child: TextField(
                   onChanged: (v) => setState(() => _query = v),
-                  style: TextStyle(fontSize: 13, color: MFColors.txt),
-                  decoration: InputDecoration(
-                    hintText: AppStrings.t('access_search_hint'),
-                    hintStyle: TextStyle(fontSize: 12, color: MFColors.txt3),
-                    border: InputBorder.none,
-                    isDense: true,
-                    icon: Icon(Icons.search, size: 16, color: MFColors.txt3),
+                  style: TextStyle(fontSize: 13.5, color: MFColors.txt),
+                  decoration: mfInput(hint: AppStrings.t('access_search_hint'))
+                      .copyWith(
+                    prefixIcon: Icon(Icons.search,
+                        size: 17, color: MFColors.txt3),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                   ),
                 ),
               ),
@@ -195,9 +216,20 @@ class _AccessPageState extends State<AccessPage> {
                       child: CircularProgressIndicator(color: MFColors.brand))
                   : _filtered.isEmpty
                       ? Center(
-                          child: Text(AppStrings.t('access_none'),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 30),
+                            child: Text(
+                              _apps.isEmpty
+                                  ? AppStrings.t('access_empty_perm')
+                                  : AppStrings.t('access_none'),
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                  fontSize: 12, color: MFColors.txt3)))
+                                  fontSize: 12,
+                                  color: MFColors.txt3,
+                                  height: 1.7),
+                            ),
+                          ),
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(12, 6, 12, 24),
                           itemCount: _filtered.length,

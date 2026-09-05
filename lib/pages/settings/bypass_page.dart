@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/services/settings_store.dart';
+import '../../widgets/mf_input.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 
@@ -16,6 +17,8 @@ class BypassPage extends StatefulWidget {
 
 class _BypassPageState extends State<BypassPage> {
   final TextEditingController _input = TextEditingController();
+  final FocusNode _inputFocus = FocusNode();
+  String? _errorText;
   List<String> _domains = [];
   bool _loaded = false;
 
@@ -34,6 +37,7 @@ class _BypassPageState extends State<BypassPage> {
   @override
   void dispose() {
     _input.dispose();
+    _inputFocus.dispose();
     super.dispose();
   }
 
@@ -56,12 +60,17 @@ class _BypassPageState extends State<BypassPage> {
   }
 
   Future<void> _add() async {
-    final d = _normalize(_input.text);
-    _input.clear();
+    final raw = _input.text;
+    final d = _normalize(raw);
     if (d == null) {
-      _toast(AppStrings.t('bypass_invalid'));
+      setState(() =>
+          _errorText = raw.trim().isEmpty ? null : AppStrings.t('bypass_invalid'));
+      _inputFocus.requestFocus();
       return;
     }
+    _input.clear();
+    setState(() => _errorText = null);
+    _inputFocus.unfocus();
     if (_domains.contains(d)) {
       _toast(AppStrings.t('bypass_exists'));
       return;
@@ -114,28 +123,27 @@ class _BypassPageState extends State<BypassPage> {
               Text(AppStrings.t('bypass_desc'),
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3, height: 1.6)),
               const SizedBox(height: 12),
-              // 输入行
+              // 输入行（输入框与添加按钮同高对齐，无重叠）
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    child: Container(
-                      height: 46,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: BoxDecoration(
-                          color: MFColors.card,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: MFColors.line)),
+                    child: SizedBox(
+                      height: 48,
                       child: TextField(
                         controller: _input,
+                        focusNode: _inputFocus,
                         style: TextStyle(fontSize: 13.5, color: MFColors.txt),
-                        decoration: InputDecoration(
-                          hintText: AppStrings.t('bypass_hint'),
-                          hintStyle:
-                              TextStyle(fontSize: 12.5, color: MFColors.txt3),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: mfInput(hint: AppStrings.t('bypass_hint'))
+                            .copyWith(errorText: _errorText),
+                        onChanged: (_) {
+                          if (_errorText != null) {
+                            setState(() => _errorText = null);
+                          }
+                        },
                         onSubmitted: (_) => _add(),
                         textInputAction: TextInputAction.done,
                       ),
@@ -145,8 +153,8 @@ class _BypassPageState extends State<BypassPage> {
                   GestureDetector(
                     onTap: _add,
                     child: Container(
-                      height: 46,
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
                       decoration: BoxDecoration(
                           gradient: MFColors.brandGradient,
                           borderRadius: BorderRadius.circular(12)),

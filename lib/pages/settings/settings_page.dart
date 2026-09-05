@@ -2,25 +2,21 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
-import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
-import '../../core/services/auth_service.dart';
-import '../../core/services/app_log.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
-import '../../main.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
+import '../../widgets/mf_input.dart';
 import '../auth/change_password_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
-import 'kernel_log_page.dart';
 import 'kernel_page.dart';
+import 'log_center_page.dart';
 
 /// 设置页（设计稿 09）：完整清单 + 持久化
 class SettingsPage extends StatefulWidget {
@@ -59,34 +55,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await SettingsStore.instance.save(_s);
   }
 
-  /// 退出登录（二次确认后清会话回登录页）
-  Future<void> _logout() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('logout'), style: const TextStyle(fontSize: 16)),
-        content: Text(AppStrings.t('logout_body'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel_text'))),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(AppStrings.t('logout_btn'), style: TextStyle(color: MFColors.red)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await AuthService.instance.logout();
-    if (!mounted) return;
-    // 设置页是 push 上来的页面：先清空路由栈回到根部，
-    // 否则登录窗口会被设置页盖住，需要手动返回一步才能看到
-    Navigator.of(context).popUntil((r) => r.isFirst);
-    if (!mounted) return;
-    context.read<SessionState>().setLoggedIn(false);
-  }
-
-  @override
+@override
   Widget build(BuildContext context) {
     if (!_loaded) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: MFColors.brand)));
@@ -232,14 +201,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _section(AppStrings.t('settings_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
-            _row(icon: '⏻', title: AppStrings.t('logout'), danger: true, onTap: _logout),
             _section(AppStrings.t('settings_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
-            _row(icon: '🧾', title: AppStrings.t('settings_kernel_log'),
-                desc: AppStrings.t('settings_kernel_log_desc'),
+            _row(icon: '📋', title: AppStrings.t('log_center_title'),
+                desc: AppStrings.t('log_center_desc'),
                 onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const KernelLogPage()))),
-            _row(icon: '📋', title: AppStrings.t('settings_log'), desc: AppStrings.t('settings_log_desc'), onTap: _showLog),
+                    MaterialPageRoute(builder: (_) => const LogCenterPage()))),
             const SizedBox(height: 12),
              Center(
               child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
@@ -389,9 +356,9 @@ class _SettingsPageState extends State<SettingsPage> {
           keyboardType: TextInputType.number,
           autofocus: true,
           style: TextStyle(color: MFColors.txt),
-          decoration: InputDecoration(
-            hintText: hint,
-            helperText: helper ?? AppStrings.t('settings_local_port_desc'),
+          decoration: mfInput(
+            hint: hint,
+            helper: helper ?? AppStrings.t('settings_local_port_desc'),
           ),
         ),
         actions: [
@@ -467,9 +434,9 @@ class _SettingsPageState extends State<SettingsPage> {
           autofocus: true,
           keyboardType: TextInputType.url,
           style: TextStyle(color: MFColors.txt),
-          decoration: InputDecoration(
-            hintText: ConnectionController.defaultTestUrl,
-            helperText: AppStrings.t('settings_test_url_desc'),
+          decoration: mfInput(
+            hint: ConnectionController.defaultTestUrl,
+            helper: AppStrings.t('settings_test_url_desc'),
           ),
         ),
         actions: [
@@ -671,51 +638,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (v != null) onSelected(v);
   }
 
-  Future<void> _showLog() async {
-    final content = await AppLog.read();
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Row(
-          children: [
-            Text(AppStrings.t('settings_log'), style: const TextStyle(fontSize: 16)),
-            const Spacer(),
-            TextButton(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: content));
-                if (mounted) _toast(AppStrings.t('log_copied'));
-              },
-              child: Text(AppStrings.t('copy'), style: const TextStyle(fontSize: 12)),
-            ),
-            TextButton(
-              onPressed: () async {
-                await AppLog.clear();
-                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-                if (mounted) _toast(AppStrings.t('log_cleared'));
-              },
-              child: Text(AppStrings.t('clear_log'), style: const TextStyle(fontSize: 12, color: MFColors.red)),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          height: 400,
-          child: SingleChildScrollView(
-            reverse: true,
-            child: SelectableText(
-              content.isEmpty ? AppStrings.t('log_empty') : content,
-              style: TextStyle(fontSize: 10, color: MFColors.txt2, fontFamily: kNumFont, height: 1.6),
-            ),
-          ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: Text(AppStrings.t('ok_btn')))],
-      ),
-    );
-  }
-
-  void _toast(String msg) {
+void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
