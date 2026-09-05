@@ -85,10 +85,21 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "stopVpn" -> {
-                        startService(Intent(this, MoneyFlyVpnService::class.java).apply {
-                            action = MoneyFlyVpnService.ACTION_STOP
-                        })
-                        result.success(true)
+                        // 用 stopService 而非 startService(ACTION_STOP)：
+                        // 断连可能发生在 App 后台（看门狗判死自动清理/重连失败），
+                        // Android 8+ 后台 startService 会被系统禁止抛异常；
+                        // stopService 停止「已在运行的服务」不受后台限制，
+                        // 会触发 onDestroy → 内核停止 + TUN 释放。
+                        try {
+                            stopService(Intent(this, MoneyFlyVpnService::class.java))
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error(
+                                "stop_failed",
+                                "无法停止 VPN 服务：${e.message ?: e.javaClass.simpleName}",
+                                null,
+                            )
+                        }
                     }
                     "isVpnRunning" -> result.success(MoneyFlyVpnService.isRunning)
                     "kernelVersion" -> result.success(MoneyFlyVpnService.kernelVersion())

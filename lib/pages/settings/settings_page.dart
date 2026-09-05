@@ -149,14 +149,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('settings_clash_api_port_desc'),
                 value: '${_s['clashApiPort'] ?? 9090}',
                 onTap: _pickClashApiPort),
-            _row(icon: '🚀', title: AppStrings.t('settings_tun'),
-                desc: _tunDesc(),
-                value: switch (_s['tunMode']?.toString()) {
-                  'off' => AppStrings.t('tun_off'),
-                  'force' => AppStrings.t('tun_force'),
-                  _ => AppStrings.t('tun_auto'),
-                },
-                onTap: _pickTunMode),
+            // Android：连接强制 TUN（平台无系统代理机制），不展示可配置项
+            if (!Platform.isAndroid)
+              _row(icon: '🚀', title: AppStrings.t('settings_tun'),
+                  desc: _tunDesc(),
+                  value: switch (_s['tunMode']?.toString()) {
+                    'off' => AppStrings.t('tun_off'),
+                    'force' => AppStrings.t('tun_force'),
+                    _ => AppStrings.t('tun_auto'),
+                  },
+                  onTap: _pickTunMode),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _section(AppStrings.t('settings_kernel')),

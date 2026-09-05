@@ -68,6 +68,7 @@ class MoneyFlyVpnService : VpnService() {
     private val coreExecutor = Executors.newSingleThreadExecutor()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val configYaml = intent?.getStringExtra(EXTRA_CONFIG)
         when (intent?.action) {
             ACTION_STOP -> {
                 coreExecutor.execute {
@@ -77,27 +78,63 @@ class MoneyFlyVpnService : VpnService() {
                 }
                 return START_NOT_STICKY
             }
+            // 无配置的启动来源：BootReceiver（开机自启）/ 系统因 START_STICKY
+            // 重启 service。此时没有内核配置，绝不能常驻空转 —— 否则出现
+            // 「前台通知挂着但内核没跑」（幽灵连接）。前台服务先 startForeground
+            // 满足系统约束（Android 12+ 5s 限制），随后延迟自停；若期间 Dart
+            // 侧自动连接发来带配置的 START，则被新任务替代。
+            ACTION_START -> {
+                if (configYaml == null) {
+                    startForeground(NOTIFY_ID, buildNotification())
+                    coreExecutor.execute {
+                        try {
+                            Thread.sleep(1500)
+                        } catch (_: InterruptedException) {}
+                        if (!Mihomelib.running() && !isRunning) {
+                            stopForegroundCompat()
+                            stopSelf()
+                        }
+                    }
+                    return START_NOT_STICKY
+                }
+            }
+        }
+        // START_STICKY 重启（intent == null）：无配置可恢复，直接结束
+        if (intent == null) {
+            stopForegroundCompat()
+            stopSelf()
+            return START_NOT_STICKY
         }
         startForeground(NOTIFY_ID, buildNotification())
-        val configYaml = intent?.getStringExtra(EXTRA_CONFIG)
+        // 走到这里必须带配置（when 里已处理无配置的 START）；防御性兜底
+        val cfg = configYaml
+        if (cfg == null) {
+            stopForegroundCompat()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val needTun = intent?.getBooleanExtra(EXTRA_NEED_TUN, true) ?: true
-        if (configYaml != null && !Mihomelib.running()) {
-            coreExecutor.execute {
-                try {
-                    startBox(configYaml, needTun)
-                } catch (e: Exception) {
-                    Log.e(TAG, "startBox failed", e)
-                    isRunning = false
-                    stopForegroundCompat()
-                    stopSelf()
-                }
+        coreExecutor.execute {
+            try {
+                startBox(cfg, needTun)
+            } catch (e: Exception) {
+                Log.e(TAG, "startBox failed", e)
+                isRunning = false
+                stopForegroundCompat()
+                stopSelf()
             }
         }
         return START_STICKY
     }
-
     @Synchronized
     private fun startBox(configYaml: String, needTun: Boolean) {
+        // 串行守卫：快速连点/重复 START 时，第二个请求直接忽略，
+        // 避免「连上又被第二个 Start 失败路径停掉」的闪断
+        if (Mihomelib.running()) {
+            Log.d(TAG, "内核已在运行，忽略重复启动请求")
+            isRunning = true
+            return
+        }
         try {
             // 1) 内核工作目录（config.yaml 由 mihomo 内部管理；geo 数据落这里）
             val workDir = File(filesDir, "work")
@@ -241,6 +278,8 @@ class MoneyFlyVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        // stopService / 系统回收都会走到这里：移除前台通知并停内核
+        stopForegroundCompat()
         coreExecutor.execute {
             stopBox()
         }

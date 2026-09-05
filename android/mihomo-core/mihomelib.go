@@ -50,12 +50,19 @@ func Running() bool {
 // configBytes: mihomo Clash YAML 配置（Flutter 侧生成）。
 // tunFd: VpnService.establish() 的 TUN fd；>0 时注入 tun.file-descriptor
 // （非 root 全局代理的关键：内核直接用该 fd 收发包，不再自己创建 /dev/tun）。
-func Start(homeDirArg string, configBytes []byte, tunFd int32) error {
+func Start(homeDirArg string, configBytes []byte, tunFd int32) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if started {
 		return fmt.Errorf("mihomo already started")
 	}
+	// go panic 会跨 cgo 边界直接崩掉整个 App —— 防御性恢复，保证连接失败
+	// 是「可重试的错误」而不是「闪退」
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mihomo start panic: %v", r)
+		}
+	}()
 	log.SetLevel(log.WARNING)
 
 	// 初始化 homeDir（config.Init 会建目录与默认文件）
@@ -83,12 +90,17 @@ func Start(homeDirArg string, configBytes []byte, tunFd int32) error {
 }
 
 // Reload 热重载配置（模式/规则/订阅变化时调用；不重启进程不断流）。
-func Reload(configBytes []byte) error {
+func Reload(configBytes []byte) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if !started {
 		return fmt.Errorf("mihomo not started")
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mihomo reload panic: %v", r)
+		}
+	}()
 	if err := hub.Parse(configBytes); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -122,6 +134,10 @@ func injectTunFd(configBytes []byte, tunFd int32) ([]byte, error) {
 		return configBytes, nil
 	}
 	tun["file-descriptor"] = int(tunFd)
+	// Android 场景：VpnService 已全量下发路由(0.0.0.0/0)与地址，
+	// 内核不要再尝试 auto-route/探测默认接口（非 root 下会失败/告警）
+	tun["auto-route"] = false
+	tun["auto-detect-interface"] = false
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return nil, err

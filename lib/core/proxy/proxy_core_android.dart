@@ -142,7 +142,12 @@ class ProxyCoreAndroid extends ProxyCore {
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 300));
     }
+    // 内核未就绪：主动清理原生侧（VpnService/内核可能正在慢启动或启动失败），
+    // 避免「UI 报失败但 VPN 通知/隧道残留」的幽灵连接
     _lastError = AppStrings.t('kernel_timeout');
+    try {
+      await _channel.invokeMethod('stopVpn');
+    } catch (_) {}
     throw TypedConnError(ConnErrorKind.kernelTimeout, _lastError!);
   }
 

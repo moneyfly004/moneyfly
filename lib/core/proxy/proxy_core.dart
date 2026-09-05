@@ -365,7 +365,13 @@ class ConnectionController extends ChangeNotifier {
     // 默认开启会导致用户一点连接就失败（operation not permitted）；
     // Android 默认「TUN + 系统代理双通道」：VpnService 授权后 TUN 接管全部流量。
     final defaultTunMode = (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off';
-    final tunMode = settings['tunMode']?.toString() ?? defaultTunMode;
+    // Android 必须走 TUN：平台没有桌面那种「系统代理」机制，若用户曾把
+    // tunMode 设成 off，连接后内核只监听本地 mixed 端口、App 流量根本不进
+    // 隧道 —— 表现为「已连接但没网」。移动端强制 auto。
+    final effectiveTunMode = (Platform.isAndroid || Platform.isIOS)
+        ? 'auto'
+        : (settings['tunMode']?.toString() ?? defaultTunMode);
+    final tunMode = effectiveTunMode;
     final bypassLan = settings['bypassLan'] != false;
     final intervalMin = (settings['testIntervalMin'] as num?)?.toInt() ?? 30;
     if (epoch != _epoch) return;
@@ -436,8 +442,11 @@ class ConnectionController extends ChangeNotifier {
       var errMsg = typedErr?.message ??
           (e is UnsupportedError ? _core.lastError ?? e.message : e.toString());
       // TUN 模式需要管理员权限（macOS/Windows），给出明确提示
-      // （仅对未分类错误做文本映射；类型化错误已带明确语义，不再改写）
-      if (typedErr == null && (tunMode == 'force' || tunMode == 'auto')) {
+      // （仅对未分类错误做文本映射；类型化错误已带明确语义，不再改写。
+      //  Android 的错误都是类型化/平台语义的，不走这里的桌面管理员文案）
+      if (typedErr == null &&
+          (Platform.isMacOS || Platform.isWindows) &&
+          (tunMode == 'force' || tunMode == 'auto')) {
         final errLower = errMsg?.toLowerCase() ?? '';
         if (errLower.contains('permission') || errLower.contains('operation not permitted') ||
             errLower.contains('access') || errLower.contains('tun')) {
