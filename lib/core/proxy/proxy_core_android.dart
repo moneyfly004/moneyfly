@@ -146,16 +146,21 @@ class ProxyCoreAndroid extends ProxyCore {
     // 避免「UI 报失败但 VPN 通知/隧道残留」的幽灵连接。
     // 顺带拉取内核日志尾部，把真实原因带给用户（而非笼统的超时）。
     var detail = '';
+    // 1) 原生侧记录的真实启动错误（最直接、最精确）
+    try {
+      final err = await _channel.invokeMethod<String>('lastStartError');
+      if (err != null && err.isNotEmpty) detail = err;
+    } catch (_) {}
+    // 2) 补充内核日志尾部
     try {
       final logs =
           await _channel.invokeMethod<String>('fetchKernelLogs') ?? '';
       if (logs.isNotEmpty) {
         final lines = logs.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        if (lines.length > 3) {
-          detail = lines.sublist(lines.length - 3).join(' ');
-        } else {
-          detail = lines.join(' ');
-        }
+        final tail = lines.length > 4
+            ? lines.sublist(lines.length - 4).join(' | ')
+            : lines.join(' | ');
+        detail = detail.isEmpty ? tail : '$detail | $tail';
       }
     } catch (_) {}
     _lastError = AppStrings.t('kernel_timeout');

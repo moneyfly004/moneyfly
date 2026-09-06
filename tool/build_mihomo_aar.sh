@@ -33,7 +33,7 @@ mkdir -p android/app/libs
 (cd android/mihomo-core && gomobile bind \
   -target=android \
   -androidapi 21 \
-  -tags with_gvisor \
+  -tags "with_gvisor,cmfa" \
   -javapkg top.moneyfly \
   -o ../app/libs/libmihomo.aar .)
 ls -lh android/app/libs/libmihomo.aar

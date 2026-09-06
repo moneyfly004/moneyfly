@@ -53,6 +53,11 @@ class MoneyFlyVpnService : VpnService() {
         var isRunning: Boolean = false
             private set
 
+        /** 最近一次内核启动失败的原因（Dart 侧超时后读取，用于精确定位） */
+        @Volatile
+        var lastStartError: String? = null
+            private set
+
         /** 内置内核版本（任何时候可读，用于设置页「内核管理」） */
         fun kernelVersion(): String =
             try {
@@ -168,9 +173,12 @@ class MoneyFlyVpnService : VpnService() {
                 fd,
             )
             isRunning = true
+            lastStartError = null
             Log.i(TAG, "libmihomo started (tunFd=$fd, version=${Mihomelib.version()})")
         } catch (e: Exception) {
-            // 失败清理：释放 TUN，保证下次连接是干净状态
+            // 记录真实原因（供 Dart 读取展示），再清理并上抛
+            lastStartError = e.message ?: e.javaClass.simpleName
+            Log.e(TAG, "startBox failed: $lastStartError")
             cleanupTun()
             isRunning = false
             throw e

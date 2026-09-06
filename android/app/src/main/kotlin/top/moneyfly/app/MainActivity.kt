@@ -104,6 +104,7 @@ class MainActivity : FlutterActivity() {
                     "isVpnRunning" -> result.success(MoneyFlyVpnService.isRunning)
                     "kernelVersion" -> result.success(MoneyFlyVpnService.kernelVersion())
                     "fetchKernelLogs" -> result.success(MoneyFlyVpnService.fetchKernelLogs())
+                    "lastStartError" -> result.success(MoneyFlyVpnService.lastStartError)
                     "getInstalledApps" -> {
                         // PackageManager 查询较重（数百次 IPC），放工作线程避免 UI 卡顿
                         Thread {
