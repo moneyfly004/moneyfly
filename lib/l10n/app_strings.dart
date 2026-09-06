@@ -167,6 +167,10 @@ class AppStrings {
     'kernel_log_empty': '暂无日志\n连接后实时产生（切 debug 可看更多）',
     'kernel_log_copied': '日志已复制',
     'log_center_title': '日志中心',
+    'close_ask_title': '关闭 MoneyFly？',
+    'close_ask_body': '选择关闭方式：\n· 最小化到托盘：继续在后台运行（代理保持连接）\n· 退出：断开连接并结束程序',
+    'minimize_tray_btn': '最小化到托盘',
+    'quit_app_btn': '退出',
     'log_center_desc': '内核引擎与 App 运行日志',
     'log_clear_confirm': '清空全部运行日志？',
     // 内核管理（mihomo）
@@ -619,6 +623,10 @@ class AppStrings {
     'kernel_log_empty': 'No log yet\nGenerated live while connected (debug shows more)',
     'kernel_log_copied': 'Log copied',
     'log_center_title': 'Log Center',
+    'close_ask_title': 'Close MoneyFly?',
+    'close_ask_body': 'How do you want to close?\n· Minimize to tray: keep running in background (proxy stays connected)\n· Quit: disconnect and exit',
+    'minimize_tray_btn': 'Minimize to tray',
+    'quit_app_btn': 'Quit',
     'log_center_desc': 'Kernel engine & app runtime logs',
     'log_clear_confirm': 'Clear all runtime logs?',
     // Kernel management (mihomo)

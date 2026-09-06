@@ -132,12 +132,47 @@ class ProxyCoreCli extends ProxyCore {
 
   bool _tunForceMode = false;
 
+  /// 清理指向本项目工作目录的「僵尸 mihomo 进程」。
+  ///
+  /// 场景：App 被强杀/崩溃/异常退出时，内核子进程(mihomo -d workDir)可能
+  /// 残留，继续占用 9090/2080 与 cache.db 锁 —— 再次启动时新内核
+  /// bind 失败("address already in use")+ "[CacheFile] can't open cache
+  /// file: timeout"，表现为「退出后重开连不上」。
+  /// 只匹配命令行含 moneyfly_core 的 mihomo，不会误杀其它 Clash 类软件。
+  static Future<void> killStaleKernels() async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('powershell', [
+          '-NoProfile', '-Command',
+          "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'mihomo' -and \$_.CommandLine -match 'moneyfly_core' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        ]);
+        return;
+      }
+      final r = await Process.run('ps', ['-axo', 'pid,command'],
+          environment: {'PATH': Platform.environment['PATH'] ?? ''});
+      if (r.exitCode != 0) return;
+      for (final line in (r.stdout as String).split('\n')) {
+        if (!line.contains('mihomo') || !line.contains('moneyfly_core')) {
+          continue;
+        }
+        final m = RegExp(r'^\s*(\d+)').firstMatch(line);
+        if (m == null) continue;
+        final pid = int.tryParse(m.group(1)!);
+        if (pid == null || pid <= 1) continue;
+        AppLog.kernel('kill stale mihomo pid=$pid: ${line.trim()}');
+        await Process.run('kill', ['-9', '$pid']);
+      }
+    } catch (_) {}
+  }
+
   @override
   Future<void> start(Map<String, dynamic> config) async {
     if (_proc != null) throw StateError('内核已在运行');
     _intentionalStop = false;
     _lastError = null;
     _logTail.clear();
+    // 桌面端兜底：清理上次异常退出残留的僵尸内核（避免端口/cache 锁冲突）
+    await killStaleKernels();
 
     // 从配置同步当前模式（rule=智能 / global=全局），热切节点时选对组
     _smartMode = config['mode']?.toString() != 'global';

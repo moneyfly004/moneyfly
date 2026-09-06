@@ -100,10 +100,7 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
           await windowManager.show();
           await windowManager.focus();
         },
-        quit: () async {
-          await windowManager.setPreventClose(false);
-          await windowManager.close();
-        },
+        quit: _quitApp,
       );
     }
     // 登录态变化 → 启停「定时更新订阅」（登录后每 30 分钟静默拉订阅覆盖旧配置，
@@ -141,9 +138,67 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     super.dispose();
   }
 
+  /// 防重复退出/关闭处理
+  bool _quitting = false;
+
+  /// 真正退出：先断开连接（停内核 + 恢复系统代理，避免残留内核占端口/
+  /// cache 锁导致下次启动失败），再关闭窗口并结束进程。
+  Future<void> _quitApp() async {
+    if (_quitting) return;
+    _quitting = true;
+    try {
+      final c = ConnectionController.instance;
+      if (c.status != ConnStatus.disconnected) {
+        await c.disconnect();
+      }
+    } catch (_) {}
+    try {
+      await windowManager.setPreventClose(false);
+      await windowManager.close();
+    } catch (_) {}
+    // 兜底：某些平台 close 只关窗口不结束进程
+    exit(0);
+  }
+
   @override
   void onWindowClose() async {
-    await windowManager.hide();
+    // 点右上角 X（macOS 红点 / Windows ×）→ 询问：最小化常驻 还是 退出
+    if (!mounted || _quitting) return;
+    final act = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('close_ask_title'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(AppStrings.t('close_ask_body'),
+            style: TextStyle(
+                fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(AppStrings.t('cancel'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'hide'),
+            child: Text(AppStrings.t('minimize_tray_btn'),
+                style: TextStyle(color: MFColors.txt)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'quit'),
+            child: Text(AppStrings.t('quit_app_btn'),
+                style: TextStyle(color: MFColors.red)),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (act == 'hide') {
+      // 最小化到托盘：常驻后台（内核/代理保持连接）
+      await windowManager.hide();
+    } else if (act == 'quit') {
+      await _quitApp();
+    }
+    // act == null（点弹窗外/取消）→ 保持窗口，什么都不做
   }
 
   void _onSessionChanged() {
