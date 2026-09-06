@@ -10,6 +10,7 @@
 package mihomelib
 
 import (
+	"path/filepath"
 	"strings"
 	"fmt"
 	"sync"
@@ -118,6 +119,11 @@ func Start(homeDirArg string, configBytes []byte, tunFd int32) (err error) {
 
 	// 初始化 homeDir（config.Init 会建目录与默认文件）
 	C.SetHomeDir(homeDirArg)
+	// 关键：configFile 默认是相对路径 "config.yaml"，官方 main.go 会先
+	// SetConfig 绝对路径；库模式不设置的话 config.Init 会在进程工作目录
+	// （Android 上为 "/"，只读）尝试创建文件 → "read-only file system"。
+	// 显式指向 homeDir，保证 config.Init 的初始文件落到可写目录。
+	C.SetConfig(filepath.Join(homeDirArg, "config.yaml"))
 	if err := config.Init(C.Path.HomeDir()); err != nil {
 		return fmt.Errorf("init config dir: %w", err)
 	}
