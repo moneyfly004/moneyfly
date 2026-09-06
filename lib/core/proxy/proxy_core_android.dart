@@ -157,10 +157,23 @@ class ProxyCoreAndroid extends ProxyCore {
           await _channel.invokeMethod<String>('fetchKernelLogs') ?? '';
       if (logs.isNotEmpty) {
         final lines = logs.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final tail = lines.length > 4
-            ? lines.sublist(lines.length - 4).join(' | ')
-            : lines.join(' | ');
-        detail = detail.isEmpty ? tail : '$detail | $tail';
+        // 优先取「错误/启动阶段」行（bind/listen/error/config/panic），
+        // 避免被启动后的流量日志刷掉真因；没有错误行才取末尾几行
+        final errLines = lines
+            .where((l) =>
+                l.contains('level=error') ||
+                l.contains('bind') ||
+                l.contains('listen') ||
+                l.contains('panic') ||
+                l.contains('config') ||
+                l.contains('Shutting'))
+            .toList();
+        final picked = errLines.isNotEmpty
+            ? errLines.take(4).join(' | ')
+            : (lines.length > 4
+                ? lines.sublist(lines.length - 4).join(' | ')
+                : lines.join(' | '));
+        detail = detail.isEmpty ? picked : '$detail | $picked';
       }
     } catch (_) {}
     _lastError = AppStrings.t('kernel_timeout');
@@ -182,6 +195,14 @@ class ProxyCoreAndroid extends ProxyCore {
     _trafficCancel = null;
     try {
       await _channel.invokeMethod('stopVpn');
+      // 等待原生真正停完（VpnService 销毁 + 内核 stop 是异步的）。
+      // 若不等待就立刻重连，旧内核还在停止中，新 start 会被
+      // 「内核已在运行」忽略，随后旧内核停掉 → 新连接 15s 轮询超时。
+      for (var i = 0; i < 40; i++) {
+        final alive = await _channel.invokeMethod<bool>('isVpnRunning') ?? false;
+        if (!alive) break;
+        await Future.delayed(const Duration(milliseconds: 150));
+      }
     } catch (_) {}
   }
 

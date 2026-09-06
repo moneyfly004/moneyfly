@@ -642,6 +642,7 @@ class ConnectionController extends ChangeNotifier {
       try {
         await _core.switchMode(smart);
       } catch (e) {
+        AppLog.error('mode switch failed: $e');
         error = AppStrings.t('mode_switch_fail', {'err': '$e'});
         errorKind = ConnErrorKind.none;
         notifyListeners();

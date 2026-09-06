@@ -77,7 +77,9 @@ class MoneyFlyVpnService : VpnService() {
             }
     }
 
-    private var tunPfd: ParcelFileDescriptor? = null
+    /** TUN fd：establish 后 detach 交给内核，所有权归内核（Stop 时内核自关）。
+     *  Kotlin 侧绝不再 close —— Android fdsan 检测 double-close 会直接崩溃。 */
+    private var tunFd: Int = 0
 
     /** 内核启动/停止串行化（gomobile 调用需避免并发；Start 内部有锁，这里防重入） */
     private val coreExecutor = Executors.newSingleThreadExecutor()
@@ -143,12 +145,18 @@ class MoneyFlyVpnService : VpnService() {
     }
     @Synchronized
     private fun startBox(configYaml: String, needTun: Boolean) {
-        // 串行守卫：快速连点/重复 START 时，第二个请求直接忽略，
-        // 避免「连上又被第二个 Start 失败路径停掉」的闪断
+        // 竞态处理：Dart 断开后立刻重连时，旧内核可能还在停止中
+        // （running=true 但用户已发起新连接）。此时不能「忽略」——
+        // 否则旧内核随后停掉，新连接轮询超时。语义：收到新的启动请求
+        // 且内核还在跑 → 先停旧内核再按新配置启动（重启）。
         if (Mihomelib.running()) {
-            Log.d(TAG, "内核已在运行，忽略重复启动请求")
-            isRunning = true
-            return
+            Log.d(TAG, "收到新启动请求，先停止旧内核再重启")
+            try {
+                Mihomelib.stop() // 内核 stop 时自行关闭其持有的 TUN fd
+            } catch (e: Exception) {
+                Log.w(TAG, "stop old kernel: ${e.message}")
+            }
+            tunFd = 0
         }
         try {
             // 1) 内核工作目录（config.yaml 由 mihomo 内部管理；geo 数据落这里）
@@ -159,11 +167,13 @@ class MoneyFlyVpnService : VpnService() {
             //    缺文件时内核仍能启动（智能规则降级在 Dart 侧处理），仅警告。
             syncGeoAssets(workDir)
 
-            // 3) 需要全局代理时建立 TUN；fd 注入内核（tun.file-descriptor）
+            // 3) 需要全局代理时建立 TUN；fd detach 后注入内核（tun.file-descriptor）。
+            //    detach 后 fd 所有权归内核，Kotlin 不再 close（避免 fdsan double-close）。
             var fd = 0
             if (needTun) {
-                tunPfd = establishTun()
-                fd = tunPfd!!.fd
+                val pfd = establishTun()
+                fd = pfd.detachFd()
+                tunFd = fd
             }
 
             // 4) 启动内核（阻塞直到配置解析完成/失败；listener 异步运行）
@@ -176,10 +186,12 @@ class MoneyFlyVpnService : VpnService() {
             lastStartError = null
             Log.i(TAG, "libmihomo started (tunFd=$fd, version=${Mihomelib.version()})")
         } catch (e: Exception) {
-            // 记录真实原因（供 Dart 读取展示），再清理并上抛
+            // 记录真实原因（供 Dart 读取展示），再上抛。
+            // fd 不在此 close：detach 后若内核未接管，由 wrapper 在失败路径兜底关闭；
+            // 若内核已接管，其 Shutdown 会自关 —— 这里 close 任何一次都可能 double-close。
             lastStartError = e.message ?: e.javaClass.simpleName
             Log.e(TAG, "startBox failed: $lastStartError")
-            cleanupTun()
+            tunFd = 0
             isRunning = false
             throw e
         }
@@ -189,18 +201,11 @@ class MoneyFlyVpnService : VpnService() {
     private fun stopBox() {
         isRunning = false
         try {
-            Mihomelib.stop()
+            Mihomelib.stop() // 内核 Shutdown 自行关闭 TUN fd
         } catch (e: Exception) {
             Log.d(TAG, "stop: ${e.message}")
         }
-        cleanupTun()
-    }
-
-    private fun cleanupTun() {
-        try {
-            tunPfd?.close()
-        } catch (_: Exception) {}
-        tunPfd = null
+        tunFd = 0
     }
 
     /** 建立 TUN：地址 172.19.0.1/30 + 全量路由 + 虚拟 DNS 172.19.0.2。

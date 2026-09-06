@@ -14,6 +14,7 @@ import (
 	"strings"
 	"fmt"
 	"sync"
+	"syscall"
 
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
@@ -112,6 +113,9 @@ func Start(homeDirArg string, configBytes []byte, tunFd int32) (err error) {
 	// 是「可重试的错误」而不是「闪退」
 	defer func() {
 		if r := recover(); r != nil {
+			if tunFd > 0 {
+				_ = syscall.Close(int(tunFd))
+			}
 			err = fmt.Errorf("mihomo start panic: %v", r)
 		}
 	}()
@@ -140,6 +144,12 @@ func Start(homeDirArg string, configBytes []byte, tunFd int32) (err error) {
 	if err := hub.Parse(configBytes); err != nil {
 		// 启动失败兜底：清掉可能已半初始化的 listener/tunnel
 		executor.Shutdown()
+		// TUN fd 兜底关闭：内核 Shutdown 已关则 EBADF 无害；
+		// 未接管（早期失败）则补关防泄漏。Go 层 close 不经 libc，
+		// 不会触发 Android fdsan double-close 崩溃。
+		if tunFd > 0 {
+			_ = syscall.Close(int(tunFd))
+		}
 		return fmt.Errorf("parse config: %w", err)
 	}
 	started = true
