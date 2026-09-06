@@ -156,6 +156,11 @@ class ConnectionController extends ChangeNotifier {
   static const defaultTestUrl = 'http://www.gstatic.com/generate_204';
   String testUrl = defaultTestUrl;
   bool smartMode = true;
+
+  /// Android 模式切换中（自动断开重连期间）：UI 显示「正在切换模式…」
+  /// 并禁用模式/连接按钮，避免用户误以为没反应再点触发竞态
+  bool switchingMode = false;
+
   bool autoTest = true;
   bool autoReconnect = true;
   String? lastSpeedTestTime;
@@ -638,26 +643,53 @@ class ConnectionController extends ChangeNotifier {
     _modeUserSet = true;
     smartMode = smart;
     notifyListeners();
-    if (status == ConnStatus.connected && _core.isRunning) {
-      try {
-        await _core.switchMode(smart);
-      } catch (e) {
-        AppLog.error('mode switch failed: $e');
-        error = AppStrings.t('mode_switch_fail', {'err': '$e'});
-        errorKind = ConnErrorKind.none;
-        notifyListeners();
-      }
+    if (status != ConnStatus.connected || !_core.isRunning) return;
+    if (Platform.isAndroid) {
+      if (switchingMode) return; // 切换中忽略再次点击
+      // Android 内核以 embed(cmfa)模式运行：Clash API 禁 PATCH /configs(405)，
+      // 无法热切模式 → 自动断开并以新模式重连（1~2s）。
+      // 参考：mihomo cmfa 构建 SetEmbedMode(true) 禁 update/patch configs。
+      switchingMode = true;
+      notifyListeners();
+      unawaited(_modeRestartByReconnect());
+      return;
     }
+    try {
+      await _core.switchMode(smart);
+    } catch (e) {
+      AppLog.error('mode switch failed: $e');
+      error = AppStrings.t('mode_switch_fail', {'err': '$e'});
+      errorKind = ConnErrorKind.none;
+      notifyListeners();
+    }
+  }
+
+  /// Android 模式切换：断开后立即用当前（新）模式重连。
+  Future<void> _modeRestartByReconnect() async {
+    try {
+      await disconnect();
+    } catch (_) {}
+    try {
+      if (status == ConnStatus.disconnected && nodes.isNotEmpty) {
+        await connect();
+      }
+    } catch (_) {}
+    switchingMode = false;
+    notifyListeners();
   }
 
   /// 热更内核日志级别（「内核日志」实时页用）：连接时即时生效并持久化，
   /// 下次连接按该级别启动。
   Future<void> setKernelLogLevel(String level) async {
-    try {
-      if (status == ConnStatus.connected && _core.isRunning) {
-        await _core.setKernelLogLevel(level);
-      }
-    } catch (_) {}
+    if (!Platform.isAndroid) {
+      // 桌面内核可热更 log-level；Android embed 模式禁 PATCH(405)，
+      // 仅保存设置，下次连接按该级别启动
+      try {
+        if (status == ConnStatus.connected && _core.isRunning) {
+          await _core.setKernelLogLevel(level);
+        }
+      } catch (_) {}
+    }
     try {
       final s = await SettingsStore.instance.load();
       s['kernelLogLevel'] = level;

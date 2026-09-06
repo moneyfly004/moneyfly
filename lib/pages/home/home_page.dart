@@ -103,6 +103,8 @@ class _HomePageState extends State<HomePage>
   Future<void> _toggleConnect(ConnectionController conn) async {
     unawaited(HapticFeedback.mediumImpact());
     final acc = AccountService.instance;
+    // 模式切换(自动断开重连)期间忽略连接按钮点击,避免竞态
+    if (conn.switchingMode) return;
     if (conn.status == ConnStatus.disconnecting) {
       return; // 正在断开，忽略点击
     } else if (conn.status == ConnStatus.connected) {
@@ -237,7 +239,7 @@ class _HomePageState extends State<HomePage>
                 builder: (ctx, v, child) {
                   final conn = ctx.read<ConnectionController>();
                   final connected = conn.status == ConnStatus.connected;
-                  final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting || conn.status == ConnStatus.disconnecting;
+                  final busy = conn.status == ConnStatus.testing || conn.status == ConnStatus.connecting || conn.status == ConnStatus.disconnecting || conn.switchingMode;
                   return _buildConnectCard(conn, connected, busy, compact);
                 },
               ),
@@ -591,16 +593,20 @@ class _HomePageState extends State<HomePage>
     final statusColor = busy
         ? MFColors.amber
         : (connected ? MFColors.green : MFColors.txt3);
-    final statusLabel = switch (conn.status) {
-      ConnStatus.testing => AppStrings.t('testing'),
-      ConnStatus.connecting => AppStrings.t('connecting'),
-      ConnStatus.disconnecting => AppStrings.t('disconnecting_status'),
-      ConnStatus.reconnecting => AppStrings.t('reconnecting'),
-      ConnStatus.connected =>
-        conn.speedTesting ? AppStrings.t('connected_speed_testing') : AppStrings.t('connected'),
-      ConnStatus.error => AppStrings.t('error'),
-      _ => AppStrings.t('disconnected'),
-    };
+    final statusLabel = conn.switchingMode
+        ? AppStrings.t('switching_mode')
+        : switch (conn.status) {
+            ConnStatus.testing => AppStrings.t('testing'),
+            ConnStatus.connecting => AppStrings.t('connecting'),
+            ConnStatus.disconnecting => AppStrings.t('disconnecting_status'),
+            ConnStatus.reconnecting => AppStrings.t('reconnecting'),
+            ConnStatus.connected =>
+              conn.speedTesting
+                  ? AppStrings.t('connected_speed_testing')
+                  : AppStrings.t('connected'),
+            ConnStatus.error => AppStrings.t('error'),
+            _ => AppStrings.t('disconnected'),
+          };
     return Container(
       padding: EdgeInsets.fromLTRB(16, compact ? 12 : 20, 16, compact ? 10 : 16),
       decoration: BoxDecoration(
@@ -872,13 +878,13 @@ class _HomePageState extends State<HomePage>
             label: AppStrings.t('smart_mode'),
             icon: Icons.gps_fixed,
             selected: conn.smartMode,
-            onTap: () => conn.toggleMode(true),
+            onTap: conn.switchingMode ? null : () => conn.toggleMode(true),
           ),
           _ModeOption(
             label: AppStrings.t('global_mode'),
             icon: Icons.travel_explore,
             selected: !conn.smartMode,
-            onTap: () => conn.toggleMode(false),
+            onTap: conn.switchingMode ? null : () => conn.toggleMode(false),
           ),
         ],
       ),
@@ -1060,14 +1066,19 @@ class _ErrorBtn extends StatelessWidget {
 }
 
 class _ModeOption extends StatelessWidget {
-  const _ModeOption({required this.label, required this.icon, required this.selected, required this.onTap});
+  const _ModeOption(
+      {required this.label,
+      required this.icon,
+      required this.selected,
+      this.onTap});
   final String label;
   final IconData icon;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
@@ -1077,14 +1088,40 @@ class _ModeOption extends StatelessWidget {
           decoration: BoxDecoration(
             gradient: selected ? MFColors.brandGradient : null,
             borderRadius: BorderRadius.circular(11),
-            boxShadow: selected ? [BoxShadow(color: MFColors.brand.withValues(alpha: .4), blurRadius: 16)] : null,
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                        color: MFColors.brand.withValues(alpha: .4),
+                        blurRadius: 16)
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 15, color: selected ? Colors.white : MFColors.txt2),
+              Icon(icon,
+                  size: 15,
+                  color: selected
+                      ? Colors.white
+                      : (enabled ? MFColors.txt2 : MFColors.txt3)),
               const SizedBox(width: 7),
-              Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: selected ? Colors.white : MFColors.txt2)),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? Colors.white
+                          : (enabled ? MFColors.txt2 : MFColors.txt3))),
+              if (!enabled) ...[
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: selected ? Colors.white70 : MFColors.txt3),
+                ),
+              ],
             ],
           ),
         ),
