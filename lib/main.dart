@@ -169,42 +169,68 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
   @override
   void onWindowClose() async {
     // 点右上角 X（macOS 红点 / Windows ×）→ 询问：最小化常驻 还是 退出
+    // 注意：本 State 在 MaterialApp 之上，绝不能用自己的 context 弹窗
+    // （Navigator.of 向上找不到 Navigator → showDialog 抛异常 → 旧代码无
+    // 兜底 → 弹窗从未出现，而窗口又被 preventClose 拦截 = 「点 X 没反应」）。
+    // 必须用 rootNavigatorKey.currentContext（MaterialApp 的 Navigator）。
     if (!mounted || _quitting) return;
-    final act = await showDialog<String>(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('close_ask_title'),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: Text(AppStrings.t('close_ask_body'),
-            style: TextStyle(
-                fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppStrings.t('cancel'))),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'hide'),
-            child: Text(AppStrings.t('minimize_tray_btn'),
-                style: TextStyle(color: MFColors.txt)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'quit'),
-            child: Text(AppStrings.t('quit_app_btn'),
-                style: TextStyle(color: MFColors.red)),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    if (act == 'hide') {
-      // 最小化到托盘：常驻后台（内核/代理保持连接）
-      await windowManager.hide();
-    } else if (act == 'quit') {
-      await _quitApp();
+    AppLog.log('APP', 'window close requested');
+    try {
+      // 启动极早期(路由未就绪)点 X：等一帧让 Navigator 可用
+      if (rootNavigatorKey.currentContext == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        if (!mounted || _quitting) return;
+      }
+      // 取完立即使用(同一同步段,无跨 async gap)
+      final navCtx = rootNavigatorKey.currentContext;
+      if (navCtx == null || !navCtx.mounted) {
+        // 没有可用的 Navigator(异常状态)：兜底最小化，避免"点了没反应"
+        AppLog.error('onWindowClose: navigator not ready, hide to tray');
+        await windowManager.hide();
+        return;
+      }
+      final act = await showDialog<String>(
+        context: navCtx,
+        barrierDismissible: true,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: MFColors.card2,
+          title: Text(AppStrings.t('close_ask_title'),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: Text(AppStrings.t('close_ask_body'),
+              style: TextStyle(
+                  fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(AppStrings.t('cancel'))),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'hide'),
+              child: Text(AppStrings.t('minimize_tray_btn'),
+                  style: TextStyle(color: MFColors.txt)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'quit'),
+              child: Text(AppStrings.t('quit_app_btn'),
+                  style: TextStyle(color: MFColors.red)),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (act == 'hide') {
+        // 最小化到托盘：常驻后台（内核/代理保持连接）
+        await windowManager.hide();
+      } else if (act == 'quit') {
+        await _quitApp();
+      }
+      // act == null（点弹窗外/取消）→ 保持窗口，什么都不做
+    } catch (e) {
+      // 弹窗失败兜底：最小化到托盘而非"点了没反应"
+      AppLog.error('onWindowClose dialog failed: $e');
+      try {
+        await windowManager.hide();
+      } catch (_) {}
     }
-    // act == null（点弹窗外/取消）→ 保持窗口，什么都不做
   }
 
   void _onSessionChanged() {
