@@ -39,11 +39,13 @@ void main() {
       expect(AccountService.classify(s), AccountStatus.expired);
     });
 
-    test('到期时间已过（即使 is_expired=false）→ expired', () {
+    test('到期判定以后端 is_expired 为准：is_expired=false 不因本地时钟误判', () {
+      // 用户时钟偏差场景：本地时间已过 expire_time，但后端(权威)判定未到期
+      // → 不得误判为 expired（否则会清缓存/拦截连接）
       final s = _sub(
           expireTime: DateTime.now().subtract(const Duration(hours: 1)),
           isExpired: false);
-      expect(AccountService.classify(s), AccountStatus.expired);
+      expect(AccountService.classify(s), isNot(AccountStatus.expired));
     });
 
     test('设备数满（cur>=limit）→ deviceFull', () {

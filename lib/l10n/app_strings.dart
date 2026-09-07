@@ -89,6 +89,7 @@ class AppStrings {
     // 节点
     'nodes_title': '节点列表',
     'search_hint': '搜索节点 / 地区 / 协议',
+    'no_match_nodes': '没有匹配的节点，换个关键词试试',
     'speed_test': '测速',
     'auto_best': '自动选择最优节点',
     'pick_best': '立即选优',
@@ -590,6 +591,7 @@ class AppStrings {
     'tap_switch_node': 'Tap to switch',
     'nodes_title': 'Nodes',
     'search_hint': 'Search node / region / protocol',
+    'no_match_nodes': 'No matching nodes. Try another keyword',
     'speed_test': 'Speed Test',
     'auto_best': 'Auto-select best node',
     'pick_best': 'Select Best',

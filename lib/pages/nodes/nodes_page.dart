@@ -38,7 +38,8 @@ class _NodesPageState extends State<NodesPage> {
     final conn = context.read<ConnectionController>();
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
-      await conn.loadNodes(nodes);
+      // 受保护合并:已连接且当前线路不在新订阅时保持现状,不打断连接
+      await conn.applySubscriptionNodes(nodes);
       if (mounted && nodes.isEmpty) _toast(AppStrings.t('no_nodes_hint'));
       if (mounted && nodes.isNotEmpty && force) _toast(AppStrings.t('refresh_sub_ok'));
     } catch (e) {
@@ -224,7 +225,15 @@ class _NodesPageState extends State<NodesPage> {
                       refreshing: _refreshing,
                       onRefresh: () => _load(force: true),
                     )
-                  : _NodeListView(
+                  : groups.isEmpty
+                      ? Center(
+                          child: Text(
+                            AppStrings.t('no_match_nodes'),
+                            style: TextStyle(
+                                fontSize: 13, color: MFColors.txt3),
+                          ),
+                        )
+                      : _NodeListView(
                       conn: conn,
                       groups: groups,
                       sortedCodes: sortedCodes,

@@ -83,6 +83,27 @@ class MihomoConfigBuilder {
       if (n.tls == true && m['tls'] == null) {
         m['tls'] = true;
       }
+      // base64/链接解析出的节点 raw 不是 Clash map 形态：把 network/ws
+      // 路径/Host/flow 等转成 mihomo 认识的字段，否则 WS/TLS 节点会被按
+      // 裸 TCP 直连处理（流量不通或 SNI 缺失）
+      final network = n.network;
+      if (network != null &&
+          network.isNotEmpty &&
+          m['network'] == null) {
+        m['network'] = network;
+        if (network == 'ws' &&
+            n.wsPath != null &&
+            n.wsPath!.isNotEmpty) {
+          final wsOpts = <String, dynamic>{'path': n.wsPath};
+          if (n.host != null && n.host!.isNotEmpty) {
+            wsOpts['headers'] = {'Host': n.host};
+          }
+          m['ws-opts'] = wsOpts;
+        }
+      }
+      if (n.flow != null && n.flow!.isNotEmpty && m['flow'] == null) {
+        m['flow'] = n.flow;
+      }
       proxies.add(m);
     }
     final names = [for (final n in validNodes) n.tag];

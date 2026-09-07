@@ -3,6 +3,20 @@ import 'package:moneyfly/core/services/subscription_service.dart';
 
 void main() {
   group('Clash YAML 解析', () {
+    test('非 YAML-Map 形态兜底：整个订阅为 base64 串（v2ray 形态）', () {
+      // vmess:// 链接的整块 base64(最典型的 v2ray 订阅原文)
+      const vmess = 'vmess://eyJ2IjoiMiIsInBzIjoi6aaZ6IKy6IGWIC0gMDEiLCJhZGQiOiIxLjIuMy40IiwicG9ydCI6NDQzLCJpZCI6IjEyMzQ1Njc4LTEyMzQtMTIzNC0xMjM0LTEyMzQ1Njc4OWFiYyIsIm5ldCI6InRjcCIsInR5cGUiOiJub25lIn0=';
+      final nodes = SubscriptionService.parseClashYaml(vmess);
+      expect(nodes, isNotEmpty, reason: 'base64 订阅不应被静默解析为空');
+      expect(nodes.first.server, '1.2.3.4');
+    });
+
+    test('非 YAML-Map 形态兜底：明文链接列表', () {
+      const links = 'vless://abc@1.2.3.4:443#测试节点\ntrojan://pass@5.6.7.8:8443#T1';
+      final nodes = SubscriptionService.parseClashYaml(links);
+      expect(nodes, isNotEmpty);
+    });
+
     test('解析 proxies 节点列表', () {
       const yaml = '''
 proxies:

@@ -91,7 +91,9 @@ class _HomePageState extends State<HomePage>
     setState(() => _loadingNodes = true);
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
-      await conn.loadNodes(nodes);
+      // 用受保护的合并入口:已连接且当前线路不在新订阅时保持现状(不打断),
+      // 受限账号空列表清空展示 —— 与首页直接 loadNodes(无条件替换)区分
+      await conn.applySubscriptionNodes(nodes);
       // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次；默认关闭）
       unawaited(conn.autoConnectIfEnabled());
     } catch (e) {

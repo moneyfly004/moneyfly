@@ -33,10 +33,12 @@ class SpeedTester {
     return samples[samples.length ~/ 2];
   }
 
-  /// 并发测速全部节点（自动限流），返回带延迟的新列表
+  /// 并发测速全部节点（自动限流），返回带延迟的新列表。
+  /// 测速在**副本**上进行，绝不把结果写进传入列表的元素 —— 调用方只在
+  /// 需要时整体替换引用（断开/切换瞬间的测速结果不会污染 UI 当前列表）。
   Future<List<ProxyNode>> testAll(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress}) async {
-    final result = List<ProxyNode>.of(nodes);
+    final result = [for (final n in nodes) n.clone()];
     final queue = List<int>.generate(result.length, (i) => i);
     var done = 0;
 

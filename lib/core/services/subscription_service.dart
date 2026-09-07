@@ -150,6 +150,9 @@ class SubscriptionService {
 
   /// 账号受限：清空内存与磁盘缓存（磁盘删除尽力而为，不阻塞主流程）
   void _dropAllCaches() {
+    // 递增代次：作废所有在途拉取 —— 受限清缓存后，任何尚未完成的旧请求
+    // （旧 epoch）都不能再把数据写回内存/磁盘缓存（防"清完又复活"）
+    _epoch++;
     _cache = [];
     _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
     unawaited(SubscriptionCache.instance.clear());
@@ -186,7 +189,13 @@ class SubscriptionService {
     } catch (_) {
       return parseBase64Nodes(raw);
     }
-    if (doc is! Map) return [];
+    if (doc is! Map) {
+      // loadYaml 对「base64 原文 / 明文 vmess:// 链接列表 / 其它非映射文本」
+      // 不抛异常而是返回一个 String 标量 —— 以前直接 return []，最常见的
+      // 两种 v2ray 订阅形态(base64 串、链接列表)会被静默丢成空列表。
+      // 这里交给 base64/链接解析兜底，解析不到自然返回空。
+      return parseBase64Nodes(raw);
+    }
     final proxies = doc['proxies'];
     if (proxies is! List) return [];
     return proxies

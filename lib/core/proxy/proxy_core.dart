@@ -185,22 +185,28 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
-  /// 持久化「用户手动选择的节点」到设置（重启后由 connect 恢复）
-  Future<void> _persistSelection(ProxyNode node) async {
-    try {
-      final s = await SettingsStore.instance.load();
-      s['lastSelectedTag'] = node.tag;
-      await SettingsStore.instance.save(s);
-    } catch (_) {}
+  /// 设置写队列：持久化读改写串行化，避免并发 load→save 丢最后意图
+  Future<void> _settingsWriteQueue = Future.value();
+
+  Future<void> _enqueueSettingsWrite(
+      void Function(Map<String, dynamic>) mutate) {
+    final run = _settingsWriteQueue.then((_) async {
+      try {
+        final s = await SettingsStore.instance.load();
+        mutate(s);
+        await SettingsStore.instance.save(s);
+      } catch (_) {}
+    });
+    _settingsWriteQueue = run.catchError((_) {});
+    return run;
   }
 
-  Future<void> _clearPersistedSelection() async {
-    try {
-      final s = await SettingsStore.instance.load();
-      s.remove('lastSelectedTag');
-      await SettingsStore.instance.save(s);
-    } catch (_) {}
-  }
+  /// 持久化「用户手动选择的节点」到设置（重启后由 connect 恢复）
+  Future<void> _persistSelection(ProxyNode node) =>
+      _enqueueSettingsWrite((s) => s['lastSelectedTag'] = node.tag);
+
+  Future<void> _clearPersistedSelection() =>
+      _enqueueSettingsWrite((s) => s.remove('lastSelectedTag'));
 
   /// 从设置恢复上次手动选择的节点（仅当节点仍存在于当前订阅时）
   Future<ProxyNode?> _restoreLastSelection(List<ProxyNode> list) async {
@@ -296,10 +302,35 @@ class ConnectionController extends ChangeNotifier {
 
   Future<void> loadNodes(List<ProxyNode> list) async {
     nodes = _carryMeasuredLatency(list, nodes);
-    if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
-      current = null;
-    }
+    _retargetCurrent();
     notifyListeners();
+  }
+
+  /// 列表整体替换后，把 current 重指向同 tag 的新实例（消除陈旧引用：
+  /// 否则 current 停留在旧实例，延迟/在线状态与列表长期不一致）；
+  /// 当前 tag 已不在新列表 → 清 current，并联动清理已失效的国家锁。
+  void _retargetCurrent() {
+    final c = current;
+    if (c == null) return;
+    for (final n in nodes) {
+      if (n.tag == c.tag) {
+        current = n;
+        return;
+      }
+    }
+    current = null;
+    _dropLockIfCountryGone();
+  }
+
+  /// 锁定国家已无任何节点（订阅下架/换源）→ 解除锁，
+  /// 避免 UI 显示"锁定 A"但自动选优/回落逻辑已悄悄离开该国。
+  void _dropLockIfCountryGone() {
+    final lc = lockedCountry;
+    if (lc == null) return;
+    if (!nodes.any(
+        (n) => (n.countryCode?.toUpperCase() ?? 'XX') == lc)) {
+      lockedCountry = null;
+    }
   }
 
   /// 新列表节点若本身无测速结果（latencyMs<0），且旧列表存在同 tag 且测过
@@ -331,6 +362,7 @@ class ConnectionController extends ChangeNotifier {
       if (acc.loaded && acc.isBlocked) {
         nodes = [];
         current = null;
+        lockedCountry = null; // 受限清空：同时解除失效的国家锁
         notifyListeners();
       }
       return;
@@ -352,9 +384,7 @@ class ConnectionController extends ChangeNotifier {
   /// 更新测速结果（节点页独立测速后调用，替换当前展示列表）
   void updateTestedNodes(List<ProxyNode> tested) {
     nodes = tested;
-    if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
-      current = null;
-    }
+    _retargetCurrent();
     notifyListeners();
   }
 
@@ -414,6 +444,15 @@ class ConnectionController extends ChangeNotifier {
     }
     final epoch = ++_epoch;
     _reconnectTimer?.cancel();
+    // 等待上一次断开(内核停止)真正完成，再启动新内核 —— 避免
+    // disconnect 的 stop() 与本次 start() 并发：旧 stop 的
+    // POST /shutdown / 系统代理 restore 可能误关刚就绪的新内核/新代理
+    final pendingStop = _stopInFlight;
+    if (pendingStop != null) {
+      try {
+        await pendingStop;
+      } catch (_) {}
+    }
     // 重连时确保旧内核已停干净（上次 start 可能半途失败留下残留进程）
     if (_core.isRunning) {
       try { await _core.stop(); } catch (_) {}
@@ -512,6 +551,18 @@ class ConnectionController extends ChangeNotifier {
       status = ConnStatus.connected;
       _reconnectCount = 0;
       AppLog.conn('connected via ${current?.tag} (${current?.type})');
+      // 内核就绪后回放一次「当前节点」到对应组（select=智能 / GLOBAL=全局）：
+      // - 全局模式：内核内置 GLOBAL 组默认选中 proxies 首个节点，与用户预选
+      //   (可能在列表中间)不一致 → 出口跳到别的线路，必须回放纠正；
+      // - 智能模式：connect 期间(connecting 窗口)用户切换了节点只改了 current，
+      //   内核 select 组仍是配置默认项，同样回放纠正 → 「选了谁就走谁」。
+      if (current != null) {
+        try {
+          await _core.switchNode(current!.tag);
+        } catch (_) {
+          // 组指向失败不阻塞连接(自动测速/手动切换可再纠正)
+        }
+      }
       // 后台测速：不阻塞连接，完成后在同国范围内择优。
       // forceBest:false —— 尊重用户已选节点/已锁国家：当前节点在线且未明显
       // 劣化（<100ms）就不切换，避免「刚手动选的节点被无条件换掉→出口 IP
@@ -569,11 +620,14 @@ class ConnectionController extends ChangeNotifier {
     return SpeedTester.instance.testAll(list, onProgress: onProgress);
   }
 
-  /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）
+  /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）。
+  /// 测速在**副本**上进行：绝不把结果就地写进传入列表的元素 —— 否则
+  /// 断开/切网瞬间在途测速会把 UI 正在用的节点整批标成 offline（epoch
+  /// 守卫只能阻止"整体替换"，挡不住"元素已被逐个改写"）。
   Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress}) async {
     if (nodes.isEmpty) return nodes;
-    final result = List<ProxyNode>.of(nodes);
+    final result = [for (final n in nodes) n.clone()];
     var nextIdx = 0;
     var done = 0;
     const maxConcurrent = 16;
@@ -596,11 +650,14 @@ class ConnectionController extends ChangeNotifier {
     return result;
   }
 
-  /// 在 [tested] 中按 lockedCountry 过滤后选延迟最优节点
+  /// 在 [tested] 中按 lockedCountry 过滤后选延迟最优节点。
+  /// 锁定国家无候选/无在线节点时返回 null（宁可不切换，也绝不跨国家跳）。
   ProxyNode? selectBestRespectingLock(List<ProxyNode> tested) {
     if (lockedCountry == null) return SpeedTester.selectBest(tested);
-    final candidates = tested.where((n) => n.countryCode == lockedCountry).toList();
-    return SpeedTester.selectBest(candidates.isNotEmpty ? candidates : tested);
+    final candidates = tested
+        .where((n) => (n.countryCode?.toUpperCase() ?? 'XX') == lockedCountry)
+        .toList();
+    return SpeedTester.selectBest(candidates);
   }
 
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
@@ -620,6 +677,7 @@ class ConnectionController extends ChangeNotifier {
       final tested = await testAllNodes(nodes);
       if (epoch != _epoch) return;
       nodes = tested;
+      _retargetCurrent(); // 列表整体替换后 current 重指向新实例
       final best = selectBestRespectingLock(tested);
       lastSpeedTestTime = _now();
       if (best != null && status == ConnStatus.connected && _core.isRunning) {
@@ -660,6 +718,11 @@ class ConnectionController extends ChangeNotifier {
     lockedCountry = null;
   }
 
+  /// 在途的内核停止任务（disconnect/resetForLogout 发起）。
+  /// connect 前 await 它，保证「旧内核停干净 + 系统代理已恢复」之后
+  /// 新内核才启动 —— 杜绝停/启并发（旧 stop 关掉新内核/误关新代理）。
+  Future<void>? _stopInFlight;
+
   Future<void> disconnect() async {
     _epoch++;
     AppLog.conn('disconnect requested');
@@ -669,9 +732,12 @@ class ConnectionController extends ChangeNotifier {
     status = ConnStatus.disconnecting;
     notifyListeners();
     _clearState();
+    final stopFut = _core.stop().catchError((_) {});
+    _stopInFlight = stopFut;
     try {
-      await _core.stop();
+      await stopFut;
     } catch (_) {}
+    if (identical(_stopInFlight, stopFut)) _stopInFlight = null;
     notifyListeners();
   }
 
@@ -682,9 +748,12 @@ class ConnectionController extends ChangeNotifier {
     _clearState();
     // 登出/切号：清掉持久化的节点选择，避免旧账号的固定线路残留到新账号
     unawaited(_clearPersistedSelection());
+    final stopFut = _core.stop().catchError((_) {});
+    _stopInFlight = stopFut;
     try {
-      await _core.stop();
+      await stopFut;
     } catch (_) {}
+    if (identical(_stopInFlight, stopFut)) _stopInFlight = null;
     nodes = [];
     current = null;
     _autoConnectTried = false;
@@ -743,6 +812,10 @@ class ConnectionController extends ChangeNotifier {
 
   /// Android 模式切换：断开后立即用当前（新）模式重连。
   Future<void> _modeRestartByReconnect() async {
+    // 断开会清 lockedCountry（_clearState），但模式切换只是重启内核，
+    // 用户锁定的国家/线路不应丢 —— 先记住，重连后若未恢复则补回。
+    final keepLock = lockedCountry;
+    final keepTag = current?.tag;
     try {
       await disconnect();
     } catch (_) {}
@@ -751,6 +824,20 @@ class ConnectionController extends ChangeNotifier {
         await connect();
       }
     } catch (_) {}
+    // connect 已按持久化记忆恢复 lastSelectedTag 与锁；无记忆时用 keepLock 补
+    if (lockedCountry == null && keepLock != null) {
+      final stillHas = nodes
+          .any((n) => (n.countryCode?.toUpperCase() ?? 'XX') == keepLock);
+      if (stillHas) lockedCountry = keepLock;
+    }
+    if (current == null && keepTag != null) {
+      for (final n in nodes) {
+        if (n.tag == keepTag) {
+          current = n;
+          break;
+        }
+      }
+    }
     switchingMode = false;
     notifyListeners();
   }
@@ -776,8 +863,10 @@ class ConnectionController extends ChangeNotifier {
 
   /// 网络环境变化（WiFi↔蜂窝切换）：已连接且内核在跑时，不重启内核，
   /// 仅重新测速选优（内核的 TCP/UDP 连接会自动恢复，重启反而断流）。
+  /// 自动测速开关关闭时不做任何自动切换（切网不换用户当前线路）。
   void onNetworkChanged() {
     if (status != ConnStatus.connected || !_core.isRunning) return;
+    if (!autoTest) return;
     unawaited(retest());
   }
 
@@ -820,15 +909,18 @@ class ConnectionController extends ChangeNotifier {
   }
 
   /// 后台定时测速（设置 testIntervalMin；仅已连接时运行，断开即停 → 省电）。
-  /// 尊重 [lockedCountry]：用户手动选了国家后，只在该国范围内切换。
+  /// 受 [autoTest] 门控：用户关闭「自动测速/自动切换」后，不再周期性测速与
+  /// 自动换节点（手动「重新测速」与节点页测速不受影响）。
   void _startBackgroundTest(int intervalMin) {
     _bgTestTimer?.cancel();
-    if (intervalMin <= 0) return;
+    if (intervalMin <= 0 || !autoTest) return;
     _bgTestTimer = Timer.periodic(Duration(minutes: intervalMin), (_) async {
       if (status != ConnStatus.connected || nodes.isEmpty || !_core.isRunning) return;
+      if (!autoTest) return;
       final tested = await testAllNodes(nodes);
-      if (status != ConnStatus.connected) return;
+      if (status != ConnStatus.connected || !autoTest) return;
       nodes = tested;
+      _retargetCurrent(); // 列表整体替换后 current 重指向新实例
       final best = selectBestRespectingLock(tested);
       final cur = current;
       if (best == null || cur == null) return;

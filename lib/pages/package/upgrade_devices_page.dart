@@ -159,7 +159,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
           final nodes =
               await SubscriptionService.instance.fetchNodes(force: true);
           if (mounted) {
-            await context.read<ConnectionController>().loadNodes(nodes);
+            await context.read<ConnectionController>().applySubscriptionNodes(nodes);
           }
         } catch (_) {}
         if (mounted) Navigator.of(context).pop(true);

@@ -100,9 +100,12 @@ class GeoAssets {
   /// 落盘并返回是否全部成功；失败返回 false（调用方降级智能规则为全代理）。
   /// [preferDir] 指定目标目录（内核目录：桌面 workDir / Android filesDir/work）。
   ///
-  /// 覆盖策略：目标已存在且非空默认跳过（幂等，连接不重复写盘）；但存在比
-  /// 上次同步更新的手动副本时强制覆盖 —— 设置页手动更新的数据真正落到
-  /// 内核目录，下次连接即生效。
+  /// 覆盖策略（目标已存在且非空默认跳过，连接不重复写盘；两种情况强制覆盖）：
+  /// 1. 手动副本比上次同步新（设置页手动更新 → 真正落到内核目录）；
+  /// 2. **App 升级后**（内置 geo 版本变化）→ 用新版覆盖内核目录旧文件，
+  ///    否则老数据会一直被"幂等跳过"留在内核目录、长期不生效。
+  /// 数据源优先级不变：手动副本 > 内置（升级不会用手动更新前的旧内置覆盖
+  /// 用户手动更新的新版）。
   static Future<bool> materialize({String? preferDir}) async {
     try {
       final dirPath = preferDir ?? await _defaultDir();
@@ -110,9 +113,10 @@ class GeoAssets {
       final dir = Directory(dirPath);
       if (!await dir.exists()) await dir.create(recursive: true);
 
-      // 手动副本时间戳 vs 上次同步时间戳 → 是否强制覆盖
       final manualAt = await manualUpdatedAt();
       var force = false;
+
+      // 1) 手动副本更新 → 强制覆盖
       if (manualAt != null) {
         force = true;
         final stampFile = File('${dir.path}/.geo_synced');
@@ -120,6 +124,24 @@ class GeoAssets {
           if (await stampFile.exists()) {
             final last = DateTime.tryParse(await stampFile.readAsString());
             if (last != null && !manualAt.isAfter(last)) force = false;
+          }
+        } catch (_) {
+          force = true;
+        }
+      }
+      // 2) App 升级(内置 geo 版本变化) → 强制覆盖(用手动副本或新版内置)
+      if (!force) {
+        final verFile = File('${dir.path}/.geo_app_ver');
+        try {
+          if (await verFile.exists()) {
+            final syncedVer = (await verFile.readAsString()).trim();
+            if (syncedVer == UpdateInfo.currentVersion) {
+              force = false;
+            } else {
+              force = true;
+            }
+          } else {
+            force = true; // 从未记录版本(旧安装首次连接) → 覆盖一次
           }
         } catch (_) {
           force = true;
@@ -145,6 +167,11 @@ class GeoAssets {
           ok = false;
         }
       }
+      // 记录同步状态
+      try {
+        await File('${dir.path}/.geo_app_ver')
+            .writeAsString(UpdateInfo.currentVersion);
+      } catch (_) {}
       if (manualAt != null) {
         try {
           await File('${dir.path}/.geo_synced')

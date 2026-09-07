@@ -73,18 +73,19 @@ class TrayService with TrayListener {
           key: 'mode:global'),
     ];
 
-    // 国家子菜单：按常用顺序取前 8 个有节点的国家
-    final byCountry = <String>{};
-    final countryItems = <MenuItem>[
+    // 国家子菜单：按常用顺序取「前 8 个有节点的国家」
+    final countryCodes = <String>[
       for (final code in ProxyNode.countryOrder)
-        if (byCountry.add(code))
-          if (ctrl.nodes.any(
-              (n) => (n.countryCode?.toUpperCase() ?? 'XX') == code))
-            MenuItem(
-              label:
-                  '${ProxyNode.countryFlags[code] ?? '🏳️'} ${ProxyNode.countryNames[code] ?? code}',
-              key: 'country:$code',
-            ),
+        if (ctrl.nodes.any(
+            (n) => (n.countryCode?.toUpperCase() ?? 'XX') == code)) code,
+    ];
+    final countryItems = <MenuItem>[
+      for (final code in countryCodes.take(8))
+        MenuItem(
+          label:
+              '${ProxyNode.countryFlags[code] ?? '🏳️'} ${ProxyNode.countryNames[code] ?? code}',
+          key: 'country:$code',
+        ),
     ];
     if (countryItems.isEmpty) {
       countryItems.add(MenuItem(
@@ -140,6 +141,17 @@ class TrayService with TrayListener {
     }
     switch (key) {
       case 'toggle':
+        // 状态守卫(与首页 _toggleConnect 一致):断开/连接中/重连等瞬态
+        // 期间不允许启停交错 —— 否则旧内核 stop 的 /shutdown 可能误关
+        // 刚就绪的新内核
+        final s = ctrl.status;
+        if (s == ConnStatus.disconnecting ||
+            s == ConnStatus.connecting ||
+            s == ConnStatus.testing ||
+            s == ConnStatus.reconnecting ||
+            ctrl.switchingMode) {
+          return;
+        }
         if (ctrl.status == ConnStatus.connected) {
           unawaitedSafe(ctrl.disconnect());
         } else {

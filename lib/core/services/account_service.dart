@@ -64,8 +64,10 @@ class AccountService extends ChangeNotifier {
     final subActive =
         s.isActive && (s.status.isEmpty || s.status == 'active');
     if (!subActive) return AccountStatus.subscriptionDisabled;
-    final expired = s.isExpired ||
-        (s.expireTime != null && !s.expireTime!.isAfter(DateTime.now()));
+    // 到期判定以「后端返回的 is_expired」为准（服务器时间，权威），
+    // 不用本地时钟与 expire_time 比较 —— 用户时钟偏差(快/慢)不再被误判
+    // 到期而清缓存/拦截连接。
+    final expired = s.isExpired;
     if (expired) return AccountStatus.expired;
     if (s.deviceLimit > 0 && s.currentDevices >= s.deviceLimit) {
       return AccountStatus.deviceFull;

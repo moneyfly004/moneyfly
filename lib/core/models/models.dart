@@ -460,6 +460,29 @@ class ProxyNode {
     this.online = true,
   }) : raw = raw ?? {};
 
+  /// 克隆（含当前测速状态）。测速/列表替换用副本，避免把结果就地写进
+  /// 正在被 UI/内核引用的节点对象（断开瞬间在途测速会把整批标离线）。
+  ProxyNode clone() => ProxyNode(
+        tag: tag,
+        type: type,
+        server: server,
+        port: port,
+        region: region,
+        countryCode: countryCode,
+        uuid: uuid,
+        cipher: cipher,
+        password: password,
+        tls: tls,
+        sni: sni,
+        network: network,
+        wsPath: wsPath,
+        host: host,
+        flow: flow,
+        raw: Map<String, dynamic>.from(raw),
+        latencyMs: latencyMs,
+        online: online,
+      );
+
   static const countryNames = {
     'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
     'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',

@@ -33,16 +33,16 @@ class ApiClient {
         const sensitive = ['/auth/login', '/auth/register', '/auth/reset-password',
             '/auth/forgot-password', '/users/change-password', '/auth/verification'];
         final isSensitive = sensitive.any((p) => o.path.contains(p));
-        _logHttp('>>> ${o.method} ${o.uri}\n    body: ${isSensitive ? '[REDACTED]' : o.data}');
+        _logHttp('>>> ${o.method} ${_maskUri(o.uri)}\n    body: ${isSensitive ? '[REDACTED]' : o.data}');
         h.next(o);
       },
       onResponse: (r, h) {
         final body = r.data is String ? (r.data as String) : (r.data?.toString() ?? '');
-        _logHttp('<<< ${r.statusCode} ${r.requestOptions.uri}\n    body: ${body.length > 400 ? body.substring(0, 400) : body}');
+        _logHttp('<<< ${r.statusCode} ${_maskUri(r.requestOptions.uri)}\n    body: ${body.length > 400 ? body.substring(0, 400) : body}');
         h.next(r);
       },
       onError: (e, h) {
-        _logHttp('!!! ${e.type} ${e.requestOptions.uri} status=${e.response?.statusCode}\n    err: $e\n    resp: ${e.response?.data}');
+        _logHttp('!!! ${e.type} ${_maskUri(e.requestOptions.uri)} status=${e.response?.statusCode}\n    err: $e\n    resp: ${e.response?.data}');
         h.next(e);
       },
     ));
@@ -210,6 +210,19 @@ class ApiClient {
       }
     }();
     return _logFileFuture;
+  }
+
+  /// 日志用 URI 脱敏：query 含 token/subscribe_url 等敏感参数时整体打码，
+  /// 避免订阅地址/token 明文落盘 http.log（凭据泄露风险）
+  static String _maskUri(Uri u) {
+    try {
+      const sensitiveKeys = ['token', 'access_token', 'subscription_url', 'subscribe_url', 'key'];
+      final q = u.queryParameters;
+      if (q.keys.any(sensitiveKeys.contains)) {
+        return u.replace(query: '[REDACTED]').toString();
+      }
+    } catch (_) {}
+    return u.toString();
   }
 
   static void _logHttp(String line) {

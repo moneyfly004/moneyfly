@@ -619,6 +619,8 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       // 清订阅缓存（内存 + 磁盘）
       SubscriptionService.instance.clearCache();
+      // 清内存节点展示（下次进入节点页/首页会自动重新拉取）
+      await conn.loadNodes(const []);
       // 清运行日志
       await AppLog.clear();
       if (mounted) _toast(AppStrings.t('clear_data_done'));

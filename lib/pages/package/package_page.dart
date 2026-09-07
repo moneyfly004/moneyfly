@@ -106,7 +106,7 @@ class _PackagePageState extends State<PackagePage> {
           UserService.instance.invalidateCache();
           final nodes = await SubscriptionService.instance.fetchNodes(force: true);
           if (mounted) {
-            await context.read<ConnectionController>().loadNodes(nodes);
+            await context.read<ConnectionController>().applySubscriptionNodes(nodes);
           }
         } catch (_) {}
       }
