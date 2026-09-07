@@ -154,9 +154,7 @@ class KernelManager {
   Future<void> setVariant(KernelVariant v) async {
     _variant = v;
     try {
-      final s = await SettingsStore.instance.load();
-      s['kernelVariant'] = v.key;
-      await SettingsStore.instance.save(s);
+      await SettingsStore.instance.update((s) => s['kernelVariant'] = v.key);
     } catch (_) {}
   }
 

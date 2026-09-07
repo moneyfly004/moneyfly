@@ -62,10 +62,10 @@ class _AccessPageState extends State<AccessPage> {
 
   Future<void> _save() async {
     try {
-      final s = await SettingsStore.instance.load();
-      s['accessControlMode'] = _mode;
-      s['accessControlApps'] = _selected.toList();
-      await SettingsStore.instance.save(s);
+      await SettingsStore.instance.update((s) {
+        s['accessControlMode'] = _mode;
+        s['accessControlApps'] = _selected.toList();
+      });
     } catch (_) {
       _toast(AppStrings.t('save_failed'));
     }

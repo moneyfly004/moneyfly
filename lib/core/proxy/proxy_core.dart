@@ -185,20 +185,13 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
-  /// 设置写队列：持久化读改写串行化，避免并发 load→save 丢最后意图
-  Future<void> _settingsWriteQueue = Future.value();
-
+  /// 持久化统一收敛到 SettingsStore.update(全局单写队列),
+  /// 不再各自 load→save,避免并发丢字段
   Future<void> _enqueueSettingsWrite(
-      void Function(Map<String, dynamic>) mutate) {
-    final run = _settingsWriteQueue.then((_) async {
-      try {
-        final s = await SettingsStore.instance.load();
-        mutate(s);
-        await SettingsStore.instance.save(s);
-      } catch (_) {}
-    });
-    _settingsWriteQueue = run.catchError((_) {});
-    return run;
+      void Function(Map<String, dynamic>) mutate) async {
+    try {
+      await SettingsStore.instance.update(mutate);
+    } catch (_) {}
   }
 
   /// 持久化「用户手动选择的节点」到设置（重启后由 connect 恢复）
@@ -855,9 +848,7 @@ class ConnectionController extends ChangeNotifier {
       } catch (_) {}
     }
     try {
-      final s = await SettingsStore.instance.load();
-      s['kernelLogLevel'] = level;
-      await SettingsStore.instance.save(s);
+      await SettingsStore.instance.update((s) => s['kernelLogLevel'] = level);
     } catch (_) {}
   }
 

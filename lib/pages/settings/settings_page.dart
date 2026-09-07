@@ -55,7 +55,9 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _s[key] = value);
     // 连接相关设置即时生效到连接控制器（自动测速/断线重连/默认模式）
     ConnectionController.instance.applySettings(_s);
-    await SettingsStore.instance.save(_s);
+    // 基于最新值只改这一键再保存(update 单写队列),避免整份旧快照回写
+    // 覆盖其它模块(如 lastSelectedTag/kernelVariant)刚写入的值
+    await SettingsStore.instance.update((s) => s[key] = value);
   }
 
 @override
@@ -70,7 +72,7 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
             onPressed: () async {
-              await SettingsStore.instance.save(const {});
+              await SettingsStore.instance.reset();
               final defaults = await SettingsStore.instance.load();
               if (!mounted) return;
               setState(() => _s = defaults);

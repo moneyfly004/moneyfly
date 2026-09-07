@@ -3,11 +3,19 @@ import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 设置持久化（shared_preferences，JSON 序列化）
+/// 设置持久化（shared_preferences，JSON 序列化）。
+///
+/// 写路径收敛到本类：所有「读-改-写」必须走 [update]，落盘经全局串行队列，
+/// 杜绝多写者并发 load→save 交错导致丢字段/旧快照覆盖（曾出现:设置页整份
+/// 旧快照回写把其它模块刚写入的 lastSelectedTag 覆盖掉）。
+/// 读 [load] 直读(带默认值合并)；直接 [save] 也入队保证落盘顺序。
 class SettingsStore {
   SettingsStore._();
   static final SettingsStore instance = SettingsStore._();
   static const _p = 'moneyfly_settings_v1';
+
+  /// 全局串行写队列：save/update 依次执行，避免并发交错
+  static Future<void> _writeQueue = Future.value();
 
   Map<String, dynamic> _defaults() => {
         // #10：启动自动连接 / 断线自动重连 默认关闭（手动点击连接）
@@ -45,6 +53,10 @@ class SettingsStore {
         'crashReport': false,
         'analytics': false,
         'launchAtStartup': false,
+        // 用户最后手动选择的节点 tag（跨重启恢复固定线路用）
+        'lastSelectedTag': '',
+        // 内核变体偏好:compatible / standard(桌面 amd64)
+        'kernelVariant': 'compatible',
       };
 
   Future<Map<String, dynamic>> load() async {
@@ -60,8 +72,31 @@ class SettingsStore {
     return _defaults();
   }
 
-  Future<void> save(Map<String, dynamic> settings) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_p, jsonEncode(settings));
+  /// 直接整体保存(整份快照,一般仅「恢复默认」用)；入队保证落盘顺序
+  Future<void> save(Map<String, dynamic> settings) {
+    return _enqueue(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_p, jsonEncode(settings));
+    });
+  }
+
+  /// 原子「读-改-写」：所有写方都应走这里(在最新值上改一个/几个键再保存)，
+  /// 与其它写方串行,杜绝旧快照覆盖/丢字段
+  Future<void> update(void Function(Map<String, dynamic> current) mutate) {
+    return _enqueue(() async {
+      final s = await load();
+      mutate(s);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_p, jsonEncode(s));
+    });
+  }
+
+  /// 清空用户设置回默认（保留 defaults 语义）
+  Future<void> reset() => update((s) => s.clear());
+
+  static Future<void> _enqueue(Future<void> Function() job) {
+    final run = _writeQueue.then((_) => job());
+    _writeQueue = run.catchError((_) {});
+    return run;
   }
 }
