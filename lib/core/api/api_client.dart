@@ -159,8 +159,15 @@ class ApiClient {
   static Future<void> clearTokens() async {
     _memAccess = null;
     _memRefresh = null;
-    await _storage.delete(key: 'access_token');
-    await _storage.delete(key: 'refresh_token');
+    if (!persistTokens) return;
+    // 与 saveTokens 对齐：删除失败（如 macOS Keychain 异常）不抛出中断登出，
+    // 内存 token 已清空即已登出，持久层异常仅记日志。
+    try {
+      await _storage.delete(key: 'access_token');
+      await _storage.delete(key: 'refresh_token');
+    } catch (e) {
+      _logHttp('!!! token 清除失败（内存已清空，视为已登出）: $e');
+    }
   }
 
   /// 会话失效回调（强制回登录页）
@@ -174,7 +181,13 @@ class ApiClient {
     final rt = await readRefreshToken();
     if (rt == null || rt.isEmpty) return false;
     try {
-      final r = await _dio.post(Endpoints.refresh, data: {'refresh_token': rt});
+      // 刷新请求自身标记 _retried + _noSessionExpired：若后端对失效 refresh_token
+      // 也返 401，避免 onError 拦截器再次进入刷新分支 —— 那会重入 _tryRefresh()
+      // 拿到「正在进行中的同一个 future」并 await 它，而该 future 正等这条 POST
+      // 完成，形成自等待死锁。带上标记直接放行为普通失败。
+      final r = await _dio.post(Endpoints.refresh,
+          data: {'refresh_token': rt},
+          options: Options(extra: {'_noSessionExpired': true, '_retried': true}));
       final data = _unwrap(r.data);
       if (data is Map && data['access_token'] != null) {
         final newAccess = data['access_token'].toString();

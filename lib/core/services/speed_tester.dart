@@ -36,8 +36,11 @@ class SpeedTester {
   /// 并发测速全部节点（自动限流），返回带延迟的新列表。
   /// 测速在**副本**上进行，绝不把结果写进传入列表的元素 —— 调用方只在
   /// 需要时整体替换引用（断开/切换瞬间的测速结果不会污染 UI 当前列表）。
+  /// [onEach] 每测完一个节点即回调 (tag, 延迟ms, 是否在线)，供调用方实时回填
+  /// UI（边测边刷、实时重排），不必等整批完成。
   Future<List<ProxyNode>> testAll(List<ProxyNode> nodes,
-      {void Function(int done, int total)? onProgress}) async {
+      {void Function(int done, int total)? onProgress,
+      void Function(String tag, int latencyMs, bool online)? onEach}) async {
     final result = [for (final n in nodes) n.clone()];
     final queue = List<int>.generate(result.length, (i) => i);
     var done = 0;
@@ -50,6 +53,7 @@ class SpeedTester {
         result[idx].online = ms >= 0;
         done++;
         onProgress?.call(done, result.length);
+        onEach?.call(result[idx].tag, ms, ms >= 0);
       }
     }
 

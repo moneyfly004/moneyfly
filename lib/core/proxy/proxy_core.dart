@@ -285,14 +285,10 @@ class ConnectionController extends ChangeNotifier {
   void setAutoTest(bool v) {
     autoTest = v;
     notifyListeners();
-    // 合并持久化（不丢其他设置项）
-    unawaited(() async {
-      try {
-        final s = await SettingsStore.instance.load();
-        s['autoTest'] = v;
-        await SettingsStore.instance.save(s);
-      } catch (_) {}
-    }());
+    // 合并持久化：走全局单写队列 update()（在最新值上只改 autoTest 一个键），
+    // 不再 load→save 整份快照回写 —— 否则与其它写者并发时会覆盖它们刚写入的
+    // 字段（如 lastSelectedTag），正是 SettingsStore 注释警告的丢字段场景。
+    unawaited(_enqueueSettingsWrite((s) => s['autoTest'] = v));
   }
 
   Timer? _reconnectTimer;
@@ -393,13 +389,6 @@ class ConnectionController extends ChangeNotifier {
       return;
     }
     await loadNodes(fresh);
-  }
-
-  /// 更新测速结果（节点页独立测速后调用，替换当前展示列表）
-  void updateTestedNodes(List<ProxyNode> tested) {
-    nodes = tested;
-    _retargetCurrent();
-    notifyListeners();
   }
 
   /// 启动时自动连接（设置 autoConnect=true 时由首页在订阅加载完成后调用，仅一次）
@@ -631,12 +620,15 @@ class ConnectionController extends ChangeNotifier {
   /// - 已连接(内核在跑)→ 走内核 Clash API delay，真实协议+隧道实测，
   ///   UDP(hysteria2/tuic)与被墙 TCP 节点都能测准（裸 TCP 直连对这些必失败）。
   /// - 未连接 → 回退纯 TCP 探测（SpeedTester），至少给个可达性参考。
+  /// [onEach] 每测完一个节点即回调 (tag, 延迟, 在线)，供上层实时回填 UI。
   Future<List<ProxyNode>> testAllNodes(List<ProxyNode> list,
-      {void Function(int done, int total)? onProgress}) async {
+      {void Function(int done, int total)? onProgress,
+      void Function(String tag, int latencyMs, bool online)? onEach}) async {
     if (status == ConnStatus.connected && _core.isRunning) {
-      return _testViaKernel(list, onProgress: onProgress);
+      return _testViaKernel(list, onProgress: onProgress, onEach: onEach);
     }
-    return SpeedTester.instance.testAll(list, onProgress: onProgress);
+    return SpeedTester.instance
+        .testAll(list, onProgress: onProgress, onEach: onEach);
   }
 
   /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）。
@@ -644,7 +636,8 @@ class ConnectionController extends ChangeNotifier {
   /// 断开/切网瞬间在途测速会把 UI 正在用的节点整批标成 offline（epoch
   /// 守卫只能阻止"整体替换"，挡不住"元素已被逐个改写"）。
   Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
-      {void Function(int done, int total)? onProgress}) async {
+      {void Function(int done, int total)? onProgress,
+      void Function(String tag, int latencyMs, bool online)? onEach}) async {
     if (nodes.isEmpty) return nodes;
     final result = [for (final n in nodes) n.clone()];
     var nextIdx = 0;
@@ -661,6 +654,7 @@ class ConnectionController extends ChangeNotifier {
         result[idx].online = ms >= 0;
         done++;
         onProgress?.call(done, result.length);
+        onEach?.call(result[idx].tag, ms, ms >= 0);
       }
     }
 
@@ -695,6 +689,72 @@ class ConnectionController extends ChangeNotifier {
     await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
   }
 
+  /// 实时测速通知节流：逐节点回填每来一次就 notifyListeners 会在千节点时
+  /// 触发上千次整页重建；这里≥100ms 才推一次（约 10fps，肉眼已是"实时"）。
+  DateTime _lastLiveNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _liveNotifyGap = Duration(milliseconds: 100);
+
+  void _throttledNotify() {
+    final now = DateTime.now();
+    if (now.difference(_lastLiveNotify) >= _liveNotifyGap) {
+      _lastLiveNotify = now;
+      notifyListeners();
+    }
+  }
+
+  /// 把单个节点的测速结果就地回填进当前展示列表（实时 UI 用）。
+  /// [epoch] 守卫：断开/重连会自增 _epoch，本轮测速立即失效停止回填 ——
+  /// 绝不把正在拆除连接测出的 offline 结果写进用户在用的列表。
+  void _mergeOneLatency(int epoch, String tag, int latencyMs, bool online) {
+    if (epoch != _epoch) return;
+    for (final n in nodes) {
+      if (n.tag == tag) {
+        n.latencyMs = latencyMs;
+        n.online = online;
+        break;
+      }
+    }
+    _throttledNotify();
+  }
+
+  /// 统一「实时测速」入口：逐节点回填 + 节流刷新，测完按需切最优。
+  /// - 节点页「⚡测速」、首页选择器「⚡测速」都走这里；
+  /// - [switchToBest] 已连接且允许时测完切到最优（节点页/自动选优 true；
+  ///   首页选择器手动挑节点时传 false，不打断用户选择）；
+  /// - [onProgress] 进度回调（节点页顶部 done/total 用）。
+  Future<void> retestAll({
+    bool switchToBest = true,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    if (nodes.isEmpty || speedTesting) return;
+    final epoch = _epoch;
+    speedTesting = true;
+    notifyListeners();
+    try {
+      final tested = await testAllNodes(
+        nodes,
+        onProgress: onProgress,
+        onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online),
+      );
+      if (epoch != _epoch) return;
+      nodes = tested;
+      _retargetCurrent(); // 列表整体替换后 current 重指向新实例
+      lastSpeedTestTime = _now();
+      final best = selectBestRespectingLock(tested);
+      if (switchToBest &&
+          best != null &&
+          status == ConnStatus.connected &&
+          _core.isRunning) {
+        await switchNode(best, userInitiated: false);
+      }
+    } catch (_) {
+      // 测速失败不影响已建立的连接
+    } finally {
+      speedTesting = false;
+      notifyListeners();
+    }
+  }
+
   /// 后台测速 + 自动切换最优节点（不阻塞连接；测速中保持已连接状态，
   /// UI 通过 speedTesting 标记显示「测速中」）。
   /// 尊重 [lockedCountry]：用户手动选了国家后，只在该国范围内选最优。
@@ -702,7 +762,8 @@ class ConnectionController extends ChangeNotifier {
     speedTesting = true;
     notifyListeners();
     try {
-      final tested = await testAllNodes(nodes);
+      final tested = await testAllNodes(nodes,
+          onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online));
       if (epoch != _epoch) return;
       nodes = tested;
       _retargetCurrent(); // 列表整体替换后 current 重指向新实例
@@ -956,7 +1017,10 @@ class ConnectionController extends ChangeNotifier {
     _bgTestTimer = Timer.periodic(Duration(minutes: intervalMin), (_) async {
       if (status != ConnStatus.connected || nodes.isEmpty || !_core.isRunning) return;
       if (!autoTest) return;
-      final tested = await testAllNodes(nodes);
+      final epoch = _epoch;
+      final tested = await testAllNodes(nodes,
+          onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online));
+      if (epoch != _epoch) return;
       if (status != ConnStatus.connected || !autoTest) return;
       nodes = tested;
       _retargetCurrent(); // 列表整体替换后 current 重指向新实例

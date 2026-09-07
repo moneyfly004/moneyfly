@@ -459,20 +459,24 @@ class _HomePageState extends State<HomePage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        final sorted = List.of(conn.nodes)
-          ..sort((a, b) {
-            if (a.online != b.online) return a.online ? -1 : 1;
-            if (a.latencyMs < 0 && b.latencyMs < 0) return a.tag.compareTo(b.tag);
-            if (a.latencyMs < 0) return 1;
-            if (b.latencyMs < 0) return -1;
-            return a.latencyMs.compareTo(b.latencyMs);
-          });
         return DraggableScrollableSheet(
           expand: false,
           initialChildSize: 0.62,
           minChildSize: 0.35,
           maxChildSize: 0.9,
-          builder: (_, scroll) => Column(
+          // 响应式：监听控制器，测速中逐节点回填延迟即实时重排（最优始终置顶）
+          builder: (_, scroll) => AnimatedBuilder(
+            animation: conn,
+            builder: (context, _) {
+              final sorted = List.of(conn.nodes)
+                ..sort((a, b) {
+                  if (a.online != b.online) return a.online ? -1 : 1;
+                  if (a.latencyMs < 0 && b.latencyMs < 0) return a.tag.compareTo(b.tag);
+                  if (a.latencyMs < 0) return 1;
+                  if (b.latencyMs < 0) return -1;
+                  return a.latencyMs.compareTo(b.latencyMs);
+                });
+              return Column(
             children: [
               const SizedBox(height: 10),
               Container(
@@ -489,9 +493,35 @@ class _HomePageState extends State<HomePage>
                   children: [
                     Text(AppStrings.t('nodes_title'),
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-                    const Spacer(),
+                    const SizedBox(width: 10),
                     Text(AppStrings.t('tap_switch_node'),
                         style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+                    const Spacer(),
+                    // ⚡实时测速：手动挑节点时不切走（switchToBest:false），
+                    // 仅逐个填延迟并重排，最优浮到最上
+                    GestureDetector(
+                      onTap: conn.speedTesting
+                          ? null
+                          : () => conn.retestAll(switchToBest: false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: MFColors.brandGradient,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: conn.speedTesting
+                            ? const SizedBox(
+                                width: 13,
+                                height: 13,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : Text('⚡ ${AppStrings.t('speed_test')}',
+                                style: const TextStyle(
+                                    fontSize: 11.5,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600)),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -550,7 +580,9 @@ class _HomePageState extends State<HomePage>
                   },
                 ),
               ),
-            ],
+                ],
+              );
+            },
           ),
         );
       },

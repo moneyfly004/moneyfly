@@ -131,35 +131,33 @@ class _NodesPageState extends State<NodesPage> {
       _testTotal = conn.nodes.length;
     });
     try {
-      // 进度节流：千节点时每完成一个就 setState 会触发约千次整页重建
-      // （每次还含分组/排序/拍平）→ 每 ≥120ms 或进度变化 ≥5% 才刷新一次
+      // 实时测速：retestAll 逐节点回填延迟到 conn.nodes（就地更新）。
+      // 进度回调驱动本页 setState 重建 → 每次重建都按最新延迟重新分组/排序，
+      // 用户看到延迟数字一个个填上、节点在组内实时上浮。
+      // 节流：千节点时每完成一个就 setState 会触发上千次整页重建（含分组/
+      // 排序/拍平）→ 每 ≥120ms 或进度 ≥5% 才刷新一次。
       var lastTick = DateTime.now();
       var lastPct = -1.0;
-      final tested = await conn.testAllNodes(conn.nodes,
-          onProgress: (done, total) {
-        final pct = total <= 0 ? 1.0 : done / total;
-        final now = DateTime.now();
-        if (pct >= 1.0 ||
-            pct - lastPct >= 0.05 ||
-            now.difference(lastTick).inMilliseconds >= 120) {
-          lastTick = now;
-          lastPct = pct;
-          if (mounted) {
-            setState(() {
-              _testDone = done;
-              _testTotal = total;
-            });
+      await conn.retestAll(
+        switchToBest: conn.autoTest,
+        onProgress: (done, total) {
+          final pct = total <= 0 ? 1.0 : done / total;
+          final now = DateTime.now();
+          if (pct >= 1.0 ||
+              pct - lastPct >= 0.05 ||
+              now.difference(lastTick).inMilliseconds >= 120) {
+            lastTick = now;
+            lastPct = pct;
+            if (mounted) {
+              setState(() {
+                _testDone = done;
+                _testTotal = total;
+              });
+            }
           }
-        }
-      });
-      conn.updateTestedNodes(tested);
-      if (mounted) {
-        _toast(AppStrings.t('speed_done'));
-        if (conn.autoTest) {
-          final best = conn.selectBestRespectingLock(tested);
-          if (best != null) await conn.switchNode(best, userInitiated: false);
-        }
-      }
+        },
+      );
+      if (mounted) _toast(AppStrings.t('speed_done'));
     } finally {
       if (mounted) setState(() => _testing = false);
     }
