@@ -26,6 +26,8 @@ class NodesPage extends StatefulWidget {
 class _NodesPageState extends State<NodesPage> {
   bool _testing = false;
   bool _refreshing = false;
+  String _sort = 'default'; // default / latency / name
+  final Set<String> _testingNode = {}; // 正在单点测速的 tag(显示小环)
   String _query = '';
   int _testDone = 0;
   int _testTotal = 0;
@@ -54,6 +56,65 @@ class _NodesPageState extends State<NodesPage> {
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  void _pickSort() {
+    showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: MFColors.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Text(AppStrings.t('sort_title'),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            for (final (v, l) in [
+              ('default', AppStrings.t('sort_default')),
+              ('latency', AppStrings.t('sort_latency')),
+              ('name', AppStrings.t('sort_name')),
+            ])
+              ListTile(
+                title: Text(l, style: const TextStyle(fontSize: 13.5)),
+                trailing: _sort == v
+                    ? const Icon(Icons.check, size: 16, color: MFColors.brandLight)
+                    : null,
+                onTap: () {
+                  Navigator.pop(ctx, v);
+                },
+              ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    ).then((v) {
+      if (v != null && mounted) setState(() => _sort = v);
+    });
+  }
+
+  /// 单点测速(点节点行延迟胶囊):已连接走内核 delay,未连接纯 TCP
+  Future<void> _testOne(dynamic n) async {
+    if (_testing) return;
+    final conn = context.read<ConnectionController>();
+    setState(() => _testingNode.add(n.tag));
+    try {
+      final ms = await conn.testOneNode(n);
+      if (!mounted) return;
+      // 用副本替换该节点结果,不污染其它引用
+      final idx = conn.nodes.indexWhere((x) => x.tag == n.tag);
+      if (idx >= 0) {
+        final fresh = conn.nodes[idx].clone()
+          ..latencyMs = ms
+          ..online = ms >= 0;
+        final list = List<ProxyNode>.of(conn.nodes);
+        list[idx] = fresh;
+        await conn.loadNodes(list);
+      }
+    } finally {
+      if (mounted) setState(() => _testingNode.remove(n.tag));
     }
   }
 
@@ -132,9 +193,23 @@ class _NodesPageState extends State<NodesPage> {
       final key = n.countryCode ?? 'XX';
       groups.putIfAbsent(key, () => []).add(n);
     }
-    // 组内按 在线优先→延迟升序→名称 排序（同国比较器自动落到这几项）
+    // 组内排序:默认=国家热度+在线+延迟+名称;延迟=在线优先再延迟升序;
+    // 名称=字母序
     for (final list in groups.values) {
-      list.sort(ProxyNode.compareForList);
+      switch (_sort) {
+        case 'latency':
+          list.sort((a, b) {
+            if (a.online != b.online) return a.online ? -1 : 1;
+            if (a.latencyMs < 0 && b.latencyMs < 0) return a.tag.compareTo(b.tag);
+            if (a.latencyMs < 0) return 1;
+            if (b.latencyMs < 0) return -1;
+            return a.latencyMs.compareTo(b.latencyMs);
+          });
+        case 'name':
+          list.sort((a, b) => a.tag.toLowerCase().compareTo(b.tag.toLowerCase()));
+        default:
+          list.sort(ProxyNode.compareForList);
+      }
     }
     // 国家分组顺序：热门在前（港·日·新·美），其余按距中国远近（见 countryOrder）
     final sortedCodes = groups.keys.toList()
@@ -154,6 +229,34 @@ class _NodesPageState extends State<NodesPage> {
                 children: [
                   Text(AppStrings.t('nodes_title'), style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
                   const Spacer(),
+                  // 排序切换(默认国家/延迟/名称)
+                  GestureDetector(
+                    onTap: _pickSort,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: MFColors.card2,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: MFColors.line),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.sort, size: 13, color: MFColors.txt3),
+                          const SizedBox(width: 3),
+                          Text(
+                            switch (_sort) {
+                              'latency' => AppStrings.t('sort_latency'),
+                              'name' => AppStrings.t('sort_name'),
+                              _ => AppStrings.t('sort_default'),
+                            },
+                            style: TextStyle(fontSize: 11, color: MFColors.txt3, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   GestureDetector(
                     onTap: _refreshing ? null : () => _load(force: true),
                     child: Container(
@@ -312,15 +415,27 @@ class _NodesPageState extends State<NodesPage> {
                 ],
               ),
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-              decoration: BoxDecoration(
-                color: latencyColor.withValues(alpha: .1),
-                borderRadius: _latencyRadius,
-                border: Border.all(color: latencyColor.withValues(alpha: .25)),
+            // 延迟胶囊:点击=单点测速(测速中显示小环)
+            GestureDetector(
+              onTap: _testing ? null : () => _testOne(n),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: latencyColor.withValues(alpha: .1),
+                  borderRadius: _latencyRadius,
+                  border: Border.all(color: latencyColor.withValues(alpha: .25)),
+                ),
+                child: _testingNode.contains(n.tag)
+                    ? SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 1.6, color: latencyColor))
+                    : Text(
+                        n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '— ms',
+                        style: TextStyle(fontSize: 11.5, color: latencyColor,
+                            fontFamily: kNumFont, fontWeight: FontWeight.w600)),
               ),
-              child: Text(n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '— ms',
-                  style: TextStyle(fontSize: 11.5, color: latencyColor, fontFamily: kNumFont, fontWeight: FontWeight.w600)),
             ),
             if (isCurrent) ...[
               const SizedBox(width: 8),

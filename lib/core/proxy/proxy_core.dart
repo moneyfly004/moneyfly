@@ -670,6 +670,15 @@ class ConnectionController extends ChangeNotifier {
     return SpeedTester.selectBest(candidates);
   }
 
+  /// 测单个节点延迟(节点行"点一下测")：已连接走内核 delay(真实隧道)，
+  /// 未连接回退纯 TCP 探测。返回 ms(失败 -1)，不修改任何列表。
+  Future<int> testOneNode(ProxyNode node) async {
+    if (status == ConnStatus.connected && _core.isRunning) {
+      return _core.testNodeDelay(node.tag, url: testUrl);
+    }
+    return SpeedTester.instance.testOne(node);
+  }
+
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
   /// 只测速+热切换节点，不重启内核、不断网）
   Future<void> retest() async {
