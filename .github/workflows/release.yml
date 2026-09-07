@@ -272,7 +272,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-macos-app-arm64
-          path: build/macos/Build/Products/Release/MoneyFly.app
+          # 上传父目录以保留 MoneyFly.app 目录名（v4 上传目录会丢弃目录名本身）
+          path: build/macos/Build/Products/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-macos-arm64
@@ -340,7 +341,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-macos-app-x64
-          path: build/macos/Build/Products/Release/MoneyFly.app
+          path: build/macos/Build/Products/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-macos-x64
