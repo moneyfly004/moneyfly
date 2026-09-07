@@ -17,6 +17,7 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   List<AppNotification> _items = [];
   bool _loading = true;
+  String? _error; // 加载失败原因(失败≠没通知,展示错误+重试)
 
   @override
   void initState() {
@@ -26,12 +27,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final list = await NotificationService.instance.list();
       if (mounted) setState(() => _items = list);
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (mounted) setState(() => _error = ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -117,7 +121,32 @@ class _NotificationsPageState extends State<NotificationsPage> {
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
-            : _items.isEmpty
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
+                        const SizedBox(height: 10),
+                        Text(_error!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+                        const SizedBox(height: 14),
+                        GestureDetector(
+                          onTap: _load,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                            decoration: BoxDecoration(
+                                gradient: MFColors.brandGradient,
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Text(AppStrings.t('retry'),
+                                style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : _items.isEmpty
                 ?  Center(child: Text(AppStrings.t('no_notifications'), style: TextStyle(fontSize: 14, color: MFColors.txt3)))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),

@@ -89,7 +89,10 @@ class _BypassPageState extends State<BypassPage> {
       final s = await SettingsStore.instance.load();
       s['bypassDomains'] = List<String>.from(_domains);
       await SettingsStore.instance.save(s);
-    } catch (_) {}
+    } catch (_) {
+      // 保存失败必须提示,不能静默(用户以为已生效)
+      _toast(AppStrings.t('save_failed'));
+    }
   }
 
   void _toast(String msg) {

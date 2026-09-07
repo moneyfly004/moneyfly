@@ -402,10 +402,12 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                               _finalAmount == null
                                   ? AppStrings.t('upgrade_pay_btn')
                                   : '${AppStrings.t('upgrade_pay_btn')} ¥${_finalAmount!.toStringAsFixed(2)}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,
-                                  color: Colors.white),
+                                  // 禁用态(未出价/预览失败)用主题文字色,
+                                  // 避免 card2 底 + 白字在浅色主题下不可读
+                                  color: _paying ? Colors.white : MFColors.txt3),
                             ),
                     ),
                   ),

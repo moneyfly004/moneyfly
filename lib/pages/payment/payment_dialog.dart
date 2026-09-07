@@ -110,10 +110,11 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(AppStrings.t('pay_with_method', {'method': widget.methodName}), style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
+            Text(AppStrings.t('pay_with_method', {'method': widget.methodName}),
+                style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700, color: Colors.white)),
             const SizedBox(height: 3),
             Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
-                style:  TextStyle(fontSize: 10, color: MFColors.txt3, letterSpacing: 1.4)),
+                style: const TextStyle(fontSize: 10, color: Colors.white60, letterSpacing: 1.4)),
             const SizedBox(height: 16),
             GestureDetector(
               onTap: () => setState(() => _zoom = !_zoom),
@@ -138,12 +139,14 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
               ),
             ),
             const SizedBox(height: 6),
-             Text(AppStrings.t('qr_tap_zoom'), style: TextStyle(fontSize: 10, color: MFColors.txt3)),
+            Text(AppStrings.t('qr_tap_zoom'),
+                style: const TextStyle(fontSize: 10, color: Colors.white60)),
             const SizedBox(height: 12),
             Text.rich(TextSpan(children: [
-               TextSpan(text: '¥', style: TextStyle(fontSize: 15, color: MFColors.txt2)),
+              TextSpan(text: '¥',
+                  style: const TextStyle(fontSize: 15, color: Colors.white)),
               TextSpan(text: widget.amount.toStringAsFixed(1),
-                  style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
+                  style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont, color: Colors.white)),
             ])),
             const SizedBox(height: 5),
             GestureDetector(
@@ -158,9 +161,9 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text('${AppStrings.t('order_no')} ${widget.orderNo}',
-                      style:  TextStyle(fontSize: 11, color: MFColors.txt3, fontFamily: kNumFont, letterSpacing: .5)),
+                      style: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: kNumFont, letterSpacing: .5)),
                   const SizedBox(width: 5),
-                   Icon(Icons.copy, size: 12, color: MFColors.txt3),
+                  Icon(Icons.copy, size: 12, color: Colors.white70),
                 ],
               ),
             ),
@@ -173,20 +176,20 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                       child: CircularProgressIndicator(strokeWidth: 2, color: MFColors.brandLight)),
                   const SizedBox(width: 8),
                   Text('${AppStrings.t('waiting_pay')} $_clock，${AppStrings.t('pay_success_auto')}',
-                      style:  TextStyle(fontSize: 12, color: MFColors.txt2)),
+                      style: const TextStyle(fontSize: 12, color: Colors.white70)),
                 ],
               )
             else
               Text(_pollError ?? AppStrings.t('poll_stopped'),
-                  style: TextStyle(fontSize: 12, color: _pollError != null ? MFColors.red : MFColors.txt3)),
+                  style: TextStyle(fontSize: 12, color: _pollError != null ? const Color(0xFFFF6B6B) : Colors.white60)),
             const SizedBox(height: 18),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: MFColors.txt2,
-                      side:  BorderSide(color: MFColors.line2),
+                      foregroundColor: Colors.white70,
+                      side: const BorderSide(color: Colors.white24),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),

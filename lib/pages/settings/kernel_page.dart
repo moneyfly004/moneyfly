@@ -26,6 +26,7 @@ class _KernelPageState extends State<KernelPage> {
   String? _error;
   bool _supportsVariant = false;
   bool _hasUserKernel = false;
+  bool _restoring = false; // 恢复内置是本地删除,不显示「下载中」
   KernelVariant _variant = KernelVariant.compatible;
 
   @override
@@ -269,14 +270,14 @@ class _KernelPageState extends State<KernelPage> {
       ),
     );
     if (ok != true) return;
-    setState(() => _downloading = true);
+    setState(() => _restoring = true);
     final done = await KernelManager.restoreBuiltin();
     final builtinV = await KernelManager.builtinVariantForPlatform();
     await KernelManager.instance.setVariant(builtinV);
     final cur = await KernelManager.instance.detectCurrent();
     if (!mounted) return;
     setState(() {
-      _downloading = false;
+      _restoring = false;
       _hasUserKernel = false;
       _variant = builtinV;
       _current = cur;
@@ -392,6 +393,21 @@ class _KernelPageState extends State<KernelPage> {
                     ),
                   ),
               ],
+              if (_restoring)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                      const SizedBox(width: 10),
+                      Text(AppStrings.t('kernel_restoring'),
+                          style: TextStyle(fontSize: 12, color: MFColors.txt2)),
+                    ],
+                  ),
+                ),
               if (_supportsVariant)
                 _row(
                   icon: '🔀',

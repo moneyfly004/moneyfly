@@ -19,6 +19,8 @@ class OrdersPage extends StatefulWidget {
 class _OrdersPageState extends State<OrdersPage> {
   List<OrderItem> _orders = [];
   bool _loading = true;
+  bool _paying = false; // 支付进行中,防连点双弹二维码
+  String? _error; // 加载失败原因(错误态与空态分流:失败≠没数据)
 
   @override
   void initState() {
@@ -28,18 +30,24 @@ class _OrdersPageState extends State<OrdersPage> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final list = await OrderService.instance.list();
       if (mounted) setState(() => _orders = list);
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      // 加载失败 → 显示「加载失败+重试」,不要把网络错误误当「暂无订单」
+      if (mounted) setState(() => _error = ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _payOrder(OrderItem o) async {
+    if (_paying) return; // busy guard
+    setState(() => _paying = true);
     try {
       // 先确认订单仍是待支付
       final st = await OrderService.instance.status(o.orderNo);
@@ -79,6 +87,8 @@ class _OrdersPageState extends State<OrdersPage> {
       await _load();
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
+    } finally {
+      if (mounted) setState(() => _paying = false);
     }
   }
 
@@ -124,7 +134,32 @@ class _OrdersPageState extends State<OrdersPage> {
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
-            : _orders.isEmpty
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
+                        const SizedBox(height: 10),
+                        Text(_error!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+                        const SizedBox(height: 14),
+                        GestureDetector(
+                          onTap: _load,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                            decoration: BoxDecoration(
+                                gradient: MFColors.brandGradient,
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Text(AppStrings.t('retry'),
+                                style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : _orders.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,

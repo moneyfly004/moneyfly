@@ -51,13 +51,24 @@ class _AccessPageState extends State<AccessPage> {
     if (mounted) setState(() => _loading = false);
   }
 
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: const TextStyle(fontSize: 13)),
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: MFColors.card2,
+    ));
+  }
+
   Future<void> _save() async {
     try {
       final s = await SettingsStore.instance.load();
       s['accessControlMode'] = _mode;
       s['accessControlApps'] = _selected.toList();
       await SettingsStore.instance.save(s);
-    } catch (_) {}
+    } catch (_) {
+      _toast(AppStrings.t('save_failed'));
+    }
   }
 
   void _setMode(String m) {
