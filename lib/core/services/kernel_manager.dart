@@ -191,9 +191,11 @@ class KernelManager {
     if (Platform.isWindows) {
       final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? 'AMD64';
       final isArm = arch.toUpperCase().contains('ARM64');
-      return isArm
-          ? 'mihomo-windows-arm64-v$version.zip'
-          : 'mihomo-windows-amd64-v$version.zip';
+      if (isArm) return 'mihomo-windows-arm64-v$version.zip';
+      // amd64 用官方 compatible 版：普通版按新指令集(v3/AVX2)编译，在老 CPU
+      // 上启动即崩溃(0xC0000005/0xC000001D)；compatible 版兼容老 CPU，
+      // 与 macOS x64 同策略
+      return 'mihomo-windows-amd64-compatible-v$version.zip';
     }
     return null;
   }

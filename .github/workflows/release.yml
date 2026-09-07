@@ -151,14 +151,14 @@ jobs:
           ls -lh assets/rules/
 
       # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
-      - name: 下载 mihomo 内核（官方预编译）
+      - name: 下载 mihomo 内核（官方预编译，compatible 版）
         shell: bash
         run: |
           mkdir -p build/mihomo
           curl -fL --max-time 300 -o mihomo.zip \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-v$MIHOMO_VERSION.zip"
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-compatible-v$MIHOMO_VERSION.zip"
           unzip -o mihomo.zip -d sb
-          # 官方 zip 内文件名带平台前缀（mihomo-windows-amd64.exe），按扩展名取
+          # 官方 zip 内文件名带平台前缀，按扩展名取
           EXE=$(find sb -iname "*.exe" | head -1)
           [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
           ls -la build/mihomo/

@@ -254,11 +254,16 @@ class ProxyCoreCli extends ProxyCore {
     throw UnsupportedError('内核启动超时（${_readyTimeout.inSeconds}s）。日志：${_tail()}$_winKernelHint');
   }
 
-  /// Windows 附加引导：mihomo.exe 被安全软件拦截时表现为「启动即退出、
-  /// 无任何日志输出」且反复失败 —— 给出明确排障指引
+  /// Windows 附加引导：内核进程启动即退出时给出排障方向。
+  /// - 退出码 0xC0000005(访问违例)/0xC000001D(非法指令)：通常是 CPU 过老
+  ///   跑不了新版内核(官方 amd64 按新指令集编译) —— 已默认改用官方
+  ///   compatible 版,仍出现可到「设置 → 内核管理」手动更新为兼容内核;
+  /// - 无任何日志输出且反复被终止：多为杀毒软件/Windows 安全中心拦截
+  ///   mihomo.exe,请把 MoneyFly 安装目录加入白名单
   String get _winKernelHint => Platform.isWindows
-      ? '。提示：若反复「启动即退出且无日志」，多为杀毒软件/Windows 安全中心拦截 '
-          'mihomo.exe，请将 MoneyFly 安装目录加入白名单后重试'
+      ? '。提示：若退出码为 0xC0000005/0xC000001D 多为 CPU 过老与新版内核不兼容'
+          '(可到设置→内核管理更新兼容内核)；若反复「无日志即退出」多为杀毒软件/'
+          'Windows 安全中心拦截 mihomo.exe，请将 MoneyFly 安装目录加入白名单'
       : '';
 
   @override
