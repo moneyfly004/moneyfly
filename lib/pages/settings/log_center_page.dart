@@ -111,6 +111,22 @@ class _KernelLogTabState extends State<_KernelLogTab>
     } catch (_) {}
   }
 
+  /// 内核日志行按级别着色:debug=灰蓝 info=正文 warning=琥珀 error=红
+  Color _lineColor(String line) {
+    final l = line.toLowerCase();
+    if (l.contains('level=error') || l.contains('panic') ||
+        l.contains('fatal') || l.contains('exception')) {
+      return const Color(0xFFFF6B6B);
+    }
+    if (l.contains('level=warning') || l.contains('warn')) {
+      return const Color(0xFFE0A93C);
+    }
+    if (l.contains('level=debug')) {
+      return const Color(0xFF8FB4E8);
+    }
+    return MFColors.txt2;
+  }
+
   void _append(String line) {
     if (!mounted) return;
     setState(() {
@@ -216,6 +232,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
                   itemCount: _lines.length,
                   itemBuilder: (context, i) {
                     final line = _lines[_lines.length - 1 - i];
+                    final lc = _lineColor(line);
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 1),
                       child: SelectableText(
@@ -223,7 +240,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
                         style: TextStyle(
                           fontSize: 10.5,
                           height: 1.55,
-                          color: MFColors.txt2,
+                          color: lc,
                           fontFamily: kNumFont,
                         ),
                       ),
