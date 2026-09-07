@@ -17,6 +17,7 @@ import '../../widgets/mf_input.dart';
 import '../auth/change_password_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
+import 'geo_update_page.dart';
 import 'kernel_page.dart';
 import 'log_center_page.dart';
 
@@ -179,6 +180,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: 'MetaCubeX/mihomo',
                 onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const KernelPage()))),
+            _row(icon: '🌍', title: AppStrings.t('settings_geo_data'),
+                desc: AppStrings.t('settings_geo_data_desc'),
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const GeoUpdatePage()))),
             _section(AppStrings.t('settings_appearance')),
             _row(icon: '🎨', title: AppStrings.t('settings_theme'),
                 value: switch (_s['theme']?.toString()) {

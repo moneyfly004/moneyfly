@@ -176,6 +176,8 @@ class AppStrings {
     'log_clear_confirm': '清空全部运行日志？',
     // 内核管理（mihomo）
     'settings_kernel': '内核管理',
+    'settings_geo_data': '更新分流数据',
+    'settings_geo_data_desc': '国家 IP 库 / 分流规则（内置，可手动更新）',
     // 直连名单 / TUN 栈
     'settings_bypass': '直连名单',
     'settings_bypass_desc': '指定域名不走代理',
@@ -221,6 +223,21 @@ class AppStrings {
     'kernel_stopped': '未连接',
     'kernel_latest': '官方最新',
     'kernel_source': '内核来源：MetaCubeX/mihomo（官方原版，非 fork）',
+    'geo_title': '分流数据',
+    'geo_status': '当前数据',
+    'geo_country_lib': '国家 IP 库',
+    'geo_rules': '分流规则',
+    'geo_builtin': '随 App 内置',
+    'geo_manual_copy': '手动更新副本',
+    'geo_none': '无',
+    'geo_tip': '说明：国家库与分流规则在构建时随 App 自带（每次发布都是当时最新版），'
+        '启动与连接全程本地读取、不联网下载，任何缺失都不会影响软件与内核启动。'
+        '如需最新数据请点击下方按钮手动更新（联网下载一次），更新后下次连接生效。',
+    'geo_check_update': '检查并更新',
+    'geo_downloading': '下载中 {pct}',
+    'geo_update_done': '分流数据已更新，下次连接生效',
+    'geo_update_fail': '更新失败：{err}',
+    'geo_source': '数据来源：MetaCubeX/meta-rules-dat（官方源）',
     'kernel_check_btn': '检查更新',
     'kernel_checking': '检查中…',
     'kernel_up_to_date': '已是最新内核 v{ver}',
@@ -656,6 +673,8 @@ class AppStrings {
     'log_clear_confirm': 'Clear all runtime logs?',
     // Kernel management (mihomo)
     'settings_kernel': 'Kernel',
+    'settings_geo_data': 'Geo Data',
+    'settings_geo_data_desc': 'Country IP DB & routing rules (bundled, updatable)',
     // Bypass list / TUN stack
     'settings_bypass': 'Bypass list',
     'settings_bypass_desc': 'Domains that skip the proxy',
@@ -701,6 +720,23 @@ class AppStrings {
     'kernel_stopped': 'Disconnected',
     'kernel_latest': 'Latest upstream',
     'kernel_source': 'Kernel: MetaCubeX/mihomo (official, not a fork)',
+    'geo_title': 'Geo Data',
+    'geo_status': 'Current data',
+    'geo_country_lib': 'Country IP database',
+    'geo_rules': 'Routing rules',
+    'geo_builtin': 'Bundled in app',
+    'geo_manual_copy': 'Manual update copy',
+    'geo_none': 'None',
+    'geo_tip': 'Note: the country database and routing rules are bundled with each '
+        'release. Startup and connection read them locally — no downloads, and a '
+        'missing file never blocks the app or kernel from starting. Tap the button '
+        'below to manually fetch the latest data (one-time download); it takes '
+        'effect on the next connection.',
+    'geo_check_update': 'Check & Update',
+    'geo_downloading': 'Downloading {pct}',
+    'geo_update_done': 'Geo data updated. Takes effect on next connect',
+    'geo_update_fail': 'Update failed: {err}',
+    'geo_source': 'Data source: MetaCubeX/meta-rules-dat (official)',
     'kernel_check_btn': 'Check updates',
     'kernel_checking': 'Checking…',
     'kernel_up_to_date': 'Kernel is up to date (v{ver})',
