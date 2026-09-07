@@ -350,36 +350,62 @@ jobs:
             dist/SHA256SUMS-macos-x64.txt
 
   macos-universal:
-    name: macOS universal
-    needs: [macos-arm64, macos-x64]
+    name: macOS universal（Flutter 原生双架构）
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: subosito/flutter-action@v2
         with:
-          name: moneyfly-macos-app-arm64
-          path: build/merge/arm64
-      - uses: actions/download-artifact@v4
-        with:
-          name: moneyfly-macos-app-x64
-          path: build/merge/x64
-      - name: 合并 universal
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据
         run: |
-          ARM_APP=$(find build/merge/arm64 -type d -name "MoneyFly.app" | head -1)
-          X64_APP=$(find build/merge/x64 -type d -name "MoneyFly.app" | head -1)
-          echo "ARM=$ARM_APP X64=$X64_APP"
-          [ -n "$ARM_APP" ] && [ -n "$X64_APP" ] || { echo "app 未找到"; exit 1; }
-          bash scripts/merge_macos_universal.sh \
-            "$ARM_APP" "$X64_APP" "build/MoneyFly-universal.app" \
-            macos/Runner/Release.entitlements
-          lipo build/MoneyFly-universal.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
-          lipo build/MoneyFly-universal.app/Contents/MacOS/mihomo -verify_arch arm64 x86_64
+          mkdir -p assets/rules
+          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      - name: 下载 mihomo 内核（测试用，arm64）
+        run: |
+          mkdir -p build/mihomo
+          curl -fL --max-time 300 -o mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
+      - name: 测试（含真实内核 e2e）
+        run: |
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
+          flutter analyze
+          flutter test --concurrency=1
+      # Flutter 在 macOS release 直接产出 universal（arm64+x86_64 双架构），
+      # 与 2.0.2 老办法一致
+      - name: 构建 macOS release（universal）
+        run: flutter build macos --release
+      - name: 校验双架构
+        run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
+      - name: 内置 mihomo 内核（universal：arm64 + amd64-compatible）
+        run: |
+          APP="build/macos/Build/Products/Release/MoneyFly.app"
+          mkdir -p sb && cd sb
+          curl -fL --max-time 300 -o mihomo-arm64.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
+          curl -fL --max-time 300 -o mihomo-x64.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo-arm64.gz mihomo-x64.gz
+          lipo -create mihomo-arm64 mihomo-x64 -output mihomo
+          chmod +x mihomo
+          cd ..
+          cp sb/mihomo "$APP/Contents/MacOS/mihomo"
+          chmod +x "$APP/Contents/MacOS/mihomo"
+          lipo "$APP/Contents/MacOS/mihomo" -verify_arch arm64 x86_64
       - name: 打包 universal DMG
         run: |
           V="${INPUT_VERSION:-$GITHUB_REF_NAME}"; V="${V#v}"
-          mkdir -p dist
+          APP="build/macos/Build/Products/Release/MoneyFly.app"; mkdir -p dist
           STAGE="build/dmg-stage-universal"; rm -rf "$STAGE" && mkdir -p "$STAGE"
-          cp -R "build/MoneyFly-universal.app" "$STAGE/MoneyFly.app" && ln -s /Applications "$STAGE/Applications"
+          cp -R "$APP" "$STAGE/MoneyFly.app" && ln -s /Applications "$STAGE/Applications"
           codesign --force --deep -s - --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
           hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-universal-$V.dmg"
           cd dist && shasum -a 256 MoneyFly-macos-universal-$V.dmg > SHA256SUMS-macos-universal.txt
