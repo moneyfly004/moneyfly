@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -19,6 +20,7 @@ import 'core/services/subscription_scheduler.dart';
 import 'core/services/tray_service.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
+import 'core/proxy/system_proxy.dart';
 import 'core/services/win_single_instance.dart';
 import 'l10n/app_strings.dart';
 import 'pages/auth/login_page.dart';
@@ -128,6 +130,20 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     CrashLogger.init();
     // 本地通知初始化（到期提醒 / 连接异常）
     LocalNotify.instance.init();
+    // 启动巡检(桌面):上次异常退出可能残留系统代理指向死端口 → 还原
+    if (Platform.isMacOS || Platform.isWindows) {
+      unawaited(() async {
+        try {
+          final s = await SettingsStore.instance.load();
+          final port =
+              (s['localPort'] as num?)?.toInt() ?? SystemProxyManager.defaultPort;
+          if (await SystemProxyManager.pointsToLocal(port)) {
+            await SystemProxyManager.restore();
+            AppLog.log('APP', 'startup: restored stale system proxy (port $port)');
+          }
+        } catch (_) {}
+      }());
+    }
     // 网络变化监听（WiFi↔蜂窝切换自动重连）
     NetworkMonitor.instance.start();
     // 会话失效（refresh 失败）→ 清空路由栈强制回登录页

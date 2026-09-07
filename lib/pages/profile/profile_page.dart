@@ -25,6 +25,7 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   DashboardInfo? get _dashboard => UserService.instance.cachedDashboard;
   bool _loading = false;
+  bool _loadFailed = false; // 上次加载失败(数据区给重试,避免全零误读)
 
   @override
   void initState() {
@@ -34,12 +35,18 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
     try {
       await UserService.instance.dashboard(force: true);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (mounted) {
+        setState(() => _loadFailed = true);
+        _toast(ApiClient.errorMsg(e));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -80,6 +87,31 @@ class _ProfilePageState extends State<ProfilePage> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
+                )
+              else if (_loadFailed && _dashboard == null)
+                // 加载失败:给"错误+重试"占位,避免全零/占位误读为无套餐
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 30),
+                  child: Column(
+                    children: [
+                      Icon(Icons.cloud_off_outlined, size: 40, color: MFColors.txt3),
+                      const SizedBox(height: 10),
+                      Text(AppStrings.t('profile_load_fail'),
+                          style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+                      const SizedBox(height: 14),
+                      GestureDetector(
+                        onTap: _load,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                          decoration: BoxDecoration(
+                              gradient: MFColors.brandGradient,
+                              borderRadius: BorderRadius.circular(12)),
+                          child: Text(AppStrings.t('retry'),
+                              style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               else ...[
                 // 账号状态横幅（禁用 > 套餐停用 > 到期 > 设备满），

@@ -70,6 +70,16 @@ class SystemProxyManager {
   /// 巡检保活：连接期间周期调用。若系统代理已被外部/系统关闭或改走，
   /// 立即重新指向本地端口 —— 保持「只要 VPN 连着，系统代理就一直开着」，
   /// 直到真正断开连接或退出软件。
+  /// 系统代理当前是否指向本机 [port]（启动巡检用：上次异常退出/强杀可能
+  /// 残留代理指向死端口 → 无内核时会导致断网）
+  static Future<bool> pointsToLocal(int port) async {
+    try {
+      return await _osProxyPointsTo(port);
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> ensureApplied({int port = defaultPort}) async {
     await _withLock(() async {
       if (!_applied || _port != port) {

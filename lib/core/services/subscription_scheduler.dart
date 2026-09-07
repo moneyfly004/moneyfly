@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../api/api_client.dart';
 import '../proxy/proxy_core.dart';
 import 'account_service.dart';
+import 'local_notify.dart';
 import 'subscription_service.dart';
 
 /// 登录期间的「定时更新订阅」调度器（固定每 30 分钟一次静默刷新）。
@@ -36,6 +37,9 @@ class SubscriptionScheduler {
   DateTime _lastSuccess = DateTime.fromMillisecondsSinceEpoch(0);
 
   bool get started => _started;
+
+  /// 已提醒过的剩余天数(按天去重,防止每 30 分钟重复弹通知)
+  int _notifiedDays = 0;
 
   /// 登录态建立后调用（SessionState 变 true）；重复调用幂等
   void start() {
@@ -80,6 +84,20 @@ class SubscriptionScheduler {
     try {
       await AccountService.instance.refresh(force: true);
     } catch (_) {}
+    // 到期提醒：剩余 ≤7 天且未过期时提醒一次(按天数去重,避免每 30 分钟重复弹)
+    final acc = AccountService.instance;
+    final sub = acc.sub;
+    if (acc.status == AccountStatus.expired) {
+      _notifiedDays = -1; // 已到期:复位,续费后可再次提醒
+    } else if (sub != null &&
+        sub.remainingDays > 0 &&
+        sub.remainingDays <= 7 &&
+        _notifiedDays != sub.remainingDays) {
+      _notifiedDays = sub.remainingDays;
+      try {
+        await LocalNotify.instance.showExpiryWarning(sub.remainingDays);
+      } catch (_) {}
+    }
     // 2) 强制重拉订阅原文（成功覆盖本地缓存 + 内存），失败回退本地缓存
     try {
       final nodes =

@@ -231,6 +231,8 @@ class MoneyFlyVpnService : VpnService() {
                 .addAddress(TUN_GATEWAY, TUN_PREFIX)
                 // 全量路由：除应用自身外的所有流量进入 TUN（App 控制通道保持直连）
                 .addRoute("0.0.0.0", 0)
+                // IPv6 全量路由:避免 v4 全接管而 v6 走系统直连造成的地址族泄漏
+                .addRoute("::", 0)
                 // 虚拟 DNS：Android 的 DNS 查询发给它 → 进 TUN → 内核 hijack 处理 fake-ip
                 .addDnsServer(TUN_DNS)
         applyAccessControl(builder)
