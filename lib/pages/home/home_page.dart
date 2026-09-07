@@ -503,11 +503,7 @@ class _HomePageState extends State<HomePage>
                   itemBuilder: (_, i) {
                     final n = sorted[i];
                     final isCurrent = conn.current?.tag == n.tag;
-                    final latencyColor = !n.online
-                        ? MFColors.red
-                        : (n.latencyMs < 0
-                            ? MFColors.txt3
-                            : (n.latencyMs < 100 ? MFColors.green : MFColors.amber));
+                    final latencyColor = mfLatencyColor(n.latencyMs, n.online);
                     return GestureDetector(
                       onTap: () async {
                         Navigator.pop(ctx);
@@ -732,18 +728,19 @@ class _HomePageState extends State<HomePage>
                         ],
                       ),
                     ),
-                    if (node.latencyMs >= 0)
+                    if (node.online && node.latencyMs >= 0)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                         decoration: BoxDecoration(
-                          color: MFColors.green.withValues(alpha: .12),
+                          color: mfLatencyColor(node.latencyMs, true).withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: MFColors.green.withValues(alpha: .25)),
+                          border: Border.all(
+                              color: mfLatencyColor(node.latencyMs, true).withValues(alpha: .25)),
                         ),
                         child: Text('${node.latencyMs} ms',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 12,
-                                color: MFColors.green,
+                                color: mfLatencyColor(node.latencyMs, true),
                                 fontFamily: kNumFont,
                                 fontWeight: FontWeight.w600)),
                       ),

@@ -25,7 +25,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final _confirm = TextEditingController();
   final _invite = TextEditingController();
 
-  final bool _obscure = true;
+  bool _obscure = true;
   bool _agreed = true;
   bool _sending = false;
   bool _codeSent = false;
@@ -173,9 +173,9 @@ class _RegisterPageState extends State<RegisterPage> {
               const SizedBox(height: 12),
               _field(AppStrings.t('username_label'), _username, hint: AppStrings.t('username_hint')),
               const SizedBox(height: 12),
-              _field(AppStrings.t('password_label'), _password, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure),
+              _field(AppStrings.t('password_label'), _password, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),
-              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure),
+              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),
               _field(AppStrings.t('invite_label'), _invite, hint: AppStrings.t('invite_hint')),
               const SizedBox(height: 14),
@@ -216,6 +216,12 @@ class _RegisterPageState extends State<RegisterPage> {
       ),
     );
   }
+
+  Widget _eyeBtn() => IconButton(
+        icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+            size: 19, color: MFColors.txt3),
+        onPressed: () => setState(() => _obscure = !_obscure),
+      );
 
   Widget _field(String label, TextEditingController c,
       {required String hint, bool obscure = false, Widget? suffix,

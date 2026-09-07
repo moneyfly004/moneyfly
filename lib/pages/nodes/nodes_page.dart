@@ -272,12 +272,7 @@ class _NodesPageState extends State<NodesPage> {
 
   Widget _buildNodeRow(ConnectionController conn, dynamic n) {
     final isCurrent = conn.current?.tag == n.tag;
-    final untested = n.online && n.latencyMs < 0;
-    final latencyColor = untested
-        ? MFColors.txt3
-        : !n.online
-            ? MFColors.red
-            : (n.latencyMs < 100 ? MFColors.green : (n.latencyMs < 300 ? MFColors.amber : MFColors.red));
+    final latencyColor = mfLatencyColor(n.latencyMs, n.online);
     return GestureDetector(
       onTap: () async {
         await conn.switchNode(n);

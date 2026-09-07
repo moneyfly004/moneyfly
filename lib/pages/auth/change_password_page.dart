@@ -18,7 +18,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   final _old = TextEditingController();
   final _newPwd = TextEditingController();
   final _confirm = TextEditingController();
-  final bool _obscure = true;
+  bool _obscure = true;
   bool _loading = false;
 
   @override
@@ -71,11 +71,11 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
                Text('🔒 ${AppStrings.t('pwd_change_tip')}',
                   style: TextStyle(fontSize: 11.5, color: MFColors.txt3, height: 1.7)),
               const SizedBox(height: 22),
-              _field(AppStrings.t('cur_pwd'), _old, hint: AppStrings.t('cur_pwd_hint'), obscure: _obscure),
+              _field(AppStrings.t('cur_pwd'), _old, hint: AppStrings.t('cur_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),
-              _field(AppStrings.t('new_pwd'), _newPwd, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure),
+              _field(AppStrings.t('new_pwd'), _newPwd, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),
-              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure),
+              _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 26),
               MFPrimaryButton(label: AppStrings.t('save_pwd'), loading: _loading, onPressed: _loading ? null : _submit),
             ],
@@ -85,7 +85,14 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
     );
   }
 
-  Widget _field(String label, TextEditingController c, {required String hint, required bool obscure}) {
+  Widget _eyeBtn() => IconButton(
+        icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+            size: 19, color: MFColors.txt3),
+        onPressed: () => setState(() => _obscure = !_obscure),
+      );
+
+  Widget _field(String label, TextEditingController c,
+      {required String hint, required bool obscure, Widget? suffix}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -93,12 +100,19 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
           padding: const EdgeInsets.only(left: 2, bottom: 7),
           child: Text(label, style:  TextStyle(fontSize: 12.5, color: MFColors.txt2, fontWeight: FontWeight.w500)),
         ),
-        TextField(
-          controller: c,
-          obscureText: obscure,
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
-          cursorColor: MFColors.brand,
-          decoration: InputDecoration(hintText: hint),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: c,
+                obscureText: obscure,
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
+                cursorColor: MFColors.brand,
+                decoration: InputDecoration(hintText: hint),
+              ),
+            ),
+            if (suffix != null) ...[const SizedBox(width: 10), suffix],
+          ],
         ),
       ],
     );

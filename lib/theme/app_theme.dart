@@ -194,3 +194,13 @@ class MFPrimaryButton extends StatelessWidget {
     );
   }
 }
+
+/// 延迟色阶(全局唯一口径,列表/弹层/当前节点卡共用):
+/// 离线→红;在线未测→txt3; <100ms 绿; <300ms 琥珀; 其余 红。
+Color mfLatencyColor(int latencyMs, bool online) {
+  if (!online) return MFColors.red;
+  if (latencyMs < 0) return MFColors.txt3;
+  if (latencyMs < 100) return MFColors.green;
+  if (latencyMs < 300) return MFColors.amber;
+  return MFColors.red;
+}
