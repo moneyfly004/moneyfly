@@ -357,6 +357,7 @@ class _NodesPageState extends State<NodesPage> {
                       groups: groups,
                       sortedCodes: sortedCodes,
                       buildNodeRow: _buildNodeRow,
+                      searching: q.isNotEmpty,
                     ),
             ),
           ],
@@ -452,29 +453,44 @@ class _NodesPageState extends State<NodesPage> {
 }
 
 
-/// 节点懒加载列表：国家分组头（可折叠，默认展开）+ 节点行，拍平为索引，
+/// 节点懒加载列表：国家分组头（可折叠，默认折叠）+ 节点行，拍平为索引，
 /// 只构建视口内可见项（680+ 节点也流畅）。点分组头折叠/展开该国节点。
+/// 默认全部折叠、仅展开当前节点所在国家；搜索时强制全部展开（不藏结果）。
 class _NodeListView extends StatefulWidget {
   const _NodeListView({
     required this.conn,
     required this.groups,
     required this.sortedCodes,
     required this.buildNodeRow,
+    required this.searching,
   });
 
   final ConnectionController conn;
   final Map<String, List<ProxyNode>> groups;
   final List<String> sortedCodes;
   final Widget Function(ConnectionController, dynamic) buildNodeRow;
+  /// 搜索态：为 true 时无视折叠集合，全部展开（避免命中节点被折叠头藏住）
+  final bool searching;
 
   @override
   State<_NodeListView> createState() => _NodeListViewState();
 }
 
 class _NodeListViewState extends State<_NodeListView> {
-  /// 已折叠的国家码（默认全展开 → 空集合）。State 随组件位置保活，
-  /// 搜索/测速/刷新触发父级重建时折叠状态不丢。
+  /// 已折叠的国家码。State 随组件位置保活，搜索/测速/刷新触发父级重建时
+  /// 折叠状态不丢。默认折叠全部国家、仅展开当前节点所在国家（见 initState）。
   final Set<String> _collapsed = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    // 首帧初始化折叠集合：默认折叠所有国家，只保留“当前节点所在国家”展开，
+    // 让正在使用的节点可见、其余收起（长列表更清爽）。
+    final currentCode =
+        (widget.conn.current?.countryCode ?? '').toUpperCase();
+    _collapsed
+      .addAll(widget.sortedCodes.where((c) => c.toUpperCase() != currentCode));
+  }
 
   void _toggle(String code) {
     setState(() {
@@ -484,11 +500,13 @@ class _NodeListViewState extends State<_NodeListView> {
 
   @override
   Widget build(BuildContext context) {
+    // 搜索态：全部展开（不藏命中节点）；非搜索：按折叠集合。
+    final searching = widget.searching;
     // 拍平：header 标记 + 展开的分组才追加节点行
     final entries = <dynamic>[];
     for (final code in widget.sortedCodes) {
       entries.add('__header__$code');
-      if (!_collapsed.contains(code)) {
+      if (searching || !_collapsed.contains(code)) {
         entries.addAll(widget.groups[code]!);
       }
     }
@@ -502,7 +520,8 @@ class _NodeListViewState extends State<_NodeListView> {
           return _CountryHeader(
             code: code,
             count: widget.groups[code]!.length,
-            collapsed: _collapsed.contains(code),
+            // 搜索态视觉上全部展开，箭头也应显示展开
+            collapsed: !searching && _collapsed.contains(code),
             onTap: () => _toggle(code),
           );
         }

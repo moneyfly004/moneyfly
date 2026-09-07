@@ -1,4 +1,4 @@
-// 节点列表：国家分组排序（热门置顶）+ 可折叠（默认展开，点头折叠/展开）
+// 节点列表：国家分组排序（热门置顶）+ 可折叠（默认折叠、仅当前国家展开）
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:moneyfly/core/api/api_client.dart';
 import 'package:moneyfly/core/models/models.dart';
 import 'package:moneyfly/core/proxy/proxy_core.dart';
+import 'package:moneyfly/core/proxy/proxy_core_cli.dart';
 import 'package:moneyfly/core/services/account_service.dart';
 import 'package:moneyfly/core/services/subscription_service.dart';
 import 'package:moneyfly/pages/nodes/nodes_page.dart';
@@ -33,7 +34,12 @@ Future<void> _pump(WidgetTester tester, Widget page) async {
 }
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // 测试环境禁止真实管理系统代理：stop()→SystemProxyManager.restore()
+    // 会 spawn networksetup/scutil 子进程，在 CI/测试机上挂起导致超时
+    ProxyCoreCli.manageSystemProxy = false;
+  });
   tearDown(() {
     ApiClient.debugDio = null;
     ApiClient.resetInstance();
@@ -41,8 +47,10 @@ void main() {
     SubscriptionService.instance.clearCache();
   });
 
-  testWidgets('节点列表：默认展开可见节点，点分组头折叠隐藏该国节点', (tester) async {
+  testWidgets('节点列表：默认折叠（无选中节点时全部收起），点分组头展开该国节点', (tester) async {
     final conn = ConnectionController.instance;
+    // 确保无“当前节点”，验证默认全部折叠（直接置 null，不走 resetForLogout→_core.stop）
+    conn.current = null;
     await conn.loadNodes([
       ProxyNode(tag: '香港-01', type: 'vless', server: '1.1.1.1', port: 443, countryCode: 'HK', latencyMs: 30),
       ProxyNode(tag: '香港-02', type: 'vless', server: '1.1.1.2', port: 443, countryCode: 'HK', latencyMs: 45),
@@ -53,28 +61,45 @@ void main() {
     }
     await _pump(tester, _wrap(const NodesPage()));
 
-    // 默认展开：节点可见
-    expect(find.text('香港-01'), findsOneWidget);
-    expect(find.text('香港-02'), findsOneWidget);
-    expect(find.text('日本-01'), findsOneWidget);
-
-    // 分组头存在（国名）
+    // 分组头始终存在（国名）
     expect(find.text('香港'), findsOneWidget);
     expect(find.text('日本'), findsOneWidget);
+    // 默认折叠：节点行隐藏
+    expect(find.text('香港-01'), findsNothing);
+    expect(find.text('香港-02'), findsNothing);
+    expect(find.text('日本-01'), findsNothing);
 
-    // 点香港分组头 → 折叠，香港节点隐藏，日本不受影响
+    // 点香港分组头 → 展开，香港节点可见，日本仍折叠
+    await tester.tap(find.text('香港'));
+    await tester.pumpAndSettle();
+    expect(find.text('香港-01'), findsOneWidget);
+    expect(find.text('香港-02'), findsOneWidget);
+    expect(find.text('日本-01'), findsNothing);
+
+    // 再点 → 折叠恢复
     await tester.tap(find.text('香港'));
     await tester.pumpAndSettle();
     expect(find.text('香港-01'), findsNothing);
     expect(find.text('香港-02'), findsNothing);
-    expect(find.text('日本-01'), findsOneWidget); // 其它组仍展开
-    expect(find.text('香港'), findsOneWidget); // 头还在
+  });
 
-    // 再点 → 展开恢复
-    await tester.tap(find.text('香港'));
-    await tester.pumpAndSettle();
-    expect(find.text('香港-01'), findsOneWidget);
-    expect(find.text('香港-02'), findsOneWidget);
+  testWidgets('节点列表：当前节点所在国家默认展开', (tester) async {
+    final conn = ConnectionController.instance;
+    conn.current = null;
+    await conn.loadNodes([
+      ProxyNode(tag: '香港-01', type: 'vless', server: '1.1.1.1', port: 443, countryCode: 'HK', latencyMs: 30),
+      ProxyNode(tag: '日本-01', type: 'trojan', server: '2.2.2.1', port: 443, countryCode: 'JP', latencyMs: 88),
+    ]);
+    for (final n in conn.nodes) {
+      n.online = true;
+    }
+    // 选中日本节点（未连接：直接置 current，不走 switchNode→内核/持久化）
+    // → 日本默认展开、香港折叠
+    conn.current = conn.nodes.firstWhere((n) => n.countryCode == 'JP');
+    await _pump(tester, _wrap(const NodesPage()));
+
+    expect(find.text('日本-01'), findsOneWidget); // 当前国家展开
+    expect(find.text('香港-01'), findsNothing);   // 其余折叠
   });
 
   testWidgets('分组顺序：香港(热门)排在日本之前', (tester) async {
