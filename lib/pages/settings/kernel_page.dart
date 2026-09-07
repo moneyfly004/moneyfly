@@ -25,6 +25,7 @@ class _KernelPageState extends State<KernelPage> {
   double _progress = 0;
   String? _error;
   bool _supportsVariant = false;
+  bool _hasUserKernel = false;
   KernelVariant _variant = KernelVariant.compatible;
 
   @override
@@ -37,11 +38,13 @@ class _KernelPageState extends State<KernelPage> {
     final cur = await KernelManager.instance.detectCurrent();
     final supports = await KernelManager.supportsVariant;
     final variant = await KernelManager.instance.currentVariant();
+    final hasUser = await KernelManager.hasUserKernel();
     if (!mounted) return;
     setState(() {
       _current = cur;
       _supportsVariant = supports;
       _variant = variant;
+      _hasUserKernel = hasUser;
     });
     if (KernelManager.isDesktop) {
       await _check();
@@ -94,7 +97,8 @@ class _KernelPageState extends State<KernelPage> {
     }
   }
 
-  /// 切换内核变体(兼容版<->标准版)：下载「当前版本」的另一变体并替换
+  /// 切换内核变体(兼容版<->标准版)：下载「当前版本」的另一变体并替换。
+  /// 缓存命中(该 变体×版本 已下载过) → 本地直接生效,不再下载。
   Future<void> _switchVariant(KernelVariant v) async {
     if (_downloading || v == _variant) return;
     final ver = _current;
@@ -108,8 +112,9 @@ class _KernelPageState extends State<KernelPage> {
         backgroundColor: MFColors.card2,
         title: Text(AppStrings.t('kernel_switch_title'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: Text(AppStrings.t('kernel_switch_confirm', {'label': v == KernelVariant.compatible ? AppStrings.t('kernel_variant_compatible') : AppStrings.t('kernel_variant_standard')}),
-            style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        content: Text(AppStrings.t('kernel_switch_confirm', {
+          'label': _variantLabel(v),
+        }), style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false),
               child: Text(AppStrings.t('cancel_text'))),
@@ -135,12 +140,11 @@ class _KernelPageState extends State<KernelPage> {
     if (err.isEmpty) {
       await KernelManager.instance.setVariant(v);
       if (mounted) {
-        setState(() => _variant = v);
-        _toast(AppStrings.t('kernel_switch_done', {
-          'label': v == KernelVariant.compatible
-              ? AppStrings.t('kernel_variant_compatible')
-              : AppStrings.t('kernel_variant_standard'),
-        }));
+        setState(() {
+          _variant = v;
+          _hasUserKernel = true;
+        });
+        _toast(AppStrings.t('kernel_switch_done', {'label': _variantLabel(v)}));
       }
     } else if (err == 'kernel_running') {
       _toast(AppStrings.t('kernel_update_desc'));
@@ -149,21 +153,137 @@ class _KernelPageState extends State<KernelPage> {
     }
   }
 
-  Widget _variantRow(KernelVariant v) {
-    final isCur = _variant == v;
-    final label = v == KernelVariant.compatible
-        ? AppStrings.t('kernel_variant_compatible')
-        : AppStrings.t('kernel_variant_standard');
-    final desc = v == KernelVariant.compatible
-        ? AppStrings.t('kernel_variant_compatible_desc')
-        : AppStrings.t('kernel_variant_standard_desc');
-    return _row(
-      icon: v == KernelVariant.compatible ? '🐢' : '⚡',
-      title: label,
-      desc: desc,
-      value: isCur ? AppStrings.t('kernel_variant_in_use') : AppStrings.t('kernel_variant_switch'),
-      onTap: isCur ? null : () => _switchVariant(v),
+  String _variantLabel(KernelVariant v) => v == KernelVariant.compatible
+      ? AppStrings.t('kernel_variant_compatible')
+      : AppStrings.t('kernel_variant_standard');
+
+  /// 点击「内核变体」→ 下拉选择：兼容版 / 标准版 / (有用户副本时)恢复内置
+  Future<void> _pickVariant() async {
+    final pick = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: MFColors.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Text(AppStrings.t('kernel_variant_title'),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            _sheetOption(
+              label: _variantLabel(KernelVariant.compatible),
+              desc: AppStrings.t('kernel_variant_compatible_desc'),
+              selected: _variant == KernelVariant.compatible,
+              value: 'compatible',
+            ),
+            _sheetOption(
+              label: _variantLabel(KernelVariant.standard),
+              desc: AppStrings.t('kernel_variant_standard_desc'),
+              selected: _variant == KernelVariant.standard,
+              value: 'standard',
+            ),
+            if (_hasUserKernel) ...[
+              Divider(height: 1, color: MFColors.line),
+              _sheetOption(
+                label: AppStrings.t('kernel_restore_builtin'),
+                desc: AppStrings.t('kernel_restore_builtin_desc'),
+                selected: false,
+                value: 'restore',
+                danger: true,
+              ),
+            ],
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
+    if (pick == null || !mounted) return;
+    if (pick == 'compatible') {
+      await _switchVariant(KernelVariant.compatible);
+    } else if (pick == 'standard') {
+      await _switchVariant(KernelVariant.standard);
+    } else if (pick == 'restore') {
+      await _restoreKernel();
+    }
+  }
+
+  Widget _sheetOption({
+    required String label,
+    required String desc,
+    required bool selected,
+    required String value,
+    bool danger = false,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: danger ? MFColors.red : MFColors.txt)),
+                  const SizedBox(height: 2),
+                  Text(desc,
+                      style: TextStyle(
+                          fontSize: 11, color: MFColors.txt3, height: 1.4)),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_circle, size: 18, color: MFColors.brandLight),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 恢复安装包内置内核（删除用户副本，无需下载）
+  Future<void> _restoreKernel() async {
+    if (_downloading) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('kernel_restore_builtin'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(AppStrings.t('kernel_restore_confirm'),
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(AppStrings.t('confirm'),
+                style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _downloading = true);
+    final done = await KernelManager.restoreBuiltin();
+    final builtinV = await KernelManager.builtinVariantForPlatform();
+    await KernelManager.instance.setVariant(builtinV);
+    final cur = await KernelManager.instance.detectCurrent();
+    if (!mounted) return;
+    setState(() {
+      _downloading = false;
+      _hasUserKernel = false;
+      _variant = builtinV;
+      _current = cur;
+    });
+    _toast(done
+        ? AppStrings.t('kernel_restore_done')
+        : AppStrings.t('kernel_update_fail', {'err': 'restore'}));
   }
 
   void _toast(String msg) {
@@ -272,16 +392,14 @@ class _KernelPageState extends State<KernelPage> {
                     ),
                   ),
               ],
-              if (_supportsVariant) ...[
-                _section(AppStrings.t('kernel_variant_title')),
-                _variantRow(KernelVariant.compatible),
-                _variantRow(KernelVariant.standard),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 4),
-                  child: Text(AppStrings.t('kernel_variant_tip'),
-                      style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+              if (_supportsVariant)
+                _row(
+                  icon: '🔀',
+                  title: AppStrings.t('kernel_variant_title'),
+                  desc: AppStrings.t('kernel_variant_desc'),
+                  value: '${_variantLabel(_variant)} ▾',
+                  onTap: _downloading ? null : _pickVariant,
                 ),
-              ],
             ] else ...[
               // Android：内核随 App 发布
               Padding(

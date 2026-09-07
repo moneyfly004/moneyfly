@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../proxy/proxy_core.dart';
 import 'settings_store.dart';
@@ -29,21 +30,85 @@ class KernelManager {
   KernelManager._();
   static final KernelManager instance = KernelManager._();
 
-  /// 桌面端二进制查找路径（与 ProxyCoreCli.resolveBinary 一致）
-  static String? resolveBinaryPath() {
+  static String get _exeName =>
+      Platform.isWindows ? 'mihomo.exe' : 'mihomo';
+
+  /// 用户内核副本目录（应用支持目录/kernel，各平台均可写）。
+  /// 切换/更新的内核放这里，**绝不动安装目录** —— 装到 Program Files 等
+  /// 只读目录也能正常切换/更新内核。
+  static Future<Directory?> userKernelDir() async {
+    try {
+      final base = await getApplicationSupportDirectory();
+      final dir = Directory('${base.path}/kernel');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 用户「当前生效」内核副本路径（不存在返回 null）
+  static Future<String?> userActivePath() async {
+    try {
+      final dir = await userKernelDir();
+      if (dir == null) return null;
+      final f = File('${dir.path}/$_exeName');
+      return await f.exists() ? f.path : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 是否已存在用户切换/更新的内核（有则可「恢复内置」）
+  static Future<bool> hasUserKernel() async =>
+      (await userActivePath()) != null;
+
+  /// 生效内核查找优先级：测试注入(MONEYFLY_MIHOMO) → 用户副本 → 安装内置
+  static Future<String?> resolveKernelPath() async {
     final override = Platform.environment['MONEYFLY_MIHOMO'];
     if (override != null && override.isNotEmpty && File(override).existsSync()) {
       return override;
     }
+    final user = await userActivePath();
+    if (user != null) return user;
     final exe = Platform.resolvedExecutable;
     final candidates = <String>[
-      if (Platform.isMacOS) '${Directory(exe).parent.path}/mihomo',
-      '${Directory(exe).parent.path}/mihomo${Platform.isWindows ? '.exe' : ''}',
+      if (Platform.isMacOS) '${Directory(exe).parent.path}/$_exeName',
+      '${Directory(exe).parent.path}/$_exeName',
     ];
     for (final c in candidates) {
       if (File(c).existsSync()) return c;
     }
     return null;
+  }
+
+  /// 删除用户副本 → 回到安装包内置内核（无需下载）。返回是否成功清除。
+  static Future<bool> restoreBuiltin() async {
+    try {
+      final dir = await userKernelDir();
+      if (dir == null) return false;
+      for (final name in [_exeName, '.$_exeName.bak']) {
+        try {
+          final f = File('${dir.path}/$name');
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 平台内置内核的变体（安装包随 CI 打包的构建）
+  static Future<KernelVariant> builtinVariantForPlatform() async {
+    if (Platform.isMacOS && (await KernelManager.instance._macArch()) != 'arm64') {
+      return KernelVariant.compatible;
+    }
+    if (Platform.isWindows) {
+      final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? 'AMD64';
+      if (!arch.toUpperCase().contains('ARM64')) return KernelVariant.compatible;
+    }
+    return KernelVariant.standard;
   }
 
   static bool get isDesktop => !Platform.isAndroid && !Platform.isIOS;
@@ -109,7 +174,7 @@ class KernelManager {
     return false;
   }
 
-  /// 探测当前内置内核版本：  /// 探测当前内置内核版本：
+  /// 探测当前内置内核版本：
   /// - 桌面：运行 `mihomo -v` 解析首行
   /// - Android：MethodChannel 读 libmihomo.Version()
   /// 失败返回 null（页面显示未知 + 提示）。
@@ -120,7 +185,7 @@ class KernelManager {
         final v = await ch.invokeMethod<String>('kernelVersion');
         return norm(v);
       }
-      final bin = resolveBinaryPath();
+      final bin = await resolveKernelPath();
       if (bin == null) return null;
       final r = await Process.run(bin, ['-v'],
           environment: {'PATH': Platform.environment['PATH'] ?? ''});
@@ -155,10 +220,15 @@ class KernelManager {
     }
   }
 
-  /// 下载并替换内核（仅桌面端；要求内核未运行 —— Windows 进程占用 exe
-  /// 无法覆盖，macOS 也存在句柄/签名问题）。返回空串=成功；非空=错误消息。
+  /// 切换/更新内核（仅桌面端；要求内核未运行）。返回空串=成功；非空=错误消息。
+  ///
+  /// 写入位置为「用户副本目录」（userKernelDir，可写），**绝不修改安装目录**，
+  /// 装到 Program Files 等只读目录也能切换/更新。
+  /// 下载缓存：`cache/<variant>_<version>` —— 本地已有该 (变体,版本) 内核时
+  /// 直接激活、不再下载；来回切换不重复下载。「恢复内置」= 删除用户副本。
   ///
   /// [version] 目标版本（如 1.19.30）
+  /// [variant] 目标变体（默认当前偏好）
   /// [onProgress] 下载进度回调（0~1）
   Future<String> updateTo(String version,
       {KernelVariant? variant, void Function(double progress)? onProgress}) async {
@@ -166,14 +236,21 @@ class KernelManager {
     if (ConnectionController.instance.status == ConnStatus.connected) {
       return 'kernel_running';
     }
-    final bin = resolveBinaryPath();
-    if (bin == null) return 'binary not found (run tool/fetch_mihomo.sh)';
     final v = variant ?? await currentVariant();
+    final asset = await _assetName(version, v);
+    if (asset == null) return 'unsupported platform/arch';
+    final dir = await userKernelDir();
+    if (dir == null) return 'no writable kernel dir';
+    final cacheFile = File('${dir.path}/cache/${v.key}_$version$_exeName');
 
+    // 1) 缓存命中 → 直接本地激活（不再下载，秒切）
+    if (await cacheFile.exists() && await cacheFile.length() > 0) {
+      return await _activate(dir, cacheFile);
+    }
+
+    // 2) 下载官方预编译 → 解压 → 自检 → 写入缓存 → 激活
     final tmp = Directory.systemTemp.createTempSync('mf_kernel_update');
     try {
-      final asset = await _assetName(version, v);
-      if (asset == null) return 'unsupported platform/arch';
       final url =
           'https://github.com/MetaCubeX/mihomo/releases/download/v$version/$asset';
       final dio = Dio(BaseOptions(
@@ -185,7 +262,6 @@ class KernelManager {
         if (b > 0) onProgress?.call(a / b);
       });
 
-      // 解压出可执行文件
       final exePath = await _extract(archive, tmp.path);
       if (exePath == null) return 'extract failed: $asset';
       if (!Platform.isWindows) {
@@ -196,43 +272,60 @@ class KernelManager {
           environment: {'PATH': Platform.environment['PATH'] ?? ''});
       if (check.exitCode != 0) return 'downloaded kernel failed self-check';
 
-      // 备份 → 替换 → 校验；失败回滚
-      final oldFile = File(bin);
-      final bak = File('$bin.old');
+      // 写缓存（保留，切换回该 (变体,版本) 不再下载）
       try {
-        if (bak.existsSync()) bak.deleteSync();
-        if (oldFile.existsSync()) oldFile.renameSync(bak.path);
-        File(exePath).copySync(bin);
+        await Directory('${dir.path}/cache').create(recursive: true);
+        File(exePath).copySync(cacheFile.path);
         if (!Platform.isWindows) {
-          await Process.run('chmod', ['+x', bin]);
+          await Process.run('chmod', ['+x', cacheFile.path]);
         }
       } catch (e) {
-        // 回滚
-        try {
-          if (!oldFile.existsSync() && bak.existsSync()) bak.renameSync(bin);
-        } catch (_) {}
-        return 'replace failed: $e';
+        return 'cache write failed: $e';
       }
-      // 替换后最终自检
-      final verify = await Process.run(bin, ['-v'],
-          environment: {'PATH': Platform.environment['PATH'] ?? ''});
-      if (verify.exitCode != 0) {
-        try {
-          oldFile.deleteSync();
-          bak.renameSync(bin);
-        } catch (_) {}
-        return 'updated kernel failed self-check, rolled back';
-      }
-      // 成功后清理备份
-      try {
-        if (bak.existsSync()) bak.deleteSync();
-      } catch (_) {}
-      return '';
+      return await _activate(dir, cacheFile);
     } finally {
       try {
         tmp.deleteSync(recursive: true);
       } catch (_) {}
     }
+  }
+
+  /// 把缓存内核激活为「当前生效」（userKernelDir/mihomo[.exe]），带备份回滚与自检
+  Future<String> _activate(Directory dir, File cacheFile) async {
+    final active = File('${dir.path}/$_exeName');
+    final bak = File('${dir.path}/.$_exeName.bak');
+    try {
+      if (await active.exists()) {
+        if (await bak.exists()) await bak.delete();
+        await active.rename(bak.path);
+      }
+      await cacheFile.copy(active.path);
+      if (!Platform.isWindows) {
+        await Process.run('chmod', ['+x', active.path]);
+      }
+    } catch (e) {
+      // 回滚
+      try {
+        if (!await active.exists() && await bak.exists()) {
+          await bak.rename(active.path);
+        }
+      } catch (_) {}
+      return 'activate failed: $e';
+    }
+    // 自检
+    final verify = await Process.run(active.path, ['-v'],
+        environment: {'PATH': Platform.environment['PATH'] ?? ''});
+    if (verify.exitCode != 0) {
+      try {
+        if (await active.exists()) await active.delete();
+        if (await bak.exists()) await bak.rename(active.path);
+      } catch (_) {}
+      return 'kernel failed self-check, rolled back';
+    }
+    try {
+      if (await bak.exists()) await bak.delete();
+    } catch (_) {}
+    return '';
   }
 
   Future<String?> _assetName(String version, KernelVariant variant) async {

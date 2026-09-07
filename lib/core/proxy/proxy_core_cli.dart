@@ -10,6 +10,7 @@ import 'geo_assets.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
 import '../services/app_log.dart';
+import '../services/local_paths.dart';
 
 /// mihomo CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
 ///
@@ -109,12 +110,23 @@ class ProxyCoreCli extends ProxyCore {
   @override
   String? get lastError => _lastError;
 
-  /// 定位 mihomo 可执行文件
-  String resolveBinary() {
+  /// 定位 mihomo 可执行文件（优先级：测试注入 → 用户切换/更新的副本
+  /// [KernelManager.userActivePath] → 安装内置）。
+  /// 用户副本放在应用支持目录，任意安装目录(含只读的 Program Files)都可用。
+  Future<String> resolveBinary() async {
     final override = Platform.environment['MONEYFLY_MIHOMO'];
     if (override != null && override.isNotEmpty && File(override).existsSync()) {
       return override;
     }
+    // 用户内核副本优先（内核管理页切换/更新写入的位置）
+    try {
+      final support = await LocalPaths.supportDir();
+      if (support != null) {
+        final userBin =
+            '${support.path}/kernel/mihomo${Platform.isWindows ? '.exe' : ''}';
+        if (File(userBin).existsSync()) return userBin;
+      }
+    } catch (_) {}
     final exe = Platform.resolvedExecutable;
     final candidates = <String>[
       if (Platform.isMacOS) '${Directory(exe).parent.path}/mihomo',
@@ -189,7 +201,7 @@ class ProxyCoreCli extends ProxyCore {
       _api.options.headers['Authorization'] = 'Bearer $clashSecret';
     }
 
-    final binary = resolveBinary();
+    final binary = await resolveBinary();
     final dir = Directory(workDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
     _configPath = '${dir.path}/config.yaml';
