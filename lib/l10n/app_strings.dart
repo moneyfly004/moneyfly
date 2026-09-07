@@ -424,6 +424,7 @@ class AppStrings {
     // 设置补充
     'pick_option': '请选择',
     'latest_version': '已是最新版本 v{ver}',
+    'check_update_fail': '检查更新失败，请检查网络后重试',
     'no_update_source': '暂未配置更新源，当前已是最新版本',
     'new_version': '发现新版本',
     'new_version_forced': '发现新版本（强制更新）',
@@ -972,6 +973,7 @@ class AppStrings {
     // 设置补充
     'pick_option': 'Select',
     'latest_version': 'Already latest v{ver}',
+    'check_update_fail': 'Update check failed. Check your network and retry',
     'no_update_source': 'No update source configured. You are on the latest version.',
     'new_version': 'Update Available',
     'new_version_forced': 'Update Required',
@@ -1155,8 +1157,8 @@ class LocaleController extends ChangeNotifier {
 
   String get lang => AppStrings.lang;
 
-  Future<void> setLang(String l) async {
-    await AppStrings.setLang(l);
+  Future<void> setLang(String l, {bool persist = true}) async {
+    await AppStrings.setLang(l, persist: persist);
     notifyListeners();
   }
 }

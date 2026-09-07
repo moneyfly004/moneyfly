@@ -141,7 +141,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _section(AppStrings.t('settings_mode')),
             _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
                 trailing: _seg2(
-                  left: '智能', right: '全局',
+                  left: AppStrings.t('smart_mode'), right: AppStrings.t('global_mode'),
                   selectedLeft: _s['defaultMode'] != 'global',
                   onLeft: () => _set('defaultMode', 'smart'),
                   onRight: () => _set('defaultMode', 'global'),
@@ -840,7 +840,8 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() => _checkingUpdate = false);
     if (info == null) {
-      _toast(AppStrings.t('latest_version', {'ver': UpdateInfo.currentVersion}));
+      // 网络/后端失败不能当成"已是最新"
+      _toast(AppStrings.t('check_update_fail'));
       return;
     }
     if (!info.isNewer) {

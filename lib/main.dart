@@ -119,6 +119,11 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
         .then(ConnectionController.instance.applySettings)
         .catchError((_) {});
     ThemeController.instance.restore();
+    // 恢复用户语言(设置页选择/首次按设备语言),否则每次启动都回到中文
+    AppStrings.restore().then((_) {
+      // 通知 UI 用恢复后的语言重建(不重复持久化)
+      return LocaleController.instance.setLang(AppStrings.lang, persist: false);
+    }).catchError((_) {});
     // 崩溃日志（设置开关控制）
     CrashLogger.init();
     // 本地通知初始化（到期提醒 / 连接异常）

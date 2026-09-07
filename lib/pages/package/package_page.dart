@@ -31,6 +31,7 @@ class _PackagePageState extends State<PackagePage> {
   int? _selectedPlan;
   int? _selectedMethod;
   bool _paying = false;
+  String? _error; // 加载失败(与"暂无套餐"区分)
 
   @override
   void initState() {
@@ -40,7 +41,10 @@ class _PackagePageState extends State<PackagePage> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final plans = await ApiClient.instance.get(Endpoints.packages);
       final methods = await PaymentService.instance.methods();
@@ -62,8 +66,10 @@ class _PackagePageState extends State<PackagePage> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _loading = false);
-        _toast(ApiClient.errorMsg(e));
+        setState(() {
+          _loading = false;
+          _error = ApiClient.errorMsg(e);
+        });
       }
     }
   }
@@ -163,7 +169,17 @@ class _PackagePageState extends State<PackagePage> {
                     Text(AppStrings.t('purchase_sub'),
                         style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                     const SizedBox(height: 16),
-                    if (_plans.isEmpty)
+                    if (_error != null)
+                      SizedBox(
+                        height: 320,
+                        child: MFEmpty(
+                          title: _error!,
+                          icon: Icons.cloud_off_outlined,
+                          actionLabel: AppStrings.t('retry'),
+                          onAction: _load,
+                        ),
+                      )
+                    else if (_plans.isEmpty)
                       SizedBox(
                         height: 320,
                         child: MFEmpty(title: AppStrings.t('no_plans')),
