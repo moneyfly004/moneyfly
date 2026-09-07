@@ -639,6 +639,11 @@ class _HomePageState extends State<HomePage>
         children: [
           Text(statusLabel,
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: statusColor)),
+          // 已连接时长 + 本次流量(独立 1s 刷新,不重建整卡)
+          if (connected) ...[
+            const SizedBox(height: 6),
+            _SessionInfo(conn: conn),
+          ],
           SizedBox(height: compact ? 8 : 14),
           GestureDetector(
             onTap: () => _toggleConnect(conn),
@@ -1236,6 +1241,52 @@ class _InfoCell extends StatelessWidget {
               style: TextStyle(fontSize: 9.5, color: MFColors.txt2)),
         ],
       ),
+    );
+  }
+}
+
+/// 已连接会话信息(时长 + 本次上下行累计)：独立 1s 自刷新,
+/// 不触发整页/整卡重建(连接卡其它内容保持静态)
+class _SessionInfo extends StatefulWidget {
+  const _SessionInfo({required this.conn});
+  final ConnectionController conn;
+
+  @override
+  State<_SessionInfo> createState() => _SessionInfoState();
+}
+
+class _SessionInfoState extends State<_SessionInfo> {
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  static String _fmtMB(double mb) {
+    if (mb >= 1024) return '${(mb / 1024).toStringAsFixed(2)} GB';
+    return '${mb.toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final conn = widget.conn;
+    if (conn.status != ConnStatus.connected || conn.connectedAt == null) {
+      return const SizedBox.shrink();
+    }
+    return Text(
+      '${AppStrings.t('connected_for')} ${conn.sessionUptime} · '
+      '↑ ${_fmtMB(conn.sessionUpMB)} ↓ ${_fmtMB(conn.sessionDownMB)}',
+      style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont),
     );
   }
 }

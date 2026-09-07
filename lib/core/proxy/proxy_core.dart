@@ -222,6 +222,20 @@ class ConnectionController extends ChangeNotifier {
   /// 不触发整个 ConnectionController 重建（避免首页每秒全量 rebuild）。
   double upSpeedMbps = 0;
   double downSpeedMbps = 0;
+
+  // ---- 会话统计(首页「已连接时长/本次流量」)----
+  DateTime? connectedAt;
+  double sessionUpMB = 0; // 本次连接累计上行(MB,1s 采样近似)
+  double sessionDownMB = 0;
+  String get sessionUptime {
+    final t = connectedAt;
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    final h = d.inHours.toString().padLeft(2, '0');
+    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+    final sec = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$h:$m:$sec';
+  }
   final ValueNotifier<SpeedSnapshot> speedNotifier = ValueNotifier(const SpeedSnapshot());
 
   /// 真实出口国家码（连接后通过隧道 IP 定位实测，非节点名猜测）
@@ -543,6 +557,9 @@ class ConnectionController extends ChangeNotifier {
       }
       status = ConnStatus.connected;
       _reconnectCount = 0;
+      connectedAt = DateTime.now();
+      sessionUpMB = 0;
+      sessionDownMB = 0;
       AppLog.conn('connected via ${current?.tag} (${current?.type})');
       // 内核就绪后回放一次「当前节点」到对应组（select=智能 / GLOBAL=全局）：
       // - 全局模式：内核内置 GLOBAL 组默认选中 proxies 首个节点，与用户预选
@@ -709,6 +726,9 @@ class ConnectionController extends ChangeNotifier {
     errorKind = ConnErrorKind.none;
     realCountry = null;
     lockedCountry = null;
+    connectedAt = null;
+    sessionUpMB = 0;
+    sessionDownMB = 0;
   }
 
   /// 在途的内核停止任务（disconnect/resetForLogout 发起）。
@@ -894,6 +914,9 @@ class ConnectionController extends ChangeNotifier {
   void _onTraffic(double upMbps, double downMbps) {
     upSpeedMbps = upMbps;
     downSpeedMbps = downMbps;
+    // 会话累计(采样≈1s 一次,按 MB 近似累加)
+    sessionUpMB += upMbps;
+    sessionDownMB += downMbps;
     // 只更新速率快照，不 notifyListeners —— 首页速率卡片用
     // ValueListenableBuilder(speedNotifier) 局部刷新，整页不重建
     speedNotifier.value = SpeedSnapshot(upMbps: upMbps, downMbps: downMbps);
