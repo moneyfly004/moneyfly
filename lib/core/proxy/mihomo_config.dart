@@ -146,6 +146,11 @@ class MihomoConfigBuilder {
       // 统一延迟计算口径（测速 UI 与内核一致）
       'unified-delay': true,
       'tcp-concurrent': false,
+      // 显式关闭 geo 数据自动更新/下载：geosite.dat/country.mmdb 由 App 内置
+      // assets 提供并随版本更新，内核不得在启动时联网检查/下载（国内网络直连
+      // GitHub 被墙会卡 90s 甚至启动失败）。文件缺失时（异常）规则已降级，
+      // 内核不会走到下载路径。
+      'geo-auto-update': false,
 
       // ===== DNS =====
       // 桌面（系统代理/无 TUN）：内核内部解析用于 GEOSITE/GEOIP 规则匹配；

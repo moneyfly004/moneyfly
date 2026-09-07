@@ -52,6 +52,7 @@ dependencies:
   tray_manager: ^0.2.2
   window_manager: ^0.4.3
   launch_at_startup: ^0.3.1
+  ffi: ^2.1.3
 
 
 dev_dependencies:
@@ -79,6 +80,9 @@ flutter:
 
   assets:
     - assets/moneyfly-logo.png
+    # 托盘图标（Windows：tray_manager 底层 LoadImage(IMAGE_ICON) 只认 .ico，
+    # PNG 会加载失败导致托盘图标空白；macOS 走 base64 仍用 PNG）
+    - assets/tray_icon.ico
     # mihomo 离线分流数据（内置，避免运行时依赖被墙的远程地址；
     # CI 构建时从 MetaCubeX/meta-rules-dat 下载，本地用 tool/fetch_geodata.sh）
     - assets/rules/geosite.dat

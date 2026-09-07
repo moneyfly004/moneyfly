@@ -62,16 +62,67 @@ class SubscriptionService {
 
   /// 获取并解析节点列表（带 30 分钟内存缓存，force 强制刷新）。
   ///
-  /// force 刷新时：成功 → 覆盖内存与磁盘缓存；网络/后端失败 → 回退本地缓存
-  /// （仅当缓存属于当前安装且版本匹配），保证「运行即拉新订阅覆盖旧配置」，
-  /// 断网时也不至于登录后一片空白。
+  /// 账号可用性前置判定（重点修复「到期/禁用后仍加载旧配置」）：
+  /// - 账号受限（到期 / 订阅被停用 / 账号被禁用）→ **先于任何缓存**清空
+  ///   内存与磁盘缓存并返回空列表：更新订阅加载的是「失效状态」，绝不加载
+  ///   到期前拉到并存下来的老配置，也绝不回退本地磁盘缓存；
+  /// - 账号正常：force 刷新 → 成功覆盖内存与磁盘缓存；网络/后端失败 →
+  ///   回退本地缓存（仅当缓存属于当前安装且版本匹配），保证「运行即拉新
+  ///   订阅覆盖旧配置」，断网时也不至于登录后一片空白。
   Future<List<ProxyNode>> fetchNodes({bool force = false}) async {
-    if (!force && _cache.isNotEmpty && DateTime.now().difference(_cacheTime) < _cacheTtl) {
-      return List.of(_cache);
-    }
     final epoch = _epoch;
-    final info = await fetchInfo();
-    if (info.subscribeUrl.isEmpty) return [];
+    try {
+      final info = await fetchInfo();
+      if (info.subscribeUrl.isEmpty) return [];
+      if (!info.hasSubscription) {
+        // 到期 / 订阅被停用 / 状态异常：清空缓存，加载「失效」而非老配置
+        _dropAllCaches();
+        return [];
+      }
+      // 账号正常且内存缓存仍在 30 分钟 TTL 内 → 直接返回缓存
+      // （判定放在缓存命中之前：禁止用「到期前的缓存」跳过到期判定）
+      if (!force &&
+          _cache.isNotEmpty &&
+          DateTime.now().difference(_cacheTime) < _cacheTtl) {
+        return List.of(_cache);
+      }
+      return await _pullAndCache(info, epoch);
+    } catch (e) {
+      final msg = ApiClient.errorMsg(e);
+      // 账号被禁用：后端业务接口统一 403「账户已被禁用…」→ 视为受限，
+      // 清空缓存返回空，避免把禁用误当网络错误后回退到老配置
+      if (_isDisableMessage(msg)) {
+        _dropAllCaches();
+        return [];
+      }
+      // 设备被踢下线：后端对「被删除设备的订阅请求」返回 403
+      // 「此设备已被移除并踢下线…」→ 清空本地订阅缓存（该设备不能再
+      // 使用任何旧配置），断开与提示由调用方（UI / 调度器）处理
+      if (isKickedMessage(msg)) {
+        _dropAllCaches();
+      }
+      // 其余失败（断网/超时/服务端异常）：缓存新鲜（TTL 内）时回退内存缓存，
+      // 保证离线不丢已拉到的线路；缓存过期则按原错误抛出由调用方提示
+      if (!force &&
+          _cache.isNotEmpty &&
+          DateTime.now().difference(_cacheTime) < _cacheTtl) {
+        return List.of(_cache);
+      }
+      rethrow;
+    }
+  }
+
+  /// 错误文案是否命中「设备被踢下线」（后端删除设备后的订阅 403 提示）。
+  /// 供 UI/调度器识别后断开连接、清空节点并提示用户。
+  static bool isKickedMessage(String msg) =>
+      msg.contains('已被移除') ||
+      msg.contains('踢下线') ||
+      msg.toLowerCase().contains('removed') ||
+      msg.toLowerCase().contains('kicked');
+
+  /// 拉取订阅原文 → 后台解析 → 校验 epoch 后覆盖内存与磁盘缓存
+  Future<List<ProxyNode>> _pullAndCache(
+      SubscriptionInfo info, int epoch) async {
     final raw = await _fetchRawWithCacheFallback(info.subscribeUrl);
     // 大订阅解析放到后台 isolate，避免阻塞 UI 线程
     final nodes = await compute(_parseInIsolate, raw);
@@ -85,6 +136,23 @@ class SubscriptionService {
     await SubscriptionCache.instance
         .write(subscribeUrl: info.subscribeUrl, raw: raw);
     return nodes;
+  }
+
+  /// 判定错误文案是否命中「禁用/封禁」（账号不可用类，需与
+  /// [AccountService] 判定口径一致；放这里避免循环依赖）
+  static bool _isDisableMessage(String msg) {
+    final m = msg.toLowerCase();
+    return msg.contains('禁用') ||
+        msg.contains('禁止') ||
+        m.contains('disabled') ||
+        m.contains('banned');
+  }
+
+  /// 账号受限：清空内存与磁盘缓存（磁盘删除尽力而为，不阻塞主流程）
+  void _dropAllCaches() {
+    _cache = [];
+    _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
+    unawaited(SubscriptionCache.instance.clear());
   }
 
   /// 拉取订阅原文；失败回退本地缓存（仅同安装且版本匹配的缓存有效）。

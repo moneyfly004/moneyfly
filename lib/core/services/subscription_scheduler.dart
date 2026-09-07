@@ -87,7 +87,21 @@ class SubscriptionScheduler {
       // 3) 安全合并：不打断正在使用的连接
       await ConnectionController.instance.applySubscriptionNodes(nodes);
       return nodes.isNotEmpty;
-    } catch (_) {
+    } catch (e) {
+      // 设备被踢下线：后端对该设备的订阅请求返回 403 → 主动断开当前连接，
+      // 让被删设备尽快下线（下次手动刷新/回前台也会再次收到提示）
+      final msg = ApiClient.errorMsg(e);
+      if (SubscriptionService.isKickedMessage(msg)) {
+        SubscriptionService.instance.clearCache();
+        final conn = ConnectionController.instance;
+        if (conn.status == ConnStatus.connected ||
+            conn.status == ConnStatus.connecting ||
+            conn.status == ConnStatus.reconnecting) {
+          try {
+            await conn.disconnect();
+          } catch (_) {}
+        }
+      }
       return false;
     }
   }

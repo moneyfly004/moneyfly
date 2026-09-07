@@ -32,7 +32,12 @@ class TrayService with TrayListener {
     ConnectionController.instance.addListener(_onStateChanged);
   }
 
-  String _iconPath() => 'assets/moneyfly-logo.png';
+  /// 托盘图标路径（相对 assets）：
+  /// - Windows：tray_manager 底层用 LoadImage(IMAGE_ICON) 从文件加载，只支持
+  ///   .ico —— PNG 会加载失败返回 NULL，托盘图标表现为「一片空白」；
+  /// - macOS：插件把图标字节转 base64 交给 NSImage，PNG 可用。
+  String _iconPath() =>
+      Platform.isWindows ? 'assets/tray_icon.ico' : 'assets/moneyfly-logo.png';
 
   void _onStateChanged() => _updateMenu();
 

@@ -23,6 +23,22 @@ String? _localMihomo() {
   return null;
 }
 
+/// 把仓库内置 geo 数据复制到临时内核目录。
+/// mihomo 配置引用 GEOSITE/GEOIP 时，`-d` 目录缺 geosite.dat/country.mmdb 会
+/// 触发内核联网下载（默认 GitHub 源，本机常被墙 → 卡 90s/-t 失败）。
+/// 内置文件随 CI/本地 fetch_geodata.sh 落在 assets/rules/，复制即可离线验证。
+void _seedGeoFiles(String dir) {
+  const names = ['geosite.dat', 'country.mmdb'];
+  for (final n in names) {
+    try {
+      final src = File('${Directory.current.path}/assets/rules/$n');
+      if (!src.existsSync()) continue; // 仓库无内置文件时维持原行为
+      final dst = File('$dir/$n');
+      if (!dst.existsSync()) src.copySync(dst.path);
+    } catch (_) {}
+  }
+}
+
 void main() {
   ProxyNode mkNode(String type,
           {String tag = '', Map<String, dynamic> raw = const {}}) =>
@@ -268,6 +284,7 @@ void main() {
         nodes: nodes, selectedTag: 'trojan-1', smartMode: true, tunMode: 'auto');
     final yamlText = MihomoConfigBuilder.encode(cfg);
     final tmp = Directory.systemTemp.createTempSync('mf_mihomo_t');
+    _seedGeoFiles(tmp.path);
     try {
       File('${tmp.path}/config.yaml').writeAsStringSync(yamlText);
       final r = Process.runSync(mihomo!, ['-d', tmp.path, '-t'],
@@ -287,6 +304,7 @@ void main() {
         nodes: nodes, selectedTag: 'n1', smartMode: true);
     final yamlText = MihomoConfigBuilder.encode(cfg);
     final tmp = Directory.systemTemp.createTempSync('mf_mihomo_run');
+    _seedGeoFiles(tmp.path);
     final apiPort = 19090 + (DateTime.now().millisecondsSinceEpoch % 1000);
     final dio = Dio();
     try {

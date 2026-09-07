@@ -6,7 +6,9 @@ import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
+import '../../core/services/app_log.dart';
 import '../../core/services/settings_store.dart';
+import '../../core/services/subscription_service.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
@@ -201,6 +203,10 @@ class _SettingsPageState extends State<SettingsPage> {
             _section(AppStrings.t('settings_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
+            _row(icon: '🧹', title: AppStrings.t('settings_clear_data'),
+                desc: AppStrings.t('settings_clear_data_desc'),
+                danger: true,
+                onTap: _clearLocalData),
             _section(AppStrings.t('settings_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
             _row(icon: '📋', title: AppStrings.t('log_center_title'),
@@ -572,6 +578,49 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   bool _checkingUpdate = false;
+
+  /// 清除本地数据（订阅配置缓存 / 节点 / 运行日志）：
+  /// 断开连接 → 清内存与磁盘订阅缓存 → 清日志。保留登录状态，
+  /// 下次进入节点页会重新拉取最新订阅（配合到期/禁用后强制刷新，
+  /// 避免旧配置残留；卸载前清空也用它）。
+  Future<void> _clearLocalData() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_clear_data'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(AppStrings.t('clear_data_confirm'),
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(AppStrings.t('confirm'),
+                style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final conn = ConnectionController.instance;
+      if (conn.status == ConnStatus.connected ||
+          conn.status == ConnStatus.connecting ||
+          conn.status == ConnStatus.reconnecting) {
+        await conn.disconnect();
+      }
+      // 清订阅缓存（内存 + 磁盘）
+      SubscriptionService.instance.clearCache();
+      // 清运行日志
+      await AppLog.clear();
+      if (mounted) _toast(AppStrings.t('clear_data_done'));
+    } catch (_) {
+      if (mounted) _toast(AppStrings.t('clear_data_failed'));
+    }
+  }
 
   /// 软件升级：读后端软件库 → 比对版本 → 弹更新对话框
   Future<void> _checkUpdate() async {

@@ -42,7 +42,15 @@ class _NodesPageState extends State<NodesPage> {
       if (mounted && nodes.isEmpty) _toast(AppStrings.t('no_nodes_hint'));
       if (mounted && nodes.isNotEmpty && force) _toast(AppStrings.t('refresh_sub_ok'));
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (mounted) {
+        final msg = ApiClient.errorMsg(e);
+        // 设备被踢下线：断开当前连接并清空节点，提示用户
+        if (SubscriptionService.isKickedMessage(msg)) {
+          await conn.disconnect();
+          await conn.loadNodes(const []);
+        }
+        _toast(msg);
+      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }

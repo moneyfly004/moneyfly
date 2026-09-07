@@ -95,7 +95,15 @@ class _HomePageState extends State<HomePage>
       // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次；默认关闭）
       unawaited(conn.autoConnectIfEnabled());
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (mounted) {
+        final msg = ApiClient.errorMsg(e);
+        // 设备被踢下线：断开当前连接并清空节点，提示用户
+        if (SubscriptionService.isKickedMessage(msg)) {
+          await conn.disconnect();
+          await conn.loadNodes(const []);
+        }
+        _toast(msg);
+      }
     } finally {
       if (mounted) setState(() => _loadingNodes = false);
     }

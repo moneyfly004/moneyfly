@@ -9,6 +9,7 @@ import '../services/account_service.dart';
 import '../services/app_log.dart';
 import '../services/geo_lookup.dart';
 import '../services/local_notify.dart';
+import '../services/local_paths.dart';
 import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
 import 'geo_assets.dart';
@@ -176,10 +177,42 @@ class ConnectionController extends ChangeNotifier {
   /// 解除国家锁定，回到全局自动选优。已连接时立刻测速并切换到全局最优。
   Future<void> unlockCountry() async {
     lockedCountry = null;
+    // 同时清除持久化的手动选择：此后连接不再恢复旧节点，走全局自动选优
+    unawaited(_clearPersistedSelection());
     notifyListeners();
     if (status == ConnStatus.connected && autoTest) {
       await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
     }
+  }
+
+  /// 持久化「用户手动选择的节点」到设置（重启后由 connect 恢复）
+  Future<void> _persistSelection(ProxyNode node) async {
+    try {
+      final s = await SettingsStore.instance.load();
+      s['lastSelectedTag'] = node.tag;
+      await SettingsStore.instance.save(s);
+    } catch (_) {}
+  }
+
+  Future<void> _clearPersistedSelection() async {
+    try {
+      final s = await SettingsStore.instance.load();
+      s.remove('lastSelectedTag');
+      await SettingsStore.instance.save(s);
+    } catch (_) {}
+  }
+
+  /// 从设置恢复上次手动选择的节点（仅当节点仍存在于当前订阅时）
+  Future<ProxyNode?> _restoreLastSelection(List<ProxyNode> list) async {
+    try {
+      final s = await SettingsStore.instance.load();
+      final tag = s['lastSelectedTag']?.toString();
+      if (tag == null || tag.isEmpty) return null;
+      for (final n in list) {
+        if (n.tag == tag) return n;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// 后台测速中（已连接状态下并行测速；不阻塞连接，仅用于 UI 提示）
@@ -249,6 +282,18 @@ class ConnectionController extends ChangeNotifier {
   int _epoch = 0;
   bool _autoConnectTried = false;
 
+  /// 各平台内核工作目录（geo 数据与 config 同目录，mihomo 按默认文件名加载）：
+  /// - 桌面：CLI workDir（系统临时目录 moneyfly_core）
+  /// - Android/iOS：filesDir/work（MoneyFlyVpnService 同一内核目录）
+  Future<String?> _geoWorkDir() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      final support = await LocalPaths.supportDir(); // Android = filesDir
+      if (support == null) return null;
+      return '${support.path}/work';
+    }
+    return ProxyCoreCli.workDir;
+  }
+
   Future<void> loadNodes(List<ProxyNode> list) async {
     nodes = _carryMeasuredLatency(list, nodes);
     if (current != null && !nodes.any((n) => n.tag == current!.tag)) {
@@ -278,8 +323,18 @@ class ConnectionController extends ChangeNotifier {
   /// 直接替换会让 UI 丢掉当前线路或被误判离线、打断正在使用的连接；
   /// 连接建立过程中（connecting/testing 等瞬态）也不动列表，避免与 connect()
   /// 读取当前节点竞态；断开状态下则无条件覆盖。
+  /// 空列表：账号受限（到期/停用/禁用）时订阅已失效 → 清空展示，绝不显示老
+  /// 配置；正常账号的空列表多为解析失败/临时抖动 → 保留可用线路（离线兜底）。
   Future<void> applySubscriptionNodes(List<ProxyNode> fresh) async {
-    if (fresh.isEmpty) return; // 空列表不覆盖：避免清空用户可用线路
+    if (fresh.isEmpty) {
+      final acc = AccountService.instance;
+      if (acc.loaded && acc.isBlocked) {
+        nodes = [];
+        current = null;
+        notifyListeners();
+      }
+      return;
+    }
     if (status == ConnStatus.connecting ||
         status == ConnStatus.testing ||
         status == ConnStatus.reconnecting ||
@@ -396,7 +451,16 @@ class ConnectionController extends ChangeNotifier {
     _acquireWakeLock();
     notifyListeners();
 
-    // 优先选延迟最优（已有测速数据时）；否则先连可用节点，后台测速后自动切最优
+    // 选连接节点：优先恢复「上次手动选择的节点」（跨重启/断开重连都保持
+    // 固定国家不跳）→ 其次延迟最优 → 再次首个在线节点兜底。
+    if (current == null) {
+      final remembered = await _restoreLastSelection(nodes);
+      if (remembered != null) {
+        current = remembered;
+        // 恢复后继续锁定该国家：后台测速/自动选优只在该国范围，绝不乱跳
+        lockedCountry ??= remembered.countryCode;
+      }
+    }
     final best = SpeedTester.selectBest(nodes);
     current ??= best ?? nodes.firstWhere((n) => n.online, orElse: () => nodes.first);
     if (epoch != _epoch) return;
@@ -410,13 +474,17 @@ class ConnectionController extends ChangeNotifier {
 
     try {
       if (epoch != _epoch) return;
-      // 离线 Geo 数据落盘（智能模式的 CN 分流；桌面端落到内核 workDir，
-      // 由 mihomo -d 默认文件名加载；Android 由原生 VpnService 复制，
-      // Dart 不落盘避免 12MB 走 MethodChannel）。
-      // 落盘失败时 geoReady=false → 智能规则降级为全代理，保证能连上。
-      final geoReady = (Platform.isAndroid || Platform.isIOS)
-          ? true
-          : await GeoAssets.materialize(preferDir: ProxyCoreCli.workDir);
+      // 离线 Geo 数据落盘（智能模式 CN 分流）：
+      // - 桌面端：落到内核 workDir（mihomo -d 默认文件名加载）
+      // - Android：落到 filesDir/work（与 VpnService 同一内核目录；原生层的
+      //   assets 复制保留为启动兜底，此处 Dart 幂等复制为准，保证就绪状态
+      //   真实可判）
+      // 数据源是打包进 App 的 assets/rules/*（CI 构建时下载），这里是本地
+      // 复制、零网络；落盘失败（内置文件缺失/IO 异常）→ geoReady=false →
+      // 智能规则降级为全代理：内核不会因缺文件联网下载 geo，启动不被网络
+      // 拖慢、不会失败。
+      final geoReady =
+          await GeoAssets.materialize(preferDir: await _geoWorkDir());
       if (epoch != _epoch) return;
       final cfg = await compute(_buildConfigInIsolate, {
         'proxies': [for (final n in nodes) n.raw],
@@ -444,9 +512,12 @@ class ConnectionController extends ChangeNotifier {
       status = ConnStatus.connected;
       _reconnectCount = 0;
       AppLog.conn('connected via ${current?.tag} (${current?.type})');
-      // 后台测速：不阻塞连接，完成后自动切最优（测速期间保持已连接）
+      // 后台测速：不阻塞连接，完成后在同国范围内择优。
+      // forceBest:false —— 尊重用户已选节点/已锁国家：当前节点在线且未明显
+      // 劣化（<100ms）就不切换，避免「刚手动选的节点被无条件换掉→出口 IP
+      // 跳动」；若用户从未选择过，current 即全局最优，行为与原先一致。
       if (runSpeedTest && autoTest) {
-        unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: true));
+        unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: false));
       }
       _startBackgroundTest(intervalMin);
       unawaited(refreshRealCountry()); // 实测真实出口国家
@@ -609,6 +680,8 @@ class ConnectionController extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
     _clearState();
+    // 登出/切号：清掉持久化的节点选择，避免旧账号的固定线路残留到新账号
+    unawaited(_clearPersistedSelection());
     try {
       await _core.stop();
     } catch (_) {}
@@ -623,7 +696,11 @@ class ConnectionController extends ChangeNotifier {
   /// 后台测速不再跳到其他国家；自动选优调用时传 false 不改锁定状态。
   Future<void> switchNode(ProxyNode node, {bool userInitiated = true}) async {
     current = node;
-    if (userInitiated) lockedCountry = node.countryCode;
+    if (userInitiated) {
+      lockedCountry = node.countryCode;
+      // 持久化用户手动选择：跨重启 / 断开重连后恢复（固定国家不跳的前提）
+      unawaited(_persistSelection(node));
+    }
     notifyListeners();
     if (status == ConnStatus.connected && _core.isRunning) {
       try {

@@ -8,7 +8,11 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../package/upgrade_devices_page.dart';
 
-/// 设备管理：列表 / 删除（踢下线）
+/// 设备管理：列表（全量）/ 删除（踢下线）/ 备注编辑 / 在线状态。
+///
+/// 顶部常驻「升级设备数量」入口（无论是否超限都可点：客户可增加设备名额并
+/// 顺带延长到期时间）；设备在线状态以后端按最近活跃窗口计算的 online 为准
+/// （不再用只增不减的 is_active 显示「永久在线」）。
 class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key});
 
@@ -20,6 +24,7 @@ class _DevicesPageState extends State<DevicesPage> {
   List<DeviceInfo> _devices = [];
   bool _loading = true;
   int? _deletingId;
+  int? _savingRemarkId;
 
   @override
   void initState() {
@@ -70,6 +75,49 @@ class _DevicesPageState extends State<DevicesPage> {
     }
   }
 
+  /// 编辑设备备注（输入框；可清空）
+  Future<void> _editRemark(DeviceInfo device) async {
+    final controller = TextEditingController(text: device.remark);
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('edit_remark'), style: const TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 200,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: AppStrings.t('remark_hint'),
+            hintStyle: TextStyle(fontSize: 13, color: MFColors.txt3),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(AppStrings.t('save'),
+                style: const TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (saved == null) return; // 取消
+    setState(() => _savingRemarkId = device.id);
+    try {
+      await DeviceService.instance.updateRemark(device.id, saved);
+      await _load();
+      if (mounted) _toast(AppStrings.t('remark_saved'));
+    } catch (e) {
+      if (mounted) _toast(ApiClient.errorMsg(e));
+    } finally {
+      if (mounted) setState(() => _savingRemarkId = null);
+    }
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -88,73 +136,88 @@ class _DevicesPageState extends State<DevicesPage> {
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
-            : _devices.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                         Text(AppStrings.t('no_devices'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                        const SizedBox(height: 8),
-                         Text(AppStrings.t('no_devices_hint'), style: TextStyle(fontSize: 12, color: MFColors.txt3)),
-                      ],
-                    ),
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
-                    itemCount: _devices.length + (_showUpgradeBanner ? 1 : 0),
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) {
-                      if (_showUpgradeBanner && i == 0) {
-                        return _buildUpgradeBanner();
-                      }
-                      return _buildDeviceCard(
-                          _devices[i - (_showUpgradeBanner ? 1 : 0)]);
-                    },
-                  ),
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
+                children: [
+                  _buildUpgradeEntry(),
+                  const SizedBox(height: 12),
+                  if (_devices.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 90),
+                      child: Column(
+                        children: [
+                          Text(AppStrings.t('no_devices'),
+                              style: TextStyle(fontSize: 14, color: MFColors.txt3)),
+                          const SizedBox(height: 8),
+                          Text(AppStrings.t('no_devices_hint'),
+                              style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+                        ],
+                      ),
+                    )
+                  else
+                    for (var i = 0; i < _devices.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      _buildDeviceCard(_devices[i]),
+                    ],
+                ],
+              ),
       ),
     );
   }
 
-  /// 设备名额是否已满（≥ 上限）：显示升级入口条幅
-  bool get _showUpgradeBanner {
+  /// 常驻「升级设备数量」入口：无论是否超限都显示。
+  /// 副文案展示当前 已用/上限 + 到期时间（升级可顺带加时长）。
+  Widget _buildUpgradeEntry() {
     final sub = AccountService.instance.sub;
-    return sub != null &&
-        sub.deviceLimit > 0 &&
-        sub.currentDevices >= sub.deviceLimit;
-  }
-
-  Widget _buildUpgradeBanner() {
-    final sub = AccountService.instance.sub;
+    final used = sub?.currentDevices ?? 0;
+    final limit = sub?.deviceLimit ?? 0;
+    final expire = sub?.expireTime;
+    final expireText = expire == null
+        ? '—'
+        : '${expire.year}-${expire.month.toString().padLeft(2, '0')}-${expire.day.toString().padLeft(2, '0')}';
+    final full = limit > 0 && used >= limit;
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const UpgradeDevicesPage())),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         decoration: BoxDecoration(
           gradient: LinearGradient(
               colors: [
-                MFColors.amber.withValues(alpha: .18),
-                MFColors.brand.withValues(alpha: .08)
-              ]),
+                full ? MFColors.amber : MFColors.brand,
+                MFColors.brand.withValues(alpha: .06),
+              ].map((c) => c.withValues(alpha: full ? .18 : .12)).toList()),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-              color: MFColors.amber.withValues(alpha: .5)),
+              color: (full ? MFColors.amber : MFColors.brand)
+                  .withValues(alpha: .5)),
         ),
         child: Row(
           children: [
-            const Text('📈', style: TextStyle(fontSize: 16)),
-            const SizedBox(width: 10),
+            Text(full ? '📈' : '➕', style: const TextStyle(fontSize: 17)),
+            const SizedBox(width: 11),
             Expanded(
-              child: Text(
-                AppStrings.t('device_full_upgrade_banner', {
-                  'used': '${sub?.currentDevices ?? 0}',
-                  'limit': '${sub?.deviceLimit ?? 0}',
-                }),
-                style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: MFColors.txt,
-                    height: 1.4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    AppStrings.t('upgrade_devices_card'),
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: MFColors.txt),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    full
+                        ? AppStrings.t('device_full_upgrade_banner',
+                            {'used': '$used', 'limit': '$limit'})
+                        : AppStrings.t('upgrade_devices_card_sub',
+                            {'used': '$used', 'limit': '$limit', 'expire': expireText}),
+                    style: TextStyle(
+                        fontSize: 11.5, color: MFColors.txt2, height: 1.4),
+                  ),
+                ],
               ),
             ),
             Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
@@ -189,7 +252,8 @@ class _DevicesPageState extends State<DevicesPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(d.remark.isNotEmpty ? d.remark : d.displayName,
-                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 2),
                     Text(
                       [d.osName, d.deviceModel].where((e) => e.isNotEmpty).join(' · '),
@@ -201,12 +265,18 @@ class _DevicesPageState extends State<DevicesPage> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: (d.isActive ? MFColors.green : MFColors.red).withValues(alpha: .1),
+                  color: (d.online ? MFColors.green : MFColors.txt3)
+                      .withValues(alpha: .1),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: (d.isActive ? MFColors.green : MFColors.red).withValues(alpha: .3)),
+                  border: Border.all(
+                      color: (d.online ? MFColors.green : MFColors.txt3)
+                          .withValues(alpha: .3)),
                 ),
-                child: Text(d.isActive ? AppStrings.t('online') : AppStrings.t('offline'),
-                    style: TextStyle(fontSize: 10, color: d.isActive ? MFColors.green : MFColors.red, fontWeight: FontWeight.w600)),
+                child: Text(d.online ? AppStrings.t('online') : AppStrings.t('offline'),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: d.online ? MFColors.green : MFColors.txt3,
+                        fontWeight: FontWeight.w600)),
               ),
             ],
           ),
@@ -229,6 +299,14 @@ class _DevicesPageState extends State<DevicesPage> {
           const SizedBox(height: 12),
           Row(
             children: [
+              _ActionBtn(
+                icon: Icons.edit_outlined,
+                label: AppStrings.t('edit_remark_btn'),
+                color: MFColors.brandLight,
+                loading: _savingRemarkId == d.id,
+                onTap: () => _editRemark(d),
+              ),
+              const SizedBox(width: 8),
               _ActionBtn(
                 icon: Icons.delete_outline,
                 label: AppStrings.t('delete'),

@@ -19,6 +19,7 @@ import 'core/services/subscription_scheduler.dart';
 import 'core/services/tray_service.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
+import 'core/services/win_single_instance.dart';
 import 'l10n/app_strings.dart';
 import 'pages/auth/login_page.dart';
 import 'pages/home/home_page.dart';
@@ -55,6 +56,11 @@ class SessionState extends ChangeNotifier {
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
+  // Windows 单实例：重复双击/重复启动时只保留一个进程。
+  // 检测到已有实例 → 唤醒其窗口后本进程立即退出（必须在创建任何窗口前）。
+  if (WinSingleInstance.ensure()) {
+    exit(0);
+  }
   WidgetsFlutterBinding.ensureInitialized();
   // 桌面端窗口管理（关闭=隐藏到托盘，不退出进程）
   if (!Platform.environment.containsKey('FLUTTER_TEST') &&

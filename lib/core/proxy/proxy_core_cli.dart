@@ -195,8 +195,20 @@ class ProxyCoreCli extends ProxyCore {
     _configPath = '${dir.path}/config.yaml';
 
     // 确保离线 geo 数据就位（connect 路径会提前落盘；集成测试/外部直接调
-    // start 时自保。幂等：文件已存在且非空则跳过）
-    await GeoAssets.materialize(preferDir: workDir);
+    // start 时自保。幂等：文件已存在且非空则跳过）。
+    // 失败时移除配置中的 GEOSITE/GEOIP 规则：mihomo 一旦引用 geo 规则而文件
+    // 缺失，会在启动时联网下载（默认 GitHub 源，国内常被墙 → 卡 90s/失败），
+    // 内置 assets 理应就位，缺失属异常 → 宁可降级全代理也绝不联网下载。
+    final geoOk = await GeoAssets.materialize(preferDir: workDir);
+    if (!geoOk) {
+      final rules = config['rules'];
+      if (rules is List) {
+        config['rules'] = rules.where((r) {
+          final s = r.toString();
+          return !(s.startsWith('GEOSITE,') || s.startsWith('GEOIP,'));
+        }).toList();
+      }
+    }
 
     // mihomo 原生读 Clash YAML，配置用 MihomoConfigBuilder.encode 序列化
     await File(_configPath!).writeAsString(MihomoConfigBuilder.encode(config), flush: true);
@@ -215,7 +227,12 @@ class ProxyCoreCli extends ProxyCore {
     final sw = Stopwatch()..start();
     while (sw.elapsed < _readyTimeout) {
       if (_proc == null) {
-        throw UnsupportedError('内核启动失败：${_tail()}');
+        // 进程启动后立即退出（_watchProcess 已记录退出码与尾部日志）：
+        // 给出可诊断信息，而不是含糊的「（无输出）」
+        final why = (_lastError?.isNotEmpty ?? false)
+            ? _lastError!
+            : '内核进程启动后立即退出';
+        throw UnsupportedError('内核启动失败：$why$_winKernelHint');
       }
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
@@ -234,8 +251,15 @@ class ProxyCoreCli extends ProxyCore {
       await Future.delayed(const Duration(milliseconds: 100));
     }
     await stop();
-    throw UnsupportedError('内核启动超时（10s）。日志：${_tail()}');
+    throw UnsupportedError('内核启动超时（${_readyTimeout.inSeconds}s）。日志：${_tail()}$_winKernelHint');
   }
+
+  /// Windows 附加引导：mihomo.exe 被安全软件拦截时表现为「启动即退出、
+  /// 无任何日志输出」且反复失败 —— 给出明确排障指引
+  String get _winKernelHint => Platform.isWindows
+      ? '。提示：若反复「启动即退出且无日志」，多为杀毒软件/Windows 安全中心拦截 '
+          'mihomo.exe，请将 MoneyFly 安装目录加入白名单后重试'
+      : '';
 
   @override
   Future<void> stop() async {
