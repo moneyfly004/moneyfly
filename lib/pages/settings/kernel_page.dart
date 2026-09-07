@@ -503,11 +503,17 @@ class _KernelPageState extends State<KernelPage> {
               ),
             ),
             if (value != null)
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: MFColors.txt3,
-                      fontFamily: kNumFont)),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 150),
+                child: Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: MFColors.txt3,
+                        fontFamily: kNumFont)),
+              ),
             if (value != null || onTap != null) ...[
               const SizedBox(width: 4),
               Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),

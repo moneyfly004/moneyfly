@@ -306,11 +306,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
             ),
+            // 值用定宽上限（不再 Flexible 与标题 Expanded 抢 50/50 空间）：
+            // 标题 Expanded 吃满剩余空间 → 把「值 + 箭头」稳定推到最右，
+            // 所有行的箭头位置一致；超长值（DNS 列表/测速地址）省略号截断。
             if (value != null)
-              Flexible(
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 150),
                 child: Text(value,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
                     style: TextStyle(
                         fontSize: 12,
                         color: MFColors.txt3,
