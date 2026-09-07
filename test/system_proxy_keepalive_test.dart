@@ -27,18 +27,24 @@ void main() {
 
       // 2) 模拟「系统/外部把代理关掉」——绕过 manager 直接关闭所有服务代理，
       //    但 manager 内部状态仍是 isApplied=true（正是触发 bug 的前置条件）。
-      final services = (await Process.run(
-              'networksetup', ['-listallnetworkservices']))
-          .stdout as String;
-      for (final svc in services
-          .split('\n')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty && !e.startsWith('*') && !e.contains('denotes'))) {
-        for (final kind in ['web', 'secureweb', 'socksfirewall']) {
-          await Process.run('networksetup', ['-set${kind}proxystate', svc, 'off']);
+      // 遍历可能受网络服务枚举/时序影响:关闭后复查,若仍有残留再补一轮
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final services = (await Process.run(
+                'networksetup', ['-listallnetworkservices']))
+            .stdout as String;
+        for (final svc in services
+            .split('\n')
+            .map((e) => e.trim())
+            .where((e) =>
+                e.isNotEmpty && !e.startsWith('*') && !e.contains('denotes'))) {
+          for (final kind in ['web', 'secureweb', 'socksfirewall']) {
+            await Process.run('networksetup', ['-set${kind}proxystate', svc, 'off']);
+          }
         }
+        s = await _scutil();
+        if (s.contains('HTTPEnable : 0')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
       }
-      s = await _scutil();
       expect(s.contains('HTTPEnable : 0'), isTrue,
           reason: '前置：代理已被外部关闭\n$s');
       expect(SystemProxyManager.isApplied, isTrue,
