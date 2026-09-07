@@ -662,7 +662,11 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text(info.forced ? AppStrings.t('new_version_forced') : AppStrings.t('new_version'),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         content: Text(
-          '当前版本 v${UpdateInfo.currentVersion}\n最新版本 v${info.latestVersion}${info.sizeText != null ? ' · ${info.sizeText}' : ''}\n\n请下载最新安装包体验新功能。',
+          AppStrings.t('update_body', {
+            'cur': 'v${UpdateInfo.currentVersion}',
+            'latest': 'v${info.latestVersion}',
+            'size': info.sizeText != null ? ' · ${info.sizeText}' : '',
+          }),
           style:  TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7),
         ),
         actions: [
