@@ -253,6 +253,87 @@ void main() {
     expect((select['proxies'] as List), contains(tricky.tag));
   });
 
+  test('直连名单三类条目: DOMAIN-SUFFIX / IP-CIDR / DOMAIN', () {
+    final cfg = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        bypassDomains: [
+          'company.com',
+          'IP-CIDR:10.20.0.0/16',
+          'DOMAIN:portal.example.com',
+          '  ip-cidr:  172.16.5.0/24  ', // 前缀大小写不敏感 + 段内空白裁剪
+          'IP-CIDR:', // 空值不产出规则
+          '',
+        ]);
+    final rules = (cfg['rules'] as List).cast<String>();
+    expect(rules[0], 'DOMAIN-SUFFIX,company.com,DIRECT');
+    expect(rules[1], 'IP-CIDR,10.20.0.0/16,DIRECT');
+    expect(rules[2], 'DOMAIN,portal.example.com,DIRECT');
+    expect(rules[3], 'IP-CIDR,172.16.5.0/24,DIRECT');
+    // 空/仅前缀条目被跳过：下一条仍是基础回环直连
+    expect(rules[4], 'IP-CIDR,127.0.0.0/8,DIRECT');
+    expect(rules.contains('IP-CIDR,,DIRECT'), isFalse);
+    expect(rules.contains('DOMAIN,,DIRECT'), isFalse);
+    // 三条直连规则仍位于最前（优先级最高）
+    expect(rules.take(4).every((r) => r.endsWith(',DIRECT')), isTrue);
+  });
+
+  test('多 nameserver: dnsNameservers 替换单值; 不传时保持旧行为', () {
+    // 不传新参数：nameserver 仍是单值 dns
+    final plain = MihomoConfigBuilder.build(
+        nodes: [vlessNode], selectedTag: vlessNode.tag, smartMode: true);
+    expect((plain['dns'] as Map)['nameserver'], ['223.5.5.5']);
+
+    // 自定义单值 dns 仍生效（无列表时）
+    final single = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        dns: '1.1.1.1');
+    expect((single['dns'] as Map)['nameserver'], ['1.1.1.1']);
+
+    // 传入列表时替换 nameserver
+    final multi = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        dns: '1.1.1.1',
+        dnsNameservers: ['223.5.5.5', '119.29.29.29', 'https://dns.alidns.com/dns-query']);
+    expect((multi['dns'] as Map)['nameserver'],
+        ['223.5.5.5', '119.29.29.29', 'https://dns.alidns.com/dns-query']);
+  });
+
+  test('fakeIpFilterExtra: fake-ip 生效时追加, 非 fake-ip 忽略', () {
+    final tun = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        tunMode: 'auto',
+        fakeIpFilterExtra: ['*.lan', 'router.local', '  ', '']);
+    final filter = (tun['dns'] as Map)['fake-ip-filter'] as List;
+    expect(filter, ['*.local', 'localhost.ptlogin2.qq.com', '*.lan', 'router.local']);
+
+    // 显式 fake-ip（桌面）同样追加
+    final fip = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        dnsMode: 'fake-ip',
+        fakeIpFilterExtra: ['*.home.arpa']);
+    final filter2 = (fip['dns'] as Map)['fake-ip-filter'] as List;
+    expect(filter2, ['*.local', 'localhost.ptlogin2.qq.com', '*.home.arpa']);
+
+    // 未启用 fake-ip 时：不写 fake-ip-filter，extras 一并忽略
+    final off = MihomoConfigBuilder.build(
+        nodes: [vlessNode],
+        selectedTag: vlessNode.tag,
+        smartMode: true,
+        fakeIpFilterExtra: ['*.lan']);
+    final dns = off['dns'] as Map;
+    expect(dns.containsKey('fake-ip-filter'), isFalse);
+  });
+
   // ===== 真实内核验证（有本地 mihomo 二进制时执行）=====
   final mihomo = _localMihomo();
   final skipMsg =

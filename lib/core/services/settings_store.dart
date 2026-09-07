@@ -25,6 +25,9 @@ class SettingsStore {
         'reconnectTimes': 3,
         'testIntervalMin': 30,
         'dns': '223.5.5.5',
+        // 主 DNS 列表(多源,提升解析成功率);fake-ip 过滤追加域名
+        'dnsNameservers': <String>['223.5.5.5', '119.29.29.29'],
+        'fakeIpFilterExtra': <String>[],
         'defaultMode': 'smart', // smart / global
         // 本机代理监听端口（mixed 入站 + 系统代理指向的端口），默认 2080
         'localPort': 2080,

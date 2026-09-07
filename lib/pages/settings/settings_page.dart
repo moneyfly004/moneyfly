@@ -22,6 +22,9 @@ import 'geo_update_page.dart';
 import 'kernel_page.dart';
 import 'log_center_page.dart';
 
+/// 主 DNS 列表默认值（阿里 223.5.5.5 + 腾讯 119.29.29.29，国内可达）
+const _defaultDnsServers = ['223.5.5.5', '119.29.29.29'];
+
 /// 设置页（设计稿 09）：完整清单 + 持久化
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -108,8 +111,11 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
                 value: _testUrlHost(),
                 onTap: _pickTestUrl),
-            _row(icon: '🌐', title: AppStrings.t('settings_dns'), value: _s['dns']?.toString() ?? '223.5.5.5',
-                onTap: () => _picker(['223.5.5.5（阿里）', '1.1.1.1（Cloudflare）', '8.8.8.8（Google）'], (v) => _set('dns', v.split('（').first))),
+            // 主 DNS 列表（逗号分隔文本编辑；旧 'dns' 单值键保留兼容，主列表优先）
+            _row(icon: '🌐', title: AppStrings.t('settings_dns'),
+                desc: AppStrings.t('settings_dns_desc'),
+                value: _dnsList().join(', '),
+                onTap: _pickDnsList),
             _row(icon: '🧭', title: AppStrings.t('settings_dns_mode'),
                 desc: AppStrings.t('settings_dns_mode_desc'),
                 value: switch (_s['dnsMode']?.toString()) {
@@ -127,6 +133,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         : (v == AppStrings.t('dns_mode_redirhost')
                             ? 'redir-host'
                             : 'auto')))),
+            // fake-ip 过滤追加（这些域名保留真实解析，不映射 fake-ip）
+            _row(icon: '🧩', title: AppStrings.t('settings_fakeip_extra'),
+                desc: AppStrings.t('settings_fakeip_extra_desc'),
+                value: '${_fakeIpExtra().length}',
+                onTap: _pickFakeIpFilter),
             _section(AppStrings.t('settings_mode')),
             _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
                 trailing: _seg2(
@@ -290,7 +301,15 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             if (value != null)
-              Text(value, style:  TextStyle(fontSize: 12, color: MFColors.txt3, fontFamily: kNumFont)),
+              Flexible(
+                child: Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: MFColors.txt3,
+                        fontFamily: kNumFont)),
+              ),
             if (value != null || onTap != null) ...[
               const SizedBox(width: 4),
                Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),
@@ -488,6 +507,180 @@ class _SettingsPageState extends State<SettingsPage> {
     final u = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
     final host = Uri.tryParse(u)?.host;
     return (host != null && host.isNotEmpty) ? host : u;
+  }
+
+  /// 生效的主 DNS 列表：dnsNameservers（新，主列表）> dns（旧单值兼容）> 默认
+  List<String> _dnsList() {
+    final stored = _s['dnsNameservers'];
+    if (stored is List && stored.isNotEmpty) {
+      return List<String>.from(stored.whereType<String>());
+    }
+    final legacy = _s['dns']?.toString().trim() ?? '';
+    if (legacy.isNotEmpty && legacy != '223.5.5.5') return [legacy];
+    return List<String>.from(_defaultDnsServers);
+  }
+
+  /// fake-ip 过滤追加域名列表（SettingsStore['fakeIpFilterExtra']）
+  List<String> _fakeIpExtra() {
+    final l = _s['fakeIpFilterExtra'];
+    return l is List
+        ? List<String>.from(l.whereType<String>())
+        : const <String>[];
+  }
+
+  /// 逗号（半/全角）、换行分隔的 DNS 文本 → 去空白、去重、保序的列表
+  static List<String> _splitServerText(String v) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final raw in v.split(RegExp(r'[,，\r\n]+'))) {
+      final t = raw.trim();
+      if (t.isEmpty) continue;
+      if (seen.add(t.toLowerCase())) out.add(t);
+    }
+    return out;
+  }
+
+  bool _isIpv4(String s) {
+    final parts = s.split('.');
+    if (parts.length != 4) return false;
+    for (final o in parts) {
+      if (o.isEmpty) return false;
+      if (o.length > 1 && o.startsWith('0')) return false;
+      final n = int.tryParse(o);
+      if (n == null || n < 0 || n > 255) return false;
+    }
+    return true;
+  }
+
+  /// 主机名（单/多标签，可带结尾点；DNS 域名/DoH host 都走这里）
+  bool _isHostname(String s) {
+    if (s.isEmpty || s.length > 253 || s.contains('..')) return false;
+    return RegExp(
+            r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.?$')
+        .hasMatch(s);
+  }
+
+  /// 单个 DNS 服务器是否合法：IPv4 / IPv6 / 域名 / DoH·DoT 带协议 URL
+  bool _isValidDnsServer(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    // https://dns.alidns.com/dns-query、tls://dns.google 等带协议地址
+    if (t.contains('://')) {
+      final u = Uri.tryParse(t);
+      return u != null && u.host.isNotEmpty;
+    }
+    if (t.contains(':')) {
+      // IPv6（可带 [ ]）
+      final v6 = t.replaceAll('[', '').replaceAll(']', '');
+      if (RegExp(r'^[0-9a-fA-F:]+$').hasMatch(v6) &&
+          (v6.contains('::') || ':'.allMatches(v6).length >= 2)) {
+        return true;
+      }
+      return false; // host:port 形式的内核 nameserver 不支持
+    }
+    return _isIpv4(t) || _isHostname(t);
+  }
+
+  /// 主 DNS 列表编辑（逗号/换行分隔文本），合法才保存
+  Future<void> _pickDnsList() async {
+    final ctrl = TextEditingController(text: _dnsList().join(', '));
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_dns'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          minLines: 2,
+          maxLines: 5,
+          style: TextStyle(color: MFColors.txt),
+          decoration: mfInput(hint: AppStrings.t('dns_list_hint')),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text),
+            child: Text(AppStrings.t('save'),
+                style: TextStyle(color: MFColors.brandLight)),
+          ),
+        ],
+      ),
+    );
+    if (v == null) return;
+    final servers = _splitServerText(v);
+    if (servers.isEmpty) {
+      _toast(AppStrings.t('dns_list_required'));
+      return;
+    }
+    for (var i = 0; i < servers.length; i++) {
+      if (!_isValidDnsServer(servers[i])) {
+        _toast(AppStrings.t('dns_list_invalid', {'n': '${i + 1}'}));
+        return;
+      }
+    }
+    await _set('dnsNameservers', servers);
+  }
+
+  /// 规范化 fake-ip 过滤条目：小写，可选 `*.` 前缀，须为合法域名
+  String? _normalizeFakeIpPattern(String raw) {
+    var p = raw.trim().toLowerCase();
+    var wildcard = false;
+    if (p.startsWith('*.')) {
+      wildcard = true;
+      p = p.substring(2);
+    }
+    if (p.startsWith('.')) p = p.substring(1);
+    if (!_isHostname(p)) return null;
+    return wildcard ? '*.$p' : p;
+  }
+
+  /// fake-ip 过滤追加域名编辑（每行一个；域名保留真实解析）
+  Future<void> _pickFakeIpFilter() async {
+    final ctrl = TextEditingController(text: _fakeIpExtra().join('\n'));
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_fakeip_extra'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.multiline,
+          minLines: 3,
+          maxLines: 6,
+          style: TextStyle(color: MFColors.txt, fontSize: 13),
+          decoration: mfInput(hint: AppStrings.t('fakeip_extra_hint')),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text),
+            child: Text(AppStrings.t('save'),
+                style: TextStyle(color: MFColors.brandLight)),
+          ),
+        ],
+      ),
+    );
+    if (v == null) return;
+    final items = _splitServerText(v);
+    final out = <String>[];
+    for (var i = 0; i < items.length; i++) {
+      final norm = _normalizeFakeIpPattern(items[i]);
+      if (norm == null) {
+        _toast(AppStrings.t('fakeip_invalid', {'line': '${i + 1}'}));
+        return;
+      }
+      out.add(norm);
+    }
+    await _set('fakeIpFilterExtra', out);
   }
 
   Future<void> _pickTunMode() async {

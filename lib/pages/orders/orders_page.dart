@@ -6,6 +6,7 @@ import '../../core/models/models.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_empty.dart';
 import '../payment/payment_dialog.dart';
 
 /// 我的订单：列表 + 待支付订单可继续支付/取消
@@ -160,15 +161,9 @@ class _OrdersPageState extends State<OrdersPage> {
                     ),
                   )
                 : _orders.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                         Text(AppStrings.t('no_orders'), style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                        const SizedBox(height: 8),
-                         Text(AppStrings.t('no_orders_hint'), style: TextStyle(fontSize: 12, color: MFColors.txt3)),
-                      ],
-                    ),
+                ? MFEmpty(
+                    title: AppStrings.t('no_orders'),
+                    hint: AppStrings.t('no_orders_hint'),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),

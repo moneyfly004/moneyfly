@@ -39,6 +39,8 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     dnsMode: args['dnsMode']?.toString() ?? 'auto',
     tunStack: args['tunStack']?.toString() ?? 'gvisor',
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
+    dnsNameservers: (args['dnsNameservers'] as List?)?.cast<String>() ?? const [],
+    fakeIpFilterExtra: (args['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
   );
 }
 
@@ -222,6 +224,11 @@ class ConnectionController extends ChangeNotifier {
   /// 不触发整个 ConnectionController 重建（避免首页每秒全量 rebuild）。
   double upSpeedMbps = 0;
   double downSpeedMbps = 0;
+
+  // ---- 速率历史(首页迷你趋势曲线,最近 ~60s,1s 采样)----
+  static const historyMax = 60;
+  final List<double> upHistory = [];
+  final List<double> downHistory = [];
 
   // ---- 会话统计(首页「已连接时长/本次流量」)----
   DateTime? connectedAt;
@@ -546,6 +553,8 @@ class ConnectionController extends ChangeNotifier {
         'dnsMode': settings['dnsMode']?.toString() ?? 'auto',
         'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
+        'dnsNameservers': (settings['dnsNameservers'] as List?)?.cast<String>() ?? const [],
+        'fakeIpFilterExtra': (settings['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
       });
       await _core.start(cfg);
       if (epoch != _epoch) {
@@ -738,6 +747,8 @@ class ConnectionController extends ChangeNotifier {
     connectedAt = null;
     sessionUpMB = 0;
     sessionDownMB = 0;
+    upHistory.clear();
+    downHistory.clear();
   }
 
   /// 在途的内核停止任务（disconnect/resetForLogout 发起）。
@@ -926,6 +937,11 @@ class ConnectionController extends ChangeNotifier {
     // 会话累计(采样≈1s 一次,按 MB 近似累加)
     sessionUpMB += upMbps;
     sessionDownMB += downMbps;
+    // 速率历史(环形裁剪)
+    upHistory.add(upMbps);
+    if (upHistory.length > historyMax) upHistory.removeAt(0);
+    downHistory.add(downMbps);
+    if (downHistory.length > historyMax) downHistory.removeAt(0);
     // 只更新速率快照，不 notifyListeners —— 首页速率卡片用
     // ValueListenableBuilder(speedNotifier) 局部刷新，整页不重建
     speedNotifier.value = SpeedSnapshot(upMbps: upMbps, downMbps: downMbps);

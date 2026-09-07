@@ -5,6 +5,7 @@ import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/notification_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_empty.dart';
 
 /// 通知中心：列表 / 已读 / 全部已读 / 删除
 class NotificationsPage extends StatefulWidget {
@@ -147,7 +148,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     ),
                   )
                 : _items.isEmpty
-                ?  Center(child: Text(AppStrings.t('no_notifications'), style: TextStyle(fontSize: 14, color: MFColors.txt3)))
+                ? MFEmpty(title: AppStrings.t('no_notifications'))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                     itemCount: _items.length,

@@ -925,6 +925,7 @@ class _HomePageState extends State<HomePage>
                 unit: _speedUnit(up),
                 icon: Icons.arrow_upward_rounded,
                 color: MFColors.brandLight,
+                spark: conn.upHistory,
               ),
             ),
             const SizedBox(width: 12),
@@ -935,6 +936,7 @@ class _HomePageState extends State<HomePage>
                 unit: _speedUnit(down),
                 icon: Icons.arrow_downward_rounded,
                 color: MFColors.green,
+                spark: conn.downHistory,
               ),
             ),
           ],
@@ -1156,12 +1158,15 @@ class _StatCard extends StatelessWidget {
     required this.unit,
     required this.color,
     required this.icon,
+    this.spark,
   });
   final String label;
   final String value;
   final String unit;
   final Color color;
   final IconData icon;
+  /// 迷你趋势(最近 ~60s 速率 MB/s;null 不显示)
+  final List<double>? spark;
 
   @override
   Widget build(BuildContext context) {
@@ -1198,10 +1203,72 @@ class _StatCard extends StatelessWidget {
               Text(unit, style: TextStyle(fontSize: 13, color: MFColors.txt3, fontWeight: FontWeight.w500)),
             ],
           ),
+          if (spark != null && spark!.length >= 2) ...[
+            const SizedBox(height: 10),
+            SizedBox(height: 26, width: double.infinity, child: _Sparkline(values: spark!, color: color)),
+          ],
         ],
       ),
     );
   }
+}
+
+/// 迷你趋势折线(无新依赖,纯 CustomPaint):平滑一条随时间变化的速率曲线
+class _Sparkline extends StatelessWidget {
+  const _Sparkline({required this.values, required this.color});
+  final List<double> values;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.infinite,
+      painter: _SparkPainter(values: values, color: color),
+    );
+  }
+}
+
+class _SparkPainter extends CustomPainter {
+  _SparkPainter({required this.values, required this.color});
+  final List<double> values;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2 || size.width <= 0 || size.height <= 0) return;
+    var maxV = 0.0;
+    for (final v in values) {
+      if (v > maxV) maxV = v;
+    }
+    if (maxV <= 0) maxV = 0.1; // 全零也有基线
+    final path = Path();
+    final n = values.length;
+    for (var i = 0; i < n; i++) {
+      final x = size.width * i / (n - 1);
+      final y = size.height - (values[i] / maxV).clamp(0.0, 1.0) * size.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..color = color;
+    canvas.drawPath(path, stroke);
+    // 浅色填充(0→曲线→底部)
+    final fill = Path.from(path)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(fill, Paint()..color = color.withValues(alpha: .10));
+  }
+
+  @override
+  bool shouldRepaint(_SparkPainter old) =>
+      old.values != values || old.color != color;
 }
 
 

@@ -103,7 +103,18 @@ class MainActivity : FlutterActivity() {
                     }
                     "isVpnRunning" -> result.success(MoneyFlyVpnService.isRunning)
                     "kernelVersion" -> result.success(MoneyFlyVpnService.kernelVersion())
-                    "fetchKernelLogs" -> result.success(MoneyFlyVpnService.fetchKernelLogs())
+                    // 内核日志读取（见文件底部 KernelLogCursor）：
+                    //  - 实时页带 incremental=true：走增量游标，返回 Map{log, hasMore}；
+                    //  - 无参数调用（连接失败诊断等一次性拉全文）保持原 String 语义、不动游标。
+                    "fetchKernelLogs" -> {
+                        if (call.argument<Boolean>("incremental") == true) {
+                            result.success(
+                                KernelLogCursor.fetchDelta(call.argument<Boolean>("reset") == true)
+                            )
+                        } else {
+                            result.success(MoneyFlyVpnService.fetchKernelLogs())
+                        }
+                    }
                     "lastStartError" -> result.success(MoneyFlyVpnService.lastStartError)
                     "getInstalledApps" -> {
                         // PackageManager 查询较重（数百次 IPC），放工作线程避免 UI 卡顿
@@ -213,5 +224,117 @@ class MainActivity : FlutterActivity() {
 
     private fun getVpnServiceStatus(): String {
         return if (VpnService.prepare(this) == null) "prepared" else "not_prepared"
+    }
+}
+
+// ================= 内核日志增量读取（「内核日志」实时页） =================
+//
+// Mihomelib.logs()（经 MoneyFlyVpnService.fetchKernelLogs()）每次返回的是进程内
+// 累积的「全量」快照字符串，且不支持按读取位置消费 —— 实时页若每次把全量回传 Dart
+// 并逐行 setState，日志越长越卡。这里在 App 侧维护「上次交付终点」游标（单锁保护）：
+//  - 快照为纯追加时，用游标处最后 64 字符做边界连续性校验，只把游标之后新增的
+//    完整行交付给 Dart；每次最多交付 MAX_LINES_PER_FETCH 行，仍有剩余则
+//    hasMore=true，Dart 立即续读直到追平 —— 不会一次拖回巨型字符串；
+//  - 缓冲被清空/回绕（内核重启、stop/start 等）导致边界失配时，以最近
+//    BASELINE_MAX_LINES 行为基线重建游标（页面进入也可主动 reset 重建基线）；
+//  - 未写完的半行（末尾无 '\n'）暂不交付也不推进游标，等整行落盘后自然补上，
+//    完整行不重不漏（仅在缓冲被头部截断的罕见回绕场景可能短暂重复末尾若干行）。
+private object KernelLogCursor {
+
+    /** 单次 fetch 最多交付的完整行数；超出部分留在游标后，hasMore=true 提示续读 */
+    private const val MAX_LINES_PER_FETCH = 400
+
+    /** 基线（页面进入/缓冲回绕）最多回放的最近行数：既有历史只取尾部，避免整页塞满 */
+    private const val BASELINE_MAX_LINES = 200
+
+    /** 连续性校验保留的边界字符数（只留这几十个字符，内存占用 O(1)） */
+    private const val MARKER_LEN = 64
+
+    private val lock = Any()
+
+    /** 上次已交付内容在快照中的终点下标；consumedTail 为 null 表示尚无基线 */
+    private var consumedEnd = 0
+
+    /** 终点前最后 MARKER_LEN 个字符，用于下次校验快照仍是纯追加 */
+    private var consumedTail: String? = null
+
+    /**
+     * 取增量日志。
+     * @param reset true = 页面重新进入：丢弃旧游标，按最近 BASELINE_MAX_LINES 行重建基线
+     * @return Map(log=增量文本, hasMore=本批是否截断、后面还有更多完整行)
+     */
+    fun fetchDelta(reset: Boolean): Map<String, Any> {
+        val full = MoneyFlyVpnService.fetchKernelLogs()
+        synchronized(lock) {
+            if (reset) {
+                consumedEnd = 0
+                consumedTail = null
+            }
+            if (full.isEmpty()) {
+                // 内核未启动/日志缓冲被清空：无可读内容，等下一次快照重建基线
+                consumedEnd = 0
+                consumedTail = null
+                return mapOf("log" to "", "hasMore" to false)
+            }
+            val start = if (isContiguous(full)) consumedEnd else baselineStart(full)
+            return deliver(full, start)
+        }
+    }
+
+    /** 游标处边界与最新快照一致 ⇒ 仍是纯追加，可从 consumedEnd 继续增量读 */
+    private fun isContiguous(full: String): Boolean {
+        val tail = consumedTail ?: return false
+        if (consumedEnd == 0 || consumedEnd > full.length) return false
+        if (tail.length > consumedEnd) return false
+        return full.regionMatches(consumedEnd - tail.length, tail, 0, tail.length)
+    }
+
+    /** 首次调用或缓冲回绕：返回「最近 BASELINE_MAX_LINES 个完整行」所在行首下标 */
+    private fun baselineStart(full: String): Int {
+        var newlines = 0
+        var idx = 0
+        while (true) {
+            val nl = full.indexOf('\n', idx)
+            if (nl < 0) break
+            newlines++
+            idx = nl + 1
+        }
+        if (newlines <= BASELINE_MAX_LINES) return 0
+        var from = 0
+        var toSkip = newlines - BASELINE_MAX_LINES
+        while (toSkip > 0) {
+            val nl = full.indexOf('\n', from)
+            if (nl < 0) break
+            from = nl + 1
+            toSkip--
+        }
+        return from
+    }
+
+    /** 自 start 起交付至多 MAX_LINES_PER_FETCH 个完整行，并推进游标 */
+    private fun deliver(full: String, start: Int): Map<String, Any> {
+        var lineEnd = -1
+        var searchFrom = start
+        var delivered = 0
+        while (delivered < MAX_LINES_PER_FETCH) {
+            val nl = full.indexOf('\n', searchFrom)
+            if (nl < 0) break
+            lineEnd = nl
+            searchFrom = nl + 1
+            delivered++
+        }
+        if (delivered == 0) {
+            // 自 start 起只有未写完的半行：本轮回调不交付也不推进，整行写完自然补上
+            return mapOf("log" to "", "hasMore" to false)
+        }
+        val end = lineEnd + 1
+        consumedEnd = end
+        consumedTail = if (end <= MARKER_LEN) {
+            full.substring(0, end)
+        } else {
+            full.substring(end - MARKER_LEN, end)
+        }
+        val hasMore = full.indexOf('\n', end) >= 0
+        return mapOf("log" to full.substring(start, end), "hasMore" to hasMore)
     }
 }

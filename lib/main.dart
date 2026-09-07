@@ -305,6 +305,19 @@ class RootShell extends StatelessWidget {
 /// 全局主标签索引（供首页/我的等页面一键跳转「充值」tab）
 final ValueNotifier<int> mainTabIndex = ValueNotifier<int>(0);
 
+/// 主导航四个目的地（首页/节点/套餐/我的）——
+/// 宽屏 NavigationRail 与窄屏 BottomNavigationBar 共用同一份定义，
+/// 保证两套导航文案/图标一致；label 复用现有 AppStrings key
+/// （home / nodes_title / purchase_title / profile_title），无需新增文案。
+typedef _MainNavEntry = ({String labelKey, IconData icon, IconData activeIcon});
+
+const List<_MainNavEntry> _mainNavEntries = [
+  (labelKey: 'home', icon: Icons.home_outlined, activeIcon: Icons.home),
+  (labelKey: 'nodes_title', icon: Icons.dns_outlined, activeIcon: Icons.dns),
+  (labelKey: 'purchase_title', icon: Icons.payments_outlined, activeIcon: Icons.payments),
+  (labelKey: 'profile_title', icon: Icons.person_outline, activeIcon: Icons.person),
+];
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -355,58 +368,103 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
+  /// 宽屏(≥840)切换为左侧 NavigationRail 的临界宽度；窗口默认尺寸不改，
+  /// 仅按当前布局宽度响应（窗口管理器只设了最小 380×620）。
+  static const double _railBreakpoint = 840;
+
   @override
   Widget build(BuildContext context) {
+    // 响应式导航：宽屏 → 左侧 NavigationRail；窄屏 → 保持底部 BottomNavigationBar。
+    // 两套导航共用 _index/_visited/_pages 与 _onTap/IndexedStack 保活逻辑，
+    // 页面状态不因布局切换而重建；mainTabIndex 外部跳转（mainTabIndex.value = 2）
+    // 依旧通过 _onExternalTabSwitch 生效，与布局无关。
+    final wide = MediaQuery.sizeOf(context).width >= _railBreakpoint;
+    final tabBody = _buildTabBody();
     return Scaffold(
-      // IndexedStack 保活已访问页面；未访问的用占位避免登录瞬间并发拉取
-      // TickerMode:非活动 Tab 停用动画 ticker(首页呼吸灯等),避免 offstage
-      // 仍在每帧渲染/调度 → 省电省 CPU
-      body: IndexedStack(
-        index: _index,
-        children: [
-          for (var i = 0; i < _pageCount; i++)
-            _visited.contains(i)
-                ? TickerMode(
-                    enabled: i == _index,
-                    child: _pages[i],
-                  )
-                : const SizedBox.shrink(),
-        ],
+      body: wide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildNavigationRail(),
+                Expanded(child: tabBody),
+              ],
+            )
+          : tabBody,
+      bottomNavigationBar: wide ? null : _buildBottomNavigationBar(),
+    );
+  }
+
+  /// 主内容区（IndexedStack 保活已访问页面；未访问的用占位避免登录瞬间并发
+  /// 拉取；TickerMode 停用非活动 Tab 的动画 ticker → 省电省 CPU）。
+  /// 宽/窄两种导航共用这一份内容，切到宽屏时由 Expanded 铺满 rail 右侧。
+  Widget _buildTabBody() {
+    return IndexedStack(
+      index: _index,
+      children: [
+        for (var i = 0; i < _pageCount; i++)
+          _visited.contains(i)
+              ? TickerMode(
+                  enabled: i == _index,
+                  child: _pages[i],
+                )
+              : const SizedBox.shrink(),
+      ],
+    );
+  }
+
+  /// 窄屏底部导航（原有外观与文案保持不变）
+  Widget _buildBottomNavigationBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: MFColors.bg,
+        border: Border(top: BorderSide(color: MFColors.line)),
       ),
-      bottomNavigationBar: Container(
-        decoration:  BoxDecoration(
-          color: MFColors.bg,
-          border: Border(top: BorderSide(color: MFColors.line)),
+      child: SafeArea(
+        top: false,
+        child: BottomNavigationBar(
+          currentIndex: _index,
+          onTap: _onTap,
+          items: [
+            for (final e in _mainNavEntries)
+              BottomNavigationBarItem(
+                icon: Icon(e.icon, size: 22),
+                activeIcon: Icon(e.activeIcon, size: 22),
+                label: AppStrings.t(e.labelKey),
+              ),
+          ],
         ),
-        child: SafeArea(
-          top: false,
-          child: BottomNavigationBar(
-            currentIndex: _index,
-            onTap: _onTap,
-            items: [
-              BottomNavigationBarItem(
-                icon: Icon(Icons.home_outlined, size: 22),
-                activeIcon: Icon(Icons.home, size: 22),
-                label: AppStrings.t('home'),
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.dns_outlined, size: 22),
-                activeIcon: Icon(Icons.dns, size: 22),
-                label: AppStrings.t('nodes_title'),
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.payments_outlined, size: 22),
-                activeIcon: Icon(Icons.payments, size: 22),
-                label: AppStrings.t('purchase_title'),
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.person_outline, size: 22),
-                activeIcon: Icon(Icons.person, size: 22),
-                label: AppStrings.t('profile_title'),
-              ),
-            ],
-          ),
-        ),
+      ),
+    );
+  }
+
+  /// 宽屏左侧 NavigationRail：4 个 destination 与底部导航同源（图标/文案一致），
+  /// 配色沿用底部导航语义（选中 brandLight / 未选中 txt3）。
+  Widget _buildNavigationRail() {
+    return Container(
+      decoration: BoxDecoration(
+        color: MFColors.bg,
+        border: Border(right: BorderSide(color: MFColors.line)),
+      ),
+      child: NavigationRail(
+        backgroundColor: Colors.transparent,
+        selectedIndex: _index,
+        onDestinationSelected: _onTap,
+        labelType: NavigationRailLabelType.all,
+        indicatorColor: MFColors.brand.withValues(alpha: .12),
+        selectedIconTheme: IconThemeData(color: MFColors.brandLight),
+        unselectedIconTheme: IconThemeData(color: MFColors.txt3),
+        selectedLabelTextStyle: TextStyle(
+            color: MFColors.brandLight, fontSize: 12, fontWeight: FontWeight.w500),
+        unselectedLabelTextStyle:
+            TextStyle(color: MFColors.txt3, fontSize: 12),
+        destinations: [
+          for (final e in _mainNavEntries)
+            NavigationRailDestination(
+              icon: Icon(e.icon),
+              selectedIcon: Icon(e.activeIcon),
+              label: Text(AppStrings.t(e.labelKey)),
+            ),
+        ],
       ),
     );
   }

@@ -46,8 +46,15 @@ class MihomoConfigBuilder {
     String? clashApiSecret,
     /// TUN 栈（Android 机型兼容性切换；桌面 TUN 场景也可用）
     String tunStack = 'gvisor',
-    /// 用户自定义直连名单（域名后缀；命中 DIRECT，优先级最高）
+    /// 用户自定义直连名单，三类条目（命中 DIRECT，优先级最高）：
+    /// - 域名后缀（如 example.com）→ DOMAIN-SUFFIX
+    /// - `IP-CIDR:` 前缀 + IP 段（如 IP-CIDR:192.168.1.0/24）→ IP-CIDR
+    /// - `DOMAIN:` 前缀 + 精确域名（如 DOMAIN:portal.example.com）→ DOMAIN
     List<String> bypassDomains = const [],
+    /// 主 DNS 服务器列表（非空时替换单值 [dns]，dns.nameserver 写入列表）
+    List<String> dnsNameservers = const [],
+    /// 追加到 fake-ip-filter 的域名/通配（如 `*.lan`；仅 fake-ip 生效时写入）
+    List<String> fakeIpFilterExtra = const [],
   }) {
     final secret = clashApiSecret ?? generateSecret();
     final mode = smartMode ? 'rule' : 'global';
@@ -125,8 +132,10 @@ class MihomoConfigBuilder {
 
     // 规则列表（mihomo 首条匹配即停）
     final rules = <String>[
-      // 用户自定义「直连名单」：优先级最高，名单内域名不走代理
-      for (final d in bypassDomains) 'DOMAIN-SUFFIX,$d,DIRECT',
+      // 用户自定义「直连名单」：优先级最高，名单内条目不走代理。
+      // 三类条目按前缀映射：IP-CIDR: → IP-CIDR 规则；DOMAIN: → DOMAIN
+      // 规则（精确域名）；其余（域名后缀）→ DOMAIN-SUFFIX 规则。
+      for (final d in bypassDomains) ..._bypassRules(d),
       // 回环地址永远直连（内核 API / 本机服务必须可达）
       'IP-CIDR,127.0.0.0/8,DIRECT',
       // 局域网按设置直连
@@ -143,6 +152,10 @@ class MihomoConfigBuilder {
       // 其余走代理（select 组，App 通过 Clash API 热切换选中）
       'MATCH,select',
     ];
+
+    // 主 DNS 列表：显式传入的非空列表优先；否则回退单值 dns（兼容旧配置）
+    final nameservers =
+        dnsNameservers.isNotEmpty ? dnsNameservers : <String>[dns];
 
     final cfg = <String, dynamic>{
       // ===== 元数据（ProxyCore 读取后剥离，不写入配置文件）=====
@@ -180,7 +193,9 @@ class MihomoConfigBuilder {
       //
       // 注意：不配置 fallback 到 8.8.8.8/1.1.1.1 —— 国内网络直连被墙，
       // 依赖 fallback 的解析会超时（实测会让 ssr 等「本地解析型」链路
-      // 的 delay/建连全部失败）；nameserver 单源即可，规则走域名直传。
+      // 的 delay/建连全部失败）；nameserver 用用户主 DNS 列表（默认阿里
+      // 223.5.5.5 / 腾讯 119.29.29.29），规则走域名直传。传入 dnsNameservers
+      // 时用列表，否则回退单值 dns（旧配置兼容）。
       //
       // DNS 模式（dnsMode）：
       //   auto      默认 —— TUN 用 fake-ip；桌面不写 enhanced-mode
@@ -196,10 +211,12 @@ class MihomoConfigBuilder {
             // 本地/内网域名不做 fake-ip
             '*.local',
             'localhost.ptlogin2.qq.com',
+            // 用户自定义追加（保持顺序、去空白行）
+            ...fakeIpFilterExtra.where((e) => e.trim().isNotEmpty),
           ],
         } else if (dnsMode == 'redir-host')
           'enhanced-mode': 'redir-host',
-        'nameserver': [dns],
+        'nameserver': nameservers,
       },
 
       // ===== 节点 =====
@@ -235,6 +252,29 @@ class MihomoConfigBuilder {
     }
 
     return cfg;
+  }
+
+  /// 把一条直连名单条目转换为 DIRECT 规则（0 或 1 条）。
+  ///
+  /// - `IP-CIDR:` 前缀 → `IP-CIDR,<段>,DIRECT`
+  /// - `DOMAIN:` 前缀 → `DOMAIN,<精确域名>,DIRECT`
+  /// - 其它（域名后缀，旧格式不变）→ `DOMAIN-SUFFIX,<x>,DIRECT`
+  ///
+  /// 前缀大小写不敏感（存储/展示统一大写规范形）；值为空时返回空列表
+  /// （不产出垃圾规则）。段内多余空白被裁剪。
+  static List<String> _bypassRules(String entry) {
+    final e = entry.trim();
+    if (e.isEmpty) return const [];
+    final lower = e.toLowerCase();
+    if (lower.startsWith('ip-cidr:')) {
+      final cidr = e.substring('IP-CIDR:'.length).trim();
+      return cidr.isEmpty ? const [] : ['IP-CIDR,$cidr,DIRECT'];
+    }
+    if (lower.startsWith('domain:')) {
+      final domain = e.substring('DOMAIN:'.length).trim();
+      return domain.isEmpty ? const [] : ['DOMAIN,$domain,DIRECT'];
+    }
+    return ['DOMAIN-SUFFIX,$e,DIRECT'];
   }
 
   /// 序列化为 YAML 字符串（mihomo 兼容子集）。

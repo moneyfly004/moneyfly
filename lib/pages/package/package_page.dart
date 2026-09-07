@@ -12,6 +12,7 @@ import '../../core/services/subscription_service.dart';
 import '../../core/services/user_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_empty.dart';
 import '../payment/payment_dialog.dart';
 
 /// 购买套餐：上下列表模式（每行 = 名称/说明/价格/购买）＋ 支付方式。
@@ -163,11 +164,9 @@ class _PackagePageState extends State<PackagePage> {
                         style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                     const SizedBox(height: 16),
                     if (_plans.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 30),
-                        child: Center(
-                            child: Text(AppStrings.t('no_plans'),
-                                style: TextStyle(fontSize: 13, color: MFColors.txt3))),
+                      SizedBox(
+                        height: 320,
+                        child: MFEmpty(title: AppStrings.t('no_plans')),
                       )
                     else ...[
                       // #6 上下列表模式

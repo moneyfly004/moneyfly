@@ -6,6 +6,7 @@ import '../../core/services/account_service.dart';
 import '../../core/services/device_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_empty.dart';
 import '../package/upgrade_devices_page.dart';
 
 /// 设备管理：列表（全量）/ 删除（踢下线）/ 备注编辑 / 在线状态。
@@ -144,14 +145,9 @@ class _DevicesPageState extends State<DevicesPage> {
                   if (_devices.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 90),
-                      child: Column(
-                        children: [
-                          Text(AppStrings.t('no_devices'),
-                              style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                          const SizedBox(height: 8),
-                          Text(AppStrings.t('no_devices_hint'),
-                              style: TextStyle(fontSize: 12, color: MFColors.txt3)),
-                        ],
+                      child: MFEmpty(
+                        title: AppStrings.t('no_devices'),
+                        hint: AppStrings.t('no_devices_hint'),
                       ),
                     )
                   else

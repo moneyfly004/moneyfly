@@ -72,6 +72,11 @@ class _KernelLogTabState extends State<_KernelLogTab>
 
   static const _levels = ['debug', 'info', 'warning'];
 
+  // Android 轮询状态：防止上一轮（含 drain 续读）未结束时定时器重入；
+  // 页面每次进入的第一轮请求原生侧重建「最近行」基线（见 _pollAndroid）。
+  bool _pollBusy = false;
+  bool _cursorReset = true;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -84,7 +89,10 @@ class _KernelLogTabState extends State<_KernelLogTab>
       setState(() => _level = _levels.contains(lv) ? lv : 'warning');
     });
     if (Platform.isAndroid) {
-      _pollTimer = Timer.periodic(const Duration(milliseconds: 600), (_) => _pollAndroid());
+      // 原生侧自上次读取位置起只回传增量行，且返回内容经 hasMore 分片追平，
+      // 因此轮询间隔可放宽到 1200ms 而不丢日志。
+      _pollTimer = Timer.periodic(
+          const Duration(milliseconds: 1200), (_) => _pollAndroid());
     } else {
       _lines.addAll(ProxyCoreCli.logTailSnapshot());
       _trim();
@@ -99,16 +107,47 @@ class _KernelLogTabState extends State<_KernelLogTab>
     super.dispose();
   }
 
+  /// Android 轮询：拉「增量」日志。
+  ///
+  /// 原生侧只回传自上次读取以来新增的完整行（首次/重进页面先回放最近若干行基线），
+  /// 并用 hasMore 告知本批是否截断 —— 截断时立即续读（每轮最多 8 片）尽量追平；
+  /// 整帧累计的所有增量行在末尾合并成一次 setState 追加，避免逐行刷新越拉越卡。
   Future<void> _pollAndroid() async {
+    if (_pollBusy) return;
+    _pollBusy = true;
     try {
       const ch = MethodChannel('top.moneyfly/vpn_core');
-      final logs = await ch.invokeMethod<String>('fetchKernelLogs') ?? '';
-      if (logs.isNotEmpty) {
-        for (final l in logs.split('\n')) {
-          if (l.trim().isNotEmpty) _append(l);
+      final merged = <String>[];
+      for (var round = 0; round < 8; round++) {
+        final res = await ch.invokeMethod<Map<dynamic, dynamic>>(
+          'fetchKernelLogs',
+          <String, dynamic>{'incremental': true, 'reset': _cursorReset},
+        );
+        _cursorReset = false;
+        if (res == null) break;
+        final log = res['log'];
+        if (log is String && log.isNotEmpty) {
+          for (final l in log.split('\n')) {
+            if (l.trim().isNotEmpty) merged.add(l);
+          }
         }
+        if (res['hasMore'] != true) break;
       }
-    } catch (_) {}
+      if (merged.isNotEmpty) _appendLines(merged);
+    } catch (_) {
+      // 通道暂不可用等偶发错误：静默跳过，等下一个轮询周期重试
+    } finally {
+      _pollBusy = false;
+    }
+  }
+
+  /// 一批行（可能跨多个 drain 轮次合并）一次性追加并 setState，同时保留行数上限
+  void _appendLines(List<String> lines) {
+    if (!mounted || lines.isEmpty) return;
+    setState(() {
+      _lines.addAll(lines);
+      _trim();
+    });
   }
 
   /// 内核日志行按级别着色:debug=灰蓝 info=正文 warning=琥珀 error=红
