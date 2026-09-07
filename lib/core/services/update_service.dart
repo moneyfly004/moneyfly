@@ -89,7 +89,7 @@ class UpdateService {
       final assets = (data['assets'] as List? ?? const [])
           .whereType<Map>()
           .toList();
-      final url = _pickAssetUrl(assets);
+      final url = await _pickAssetUrl(assets);
       final sizeText = _sizeText(assets);
       if (url == null) return null;
 
@@ -105,8 +105,8 @@ class UpdateService {
     }
   }
 
-  /// 选择本平台安装包资产
-  static String? _pickAssetUrl(List<Map> assets) {
+  /// 选择本平台安装包资产(macOS 按真实架构选 arm64/x64 dmg,避免 Intel 拿到 arm64)
+  static Future<String?> _pickAssetUrl(List<Map> assets) async {
     final names = assets
         .map((a) => (a['name']?.toString() ?? '', a['browser_download_url']?.toString() ?? ''))
         .toList();
@@ -114,12 +114,15 @@ class UpdateService {
     if (kIsWeb) return null;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
+        // 主流机型 arm64-v8a(个别老 32 位机型请手动装对应 APK)
         prefix = 'MoneyFly-android-arm64-v8a-';
         break;
       case TargetPlatform.iOS:
         return null;
       case TargetPlatform.macOS:
-        prefix = 'MoneyFly-macos-arm64-';
+        prefix = await _isMacIntel()
+            ? 'MoneyFly-macos-x64-'
+            : 'MoneyFly-macos-arm64-';
         break;
       case TargetPlatform.windows:
         prefix = 'MoneyFly-setup-';
@@ -135,6 +138,16 @@ class UpdateService {
       if (u.isNotEmpty && n.contains('MoneyFly-')) return u;
     }
     return null;
+  }
+
+  static Future<bool> _isMacIntel() async {
+    try {
+      final r = await Process.run('uname', ['-m']);
+      final out = (r.stdout as String).trim();
+      return out.contains('x86_64');
+    } catch (_) {
+      return false;
+    }
   }
 
   static String? _sizeText(List<Map> assets) {
