@@ -130,6 +130,13 @@ jobs:
           channel: stable
           cache: true
 
+      - name: 安装 Rosetta 2（x64 构建需要；已安装则跳过）
+        if: matrix.rosetta == 'true'
+        run: |
+          if ! arch -x86_64 true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
       - name: 依赖
         run: flutter pub get
 
@@ -202,23 +209,25 @@ jobs:
           name: moneyfly-windows
           path: dist/
 
-  # ================= macOS：arm64(Apple 芯片) 与 x64(Intel) 分别原生构建 =================
-  # 注意：x64 必须在 Intel runner(macos-13)上原生构建 —— 在 Apple Silicon +
-  # Rosetta 上交叉/裁剪出的 x64 包会出现 Dart 快照架构错乱
-  # （Intel 安装后 "Isolate snapshot invalid / Segfault"），
-  # 不再使用 thin_app 单机裁剪方案。
+  # ================= macOS：arm64(Apple 芯片) 与 x64(Intel) =================
+  # x64 方案说明：GitHub 公共仓库的 Intel runner(macos-13)队列极长(常排队 1h+)，
+  # 故 x64 也在 Apple Silicon runner 上用 Rosetta 执行 **整条 x86_64 构建链**
+  # （arch -x86_64 flutter build）——产物是纯 x86_64 单架构，快照与引擎自洽，
+  # 不经过 universal→thin 裁剪（那是之前 Intel 装后 Segfault 的根源）。
   macos:
     name: macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            rosetta: 'false'
+            verify: arm64
             mihomo_asset: mihomo-darwin-arm64
           - arch: x64
-            runner: macos-13
+            rosetta: 'true'
+            verify: x86_64
             mihomo_asset: mihomo-darwin-amd64
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +237,13 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      - name: 安装 Rosetta 2（x64 构建需要；已安装则跳过）
+        if: matrix.rosetta == 'true'
+        run: |
+          if ! arch -x86_64 true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license || true
+          fi
 
       - name: 依赖
         run: flutter pub get
@@ -258,12 +274,17 @@ jobs:
           flutter analyze
           flutter test --concurrency=1
 
-      # 本 runner 原生架构构建（arm64 runner → arm64；Intel runner → x86_64）
       - name: 构建 macOS release（${{ matrix.arch }}）
-        run: flutter build macos --release
+        run: |
+          if [ "${{ matrix.rosetta }}" = "true" ]; then
+            # 纯 x86_64 原生构建（Rosetta 执行整条构建链，产物单架构自洽）
+            arch -x86_64 flutter build macos --release
+          else
+            flutter build macos --release
+          fi
 
       - name: 校验架构
-        run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
+        run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch ${{ matrix.verify }}
 
       # ---- 内置本架构 mihomo 内核 ----
       - name: 下载并内置 mihomo 内核（${{ matrix.arch }}）
@@ -274,7 +295,7 @@ jobs:
           gunzip -f mihomo.gz
           cp mihomo "$APP/Contents/MacOS/mihomo"
           chmod +x "$APP/Contents/MacOS/mihomo"
-          lipo "$APP/Contents/MacOS/mihomo" -verify_arch ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
+          lipo "$APP/Contents/MacOS/mihomo" -verify_arch ${{ matrix.verify }}
 
       - name: 打包 DMG（${{ matrix.arch }}）
         run: |
