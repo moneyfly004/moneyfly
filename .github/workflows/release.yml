@@ -364,10 +364,12 @@ jobs:
           path: build/merge/x64
       - name: 合并 universal
         run: |
+          ARM_APP=$(find build/merge/arm64 -type d -name "MoneyFly.app" | head -1)
+          X64_APP=$(find build/merge/x64 -type d -name "MoneyFly.app" | head -1)
+          echo "ARM=$ARM_APP X64=$X64_APP"
+          [ -n "$ARM_APP" ] && [ -n "$X64_APP" ] || { echo "app 未找到"; exit 1; }
           bash scripts/merge_macos_universal.sh \
-            "build/merge/arm64/MoneyFly.app" \
-            "build/merge/x64/MoneyFly.app" \
-            "build/MoneyFly-universal.app" \
+            "$ARM_APP" "$X64_APP" "build/MoneyFly-universal.app" \
             macos/Runner/Release.entitlements
           lipo build/MoneyFly-universal.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
           lipo build/MoneyFly-universal.app/Contents/MacOS/mihomo -verify_arch arm64 x86_64
