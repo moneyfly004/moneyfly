@@ -198,7 +198,9 @@ class ApiClient {
   ///  - 无大小上限，日志无限增长。
   /// 改为：path_provider 解析一次 → 异步 fire-and-forget 追加 → 超 512KB 截断。
   static Future<File?>? _logFileFuture;
-  static bool _logRotating = false;
+
+  /// http.log 串行写队列：append 与旋转依次执行，杜绝并发交错/半份改写
+  static Future<void> _logQueue = Future.value();
 
   static Future<File?> _resolveLogFile() async {
     _logFileFuture ??= () async {
@@ -227,8 +229,8 @@ class ApiClient {
 
   static void _logHttp(String line) {
     if (kIsWeb) return;
-    // 不 await：日志写入绝不阻塞请求链路
-    unawaited(() async {
+    // 不 await：日志写入绝不阻塞请求链路；经串行队列避免并发交错
+    final job = _logQueue.then((_) async {
       try {
         final f = await _resolveLogFile();
         if (f == null) return;
@@ -237,20 +239,15 @@ class ApiClient {
           mode: FileMode.append,
           flush: false,
         );
-        // 大小上限：超 512KB 截断保留尾部（避免无限增长；低频检查）
-        if (!_logRotating && await f.length() > 512 * 1024) {
-          _logRotating = true;
-          try {
-            final content = await f.readAsString();
-            await f.writeAsString(content.substring(content.length ~/ 2),
-                flush: true);
-          } catch (_) {
-          } finally {
-            _logRotating = false;
-          }
+        // 大小上限：超 512KB 截断保留尾部（队列内执行，无并发读改写）
+        if (await f.length() > 512 * 1024) {
+          final content = await f.readAsString();
+          await f.writeAsString(content.substring(content.length ~/ 2),
+              flush: true);
         }
       } catch (_) {}
-    }());
+    });
+    _logQueue = job.catchError((_) {});
   }
 
   // ---------- 统一解包 ----------

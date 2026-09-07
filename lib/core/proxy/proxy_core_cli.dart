@@ -70,10 +70,10 @@ class ProxyCoreCli extends ProxyCore {
 
   /// 系统代理保活定时器：连接期间周期检查，被系统/外部关掉就重新开启。
   /// 目标：只要内核在跑，系统代理就保持指向本地端口，直到断开/退出。
-  /// 5s 一次：探测是只读的 reg query / networksetup -get，开销极小；
-  /// 兼顾「代理被 Windows 关掉后最多 5s 内自动恢复」，避免长时间断流。
+  /// 20s 一次：探测是子进程(reg query / networksetup)，过密会累积进程创建
+  /// 开销(macOS 每轮服务数×3 并行)；20s 内恢复被外部关闭的代理已足够快。
   Timer? _proxyKeepAlive;
-  static const _proxyKeepAliveInterval = Duration(seconds: 5);
+  static const _proxyKeepAliveInterval = Duration(seconds: 20);
 
   /// 进程异常退出（非主动断开）→ 控制器触发自动重连
   VoidCallback? _onUnexpectedExit;
@@ -311,7 +311,7 @@ class ProxyCoreCli extends ProxyCore {
     await Future.wait([killFut, restoreFut]);
   }
 
-  /// 启动系统代理保活：每 30s 检查一次，被关/被改走则立即重新指向本地端口
+  /// 启动系统代理保活：每 20s 检查一次，被关/被改走则立即重新指向本地端口
   bool _keepAliveInFlight = false;
 
   void _startProxyKeepAlive() {

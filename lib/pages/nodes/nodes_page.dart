@@ -70,8 +70,26 @@ class _NodesPageState extends State<NodesPage> {
       _testTotal = conn.nodes.length;
     });
     try {
-      final tested = await conn.testAllNodes(conn.nodes, onProgress: (done, total) {
-        if (mounted) setState(() { _testDone = done; _testTotal = total; });
+      // 进度节流：千节点时每完成一个就 setState 会触发约千次整页重建
+      // （每次还含分组/排序/拍平）→ 每 ≥120ms 或进度变化 ≥5% 才刷新一次
+      var lastTick = DateTime.now();
+      var lastPct = -1.0;
+      final tested = await conn.testAllNodes(conn.nodes,
+          onProgress: (done, total) {
+        final pct = total <= 0 ? 1.0 : done / total;
+        final now = DateTime.now();
+        if (pct >= 1.0 ||
+            pct - lastPct >= 0.05 ||
+            now.difference(lastTick).inMilliseconds >= 120) {
+          lastTick = now;
+          lastPct = pct;
+          if (mounted) {
+            setState(() {
+              _testDone = done;
+              _testTotal = total;
+            });
+          }
+        }
       });
       conn.updateTestedNodes(tested);
       if (mounted) {

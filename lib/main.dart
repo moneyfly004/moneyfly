@@ -359,11 +359,18 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       // IndexedStack 保活已访问页面；未访问的用占位避免登录瞬间并发拉取
+      // TickerMode:非活动 Tab 停用动画 ticker(首页呼吸灯等),避免 offstage
+      // 仍在每帧渲染/调度 → 省电省 CPU
       body: IndexedStack(
         index: _index,
         children: [
           for (var i = 0; i < _pageCount; i++)
-            _visited.contains(i) ? _pages[i] : const SizedBox.shrink(),
+            _visited.contains(i)
+                ? TickerMode(
+                    enabled: i == _index,
+                    child: _pages[i],
+                  )
+                : const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar: Container(

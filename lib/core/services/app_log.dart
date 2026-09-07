@@ -6,12 +6,17 @@ import 'package:path_provider/path_provider.dart';
 
 /// 应用诊断日志：记录连接状态变化、内核事件、错误、闪退等关键事件。
 /// 所有日志写入 app_log.txt，设置页可导出给开发者排查问题。
+///
+/// 写路径串行化：所有 append 与旋转进同一条 future 链，杜绝并发
+/// fire-and-forget 的「读半份改写」竞态（丢行/截断内容互相污染）。
 class AppLog {
   AppLog._();
 
   static File? _file;
-  static bool _rotating = false;
   static const _maxSize = 512 * 1024; // 512KB
+
+  /// 串行写队列：每条日志/旋转依次执行
+  static Future<void> _writeQueue = Future.value();
 
   static Future<File?> _resolve() async {
     if (_file != null) return _file;
@@ -37,10 +42,16 @@ class AppLog {
     return f.readAsString();
   }
 
-  /// 清空日志
-  static Future<void> clear() async {
-    final f = await _resolve();
-    if (f != null && f.existsSync()) await f.writeAsString('');
+  /// 清空日志（入队执行，避免与在写 append 交错）
+  static Future<void> clear() {
+    final job = _writeQueue.then((_) async {
+      final f = await _resolve();
+      if (f != null && f.existsSync()) {
+        await f.writeAsString('');
+      }
+    });
+    _writeQueue = job.catchError((_) {});
+    return job;
   }
 
   /// 写入一条日志（fire-and-forget，不阻塞调用方）
@@ -62,21 +73,19 @@ class AppLog {
   static void net(String message) => log('NET', message);
 
   static void _writeAsync(String line) {
-    unawaited(() async {
+    final job = _writeQueue.then((_) async {
       try {
         final f = await _resolve();
         if (f == null) return;
         await f.writeAsString(line, mode: FileMode.append, flush: false);
-        if (!_rotating && await f.length() > _maxSize) {
-          _rotating = true;
-          try {
-            final content = await f.readAsString();
-            await f.writeAsString(content.substring(content.length ~/ 2), flush: true);
-          } finally {
-            _rotating = false;
-          }
+        // 超 512KB：保留后半(截半旋转)。在队列内执行，无并发交错。
+        if (await f.length() > _maxSize) {
+          final content = await f.readAsString();
+          await f.writeAsString(
+              content.substring(content.length ~/ 2), flush: true);
         }
       } catch (_) {}
-    }());
+    });
+    _writeQueue = job.catchError((_) {});
   }
 }

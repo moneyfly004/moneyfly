@@ -17,11 +17,28 @@ class GeoLookupService {
   /// 支持用户在设置页自定义端口）
   static const defaultPort = 2080;
 
+  /// 清理缓存（切换账号/登出时调用，避免旧账号出口残留展示）
+  void clearCache() {
+    _cachedCode = null;
+    _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
   static String countryName(String? code) =>
       ProxyNode.countryNames[code?.toUpperCase()] ?? code?.toUpperCase() ?? '未知';
 
+  /// 结果缓存：连接成功后/切换节点会重复调用，10 分钟内命中直接返回，
+  /// 避免每次用户动作都触发 1-2 次经隧道的外呼(ip-api 无 key 限 45/min)
+  String? _cachedCode;
+  DateTime _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _cacheTtl = Duration(minutes: 10);
+
   /// 走隧道查询真实出口国家码；失败返回 null（不阻塞连接流程）
   Future<String?> lookupViaProxy() async {
+    // 缓存命中（10min 内）直接返回
+    final now = DateTime.now();
+    if (_cachedCode != null && now.difference(_cachedAt) < _cacheTtl) {
+      return _cachedCode;
+    }
     // 读当前生效的本地代理端口（设置页可改）：出口定位必须走同一个 mixed
     // 入站，端口不匹配时请求会落到空端口导致定位失败
     int port = defaultPort;
@@ -51,13 +68,17 @@ class GeoLookupService {
         final r = await dio.get('http://ip-api.com/json?fields=countryCode,country');
         final d = r.data;
         if (d is Map && d['status'] == 'success' && d['countryCode'] != null) {
-          return d['countryCode'].toString().toUpperCase();
+          _cachedCode = d['countryCode'].toString().toUpperCase();
+          _cachedAt = DateTime.now();
+          return _cachedCode;
         }
       } catch (_) {}
       final r2 = await dio.get('https://ipinfo.io/json');
       final d2 = r2.data;
       if (d2 is Map && d2['country'] != null) {
-        return d2['country'].toString().toUpperCase();
+        _cachedCode = d2['country'].toString().toUpperCase();
+        _cachedAt = DateTime.now();
+        return _cachedCode;
       }
     } catch (_) {
       // 定位失败不影响连接
