@@ -237,15 +237,22 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     final v = _session.loggedIn;
     if (v == _wasLoggedIn) return;
     _wasLoggedIn = v;
-    // 登出时停掉订阅调度（登录后不再自动启定时刷新,仅启动时/手动时拉取）
-    if (!v) {
+    if (v) {
+      // 登录后启动「每 30 分钟静默刷新订阅」：重判账号状态(到期/禁用/设备满)
+      // + 覆盖本地订阅缓存，运行期间节点/线路保持最新、受限即时生效
+      SubscriptionScheduler.instance.start();
+    } else {
+      // 登出停掉定时刷新，避免残留定时器
       SubscriptionScheduler.instance.stop();
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 回前台不再自动刷新订阅（避免 JWT 过期触发会话失效断开连接）
+    // 回前台自动补一次静默刷新(距上次成功 ≥10 分钟才拉,避免 JWT 抖动)
+    if (state == AppLifecycleState.resumed) {
+      SubscriptionScheduler.instance.onAppResumed();
+    }
   }
 
   @override
