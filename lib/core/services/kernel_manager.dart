@@ -5,6 +5,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../proxy/proxy_core.dart';
+import 'settings_store.dart';
+
+/// 内核变体：官方对 amd64(x64) 提供两种构建 ——
+/// - [standard] 标准版：按新指令集(v3/AVX2)编译，新 CPU 性能好；
+/// - [compatible] 兼容版：兼容老 CPU(无 AVX2 的老电脑)，与 macOS x64 同策略。
+/// 老 CPU 跑标准版会启动即崩溃(0xC0000005)，故桌面 amd64 默认 compatible，
+/// 用户可在「内核管理」里手动切换。
+enum KernelVariant { standard, compatible }
+
+extension KernelVariantX on KernelVariant {
+  String get key => this == KernelVariant.compatible ? 'compatible' : 'standard';
+
+  String get label => this == KernelVariant.compatible ? '兼容版' : '标准版';
+}
 
 /// 应用内内核管理（mihomo）：显示当前内置内核版本、检测官方最新版本、
 /// 桌面端下载官方预编译二进制并热替换。
@@ -56,7 +70,46 @@ class KernelManager {
     return 0;
   }
 
-  /// 探测当前内置内核版本：
+  KernelVariant _variant = KernelVariant.compatible;
+  bool _variantLoaded = false;
+
+  /// 当前偏好变体（默认 compatible，老 CPU 安全；设置可切换）
+  Future<KernelVariant> currentVariant() async {
+    if (!_variantLoaded) {
+      try {
+        final s = await SettingsStore.instance.load();
+        final k = s['kernelVariant']?.toString();
+        _variant = k == 'standard' ? KernelVariant.standard : KernelVariant.compatible;
+      } catch (_) {}
+      _variantLoaded = true;
+    }
+    return _variant;
+  }
+
+  Future<void> setVariant(KernelVariant v) async {
+    _variant = v;
+    try {
+      final s = await SettingsStore.instance.load();
+      s['kernelVariant'] = v.key;
+      await SettingsStore.instance.save(s);
+    } catch (_) {}
+  }
+
+  /// 该平台是否支持变体切换（桌面 x64/amd64；arm64 官方只有标准版）
+  static Future<bool> get supportsVariant async {
+    if (!isDesktop) return false;
+    if (Platform.isMacOS) {
+      final arch = await KernelManager.instance._macArch();
+      return arch != 'arm64';
+    }
+    if (Platform.isWindows) {
+      final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? 'AMD64';
+      return !arch.toUpperCase().contains('ARM64');
+    }
+    return false;
+  }
+
+  /// 探测当前内置内核版本：  /// 探测当前内置内核版本：
   /// - 桌面：运行 `mihomo -v` 解析首行
   /// - Android：MethodChannel 读 libmihomo.Version()
   /// 失败返回 null（页面显示未知 + 提示）。
@@ -108,17 +161,18 @@ class KernelManager {
   /// [version] 目标版本（如 1.19.30）
   /// [onProgress] 下载进度回调（0~1）
   Future<String> updateTo(String version,
-      {void Function(double progress)? onProgress}) async {
+      {KernelVariant? variant, void Function(double progress)? onProgress}) async {
     if (!isDesktop) return 'not supported on this platform';
     if (ConnectionController.instance.status == ConnStatus.connected) {
       return 'kernel_running';
     }
     final bin = resolveBinaryPath();
     if (bin == null) return 'binary not found (run tool/fetch_mihomo.sh)';
+    final v = variant ?? await currentVariant();
 
     final tmp = Directory.systemTemp.createTempSync('mf_kernel_update');
     try {
-      final asset = await _assetName(version);
+      final asset = await _assetName(version, v);
       if (asset == null) return 'unsupported platform/arch';
       final url =
           'https://github.com/MetaCubeX/mihomo/releases/download/v$version/$asset';
@@ -181,21 +235,24 @@ class KernelManager {
     }
   }
 
-  Future<String?> _assetName(String version) async {
+  Future<String?> _assetName(String version, KernelVariant variant) async {
     if (Platform.isMacOS) {
       final arch = await _macArch();
-      return arch == 'arm64'
-          ? 'mihomo-darwin-arm64-v$version.gz'
+      if (arch == 'arm64') return 'mihomo-darwin-arm64-v$version.gz';
+      // x64：标准版按新指令集(v3)编译，老 Intel/Rosetta 会启动即崩 → 默认兼容版
+      return variant == KernelVariant.compatible
+          ? 'mihomo-darwin-amd64-compatible-v$version.gz'
           : 'mihomo-darwin-amd64-v$version.gz';
     }
     if (Platform.isWindows) {
       final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? 'AMD64';
-      final isArm = arch.toUpperCase().contains('ARM64');
-      if (isArm) return 'mihomo-windows-arm64-v$version.zip';
-      // amd64 用官方 compatible 版：普通版按新指令集(v3/AVX2)编译，在老 CPU
-      // 上启动即崩溃(0xC0000005/0xC000001D)；compatible 版兼容老 CPU，
-      // 与 macOS x64 同策略
-      return 'mihomo-windows-amd64-compatible-v$version.zip';
+      if (arch.toUpperCase().contains('ARM64')) {
+        return 'mihomo-windows-arm64-v$version.zip';
+      }
+      // amd64 默认兼容版(老 CPU 0xC0000005 崩溃防护)，用户可在内核管理切换标准版
+      return variant == KernelVariant.compatible
+          ? 'mihomo-windows-amd64-compatible-v$version.zip'
+          : 'mihomo-windows-amd64-v$version.zip';
     }
     return null;
   }

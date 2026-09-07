@@ -24,6 +24,8 @@ class _KernelPageState extends State<KernelPage> {
   bool _downloading = false;
   double _progress = 0;
   String? _error;
+  bool _supportsVariant = false;
+  KernelVariant _variant = KernelVariant.compatible;
 
   @override
   void initState() {
@@ -33,8 +35,14 @@ class _KernelPageState extends State<KernelPage> {
 
   Future<void> _load() async {
     final cur = await KernelManager.instance.detectCurrent();
+    final supports = await KernelManager.supportsVariant;
+    final variant = await KernelManager.instance.currentVariant();
     if (!mounted) return;
-    setState(() => _current = cur);
+    setState(() {
+      _current = cur;
+      _supportsVariant = supports;
+      _variant = variant;
+    });
     if (KernelManager.isDesktop) {
       await _check();
     }
@@ -84,6 +92,78 @@ class _KernelPageState extends State<KernelPage> {
     } else {
       _toast(AppStrings.t('kernel_update_fail', {'err': err}));
     }
+  }
+
+  /// 切换内核变体(兼容版<->标准版)：下载「当前版本」的另一变体并替换
+  Future<void> _switchVariant(KernelVariant v) async {
+    if (_downloading || v == _variant) return;
+    final ver = _current;
+    if (ver == null) {
+      _toast(AppStrings.t('kernel_version_unknown'));
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('kernel_switch_title'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(AppStrings.t('kernel_switch_confirm', {'label': v == KernelVariant.compatible ? AppStrings.t('kernel_variant_compatible') : AppStrings.t('kernel_variant_standard')}),
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: Text(AppStrings.t('cancel_text'))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(AppStrings.t('confirm'),
+                style: const TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+    final err = await KernelManager.instance.updateTo(ver, variant: v,
+        onProgress: (p) {
+      if (mounted) setState(() => _progress = p);
+    });
+    if (!mounted) return;
+    setState(() => _downloading = false);
+    if (err.isEmpty) {
+      await KernelManager.instance.setVariant(v);
+      if (mounted) {
+        setState(() => _variant = v);
+        _toast(AppStrings.t('kernel_switch_done', {
+          'label': v == KernelVariant.compatible
+              ? AppStrings.t('kernel_variant_compatible')
+              : AppStrings.t('kernel_variant_standard'),
+        }));
+      }
+    } else if (err == 'kernel_running') {
+      _toast(AppStrings.t('kernel_update_desc'));
+    } else {
+      _toast(AppStrings.t('kernel_update_fail', {'err': err}));
+    }
+  }
+
+  Widget _variantRow(KernelVariant v) {
+    final isCur = _variant == v;
+    final label = v == KernelVariant.compatible
+        ? AppStrings.t('kernel_variant_compatible')
+        : AppStrings.t('kernel_variant_standard');
+    final desc = v == KernelVariant.compatible
+        ? AppStrings.t('kernel_variant_compatible_desc')
+        : AppStrings.t('kernel_variant_standard_desc');
+    return _row(
+      icon: v == KernelVariant.compatible ? '🐢' : '⚡',
+      title: label,
+      desc: desc,
+      value: isCur ? AppStrings.t('kernel_variant_in_use') : AppStrings.t('kernel_variant_switch'),
+      onTap: isCur ? null : () => _switchVariant(v),
+    );
   }
 
   void _toast(String msg) {
@@ -191,6 +271,16 @@ class _KernelPageState extends State<KernelPage> {
                       ],
                     ),
                   ),
+              ],
+              if (_supportsVariant) ...[
+                _section(AppStrings.t('kernel_variant_title')),
+                _variantRow(KernelVariant.compatible),
+                _variantRow(KernelVariant.standard),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 4),
+                  child: Text(AppStrings.t('kernel_variant_tip'),
+                      style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+                ),
               ],
             ] else ...[
               // Android：内核随 App 发布
