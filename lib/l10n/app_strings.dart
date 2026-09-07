@@ -517,6 +517,14 @@ class AppStrings {
     // 硬编码补全
     'cancel_text': '取消',
     'settings_title': '设置',
+    'group_connect': '连接与线路',
+    'group_proxy': '代理与分流',
+    'group_network': '网络与端口',
+    'group_kernel': '内核与数据',
+    'group_appearance': '外观',
+    'group_account': '账户',
+    'group_about': '关于与诊断',
+
     'tun_title': 'TUN 虚拟网卡',
     'real_exit': '真实出口',
     'countdown_resend': '{n}s 后重发',
@@ -1067,6 +1075,14 @@ class AppStrings {
     'cancel_text': 'Cancel',
 
     'settings_title': 'Settings',
+    'group_connect': 'Connection & Routing',
+    'group_proxy': 'Proxy & Split',
+    'group_network': 'Network & Ports',
+    'group_kernel': 'Kernel & Data',
+    'group_appearance': 'Appearance',
+    'group_account': 'Account',
+    'group_about': 'About & Diagnostics',
+
     'tun_title': 'TUN Virtual NIC',
     'real_exit': 'Real exit',
     'countdown_resend': '{n}s to resend',

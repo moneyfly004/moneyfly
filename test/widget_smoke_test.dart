@@ -39,7 +39,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('连接设置'), findsOneWidget);
+    expect(find.text('连接与线路'), findsOneWidget); // 设置页①组(新版分组)
     expect(find.text('自动测速并选最优'), findsOneWidget);
     // 设置项变多后「默认模式」行在视口外（ListView 懒加载），滚动后断言
     await tester.scrollUntilVisible(find.text('默认模式'), 200,

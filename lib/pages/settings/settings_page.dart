@@ -93,7 +93,15 @@ class _SettingsPageState extends State<SettingsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
           children: [
-            _section(AppStrings.t('settings_conn')),
+            // ① 连接与线路：用什么模式连、怎么自动连/重连/测速
+            _section(AppStrings.t('group_connect')),
+            _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
+                trailing: _seg2(
+                  left: AppStrings.t('smart_mode'), right: AppStrings.t('global_mode'),
+                  selectedLeft: _s['defaultMode'] != 'global',
+                  onLeft: () => _set('defaultMode', 'smart'),
+                  onRight: () => _set('defaultMode', 'global'),
+                )),
             _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
                 trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v))),
             if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
@@ -111,6 +119,28 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
                 value: _testUrlHost(),
                 onTap: _pickTestUrl),
+            // ② 代理与分流：TUN、DNS、直连名单、按应用分流
+            _section(AppStrings.t('group_proxy')),
+            if (!Platform.isAndroid)
+              _row(icon: '🚀', title: AppStrings.t('settings_tun'),
+                  desc: _tunDesc(),
+                  value: switch (_s['tunMode']?.toString()) {
+                    'off' => AppStrings.t('tun_off'),
+                    'force' => AppStrings.t('tun_force'),
+                    _ => AppStrings.t('tun_auto'),
+                  },
+                  onTap: _pickTunMode),
+            if (Platform.isAndroid)
+              _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
+                  desc: AppStrings.t('settings_tun_stack_desc'),
+                  value: (_s['tunStack']?.toString() ?? 'gvisor') == 'mixed'
+                      ? AppStrings.t('tun_stack_mixed')
+                      : AppStrings.t('tun_stack_gvisor'),
+                  onTap: () => _picker([
+                    AppStrings.t('tun_stack_gvisor'),
+                    AppStrings.t('tun_stack_mixed'),
+                  ], (v) => _set('tunStack',
+                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'))),
             // 主 DNS 列表（逗号分隔文本编辑；旧 'dns' 单值键保留兼容，主列表优先）
             _row(icon: '🌐', title: AppStrings.t('settings_dns'),
                 desc: AppStrings.t('settings_dns_desc'),
@@ -138,33 +168,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('settings_fakeip_extra_desc'),
                 value: '${_fakeIpExtra().length}',
                 onTap: _pickFakeIpFilter),
-            _section(AppStrings.t('settings_mode')),
-            _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
-                trailing: _seg2(
-                  left: AppStrings.t('smart_mode'), right: AppStrings.t('global_mode'),
-                  selectedLeft: _s['defaultMode'] != 'global',
-                  onLeft: () => _set('defaultMode', 'smart'),
-                  onRight: () => _set('defaultMode', 'global'),
-                )),
-            _section(AppStrings.t('settings_network')),
-            _row(icon: '🔢', title: AppStrings.t('settings_local_port'),
-                desc: AppStrings.t('settings_local_port_desc'),
-                value: '${_s['localPort'] ?? 2080}',
-                onTap: _pickLocalPort),
-            _row(icon: '🔧', title: AppStrings.t('settings_clash_api_port'),
-                desc: AppStrings.t('settings_clash_api_port_desc'),
-                value: '${_s['clashApiPort'] ?? 9090}',
-                onTap: _pickClashApiPort),
-            // Android：连接强制 TUN（平台无系统代理机制），不展示可配置项
-            if (!Platform.isAndroid)
-              _row(icon: '🚀', title: AppStrings.t('settings_tun'),
-                  desc: _tunDesc(),
-                  value: switch (_s['tunMode']?.toString()) {
-                    'off' => AppStrings.t('tun_off'),
-                    'force' => AppStrings.t('tun_force'),
-                    _ => AppStrings.t('tun_auto'),
-                  },
-                  onTap: _pickTunMode),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _row(icon: '🚫', title: AppStrings.t('settings_bypass'),
@@ -178,18 +181,18 @@ class _SettingsPageState extends State<SettingsPage> {
                   value: _accessModeValue(),
                   onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const AccessPage()))),
-            if (Platform.isAndroid)
-              _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
-                  desc: AppStrings.t('settings_tun_stack_desc'),
-                  value: (_s['tunStack']?.toString() ?? 'gvisor') == 'mixed'
-                      ? AppStrings.t('tun_stack_mixed')
-                      : AppStrings.t('tun_stack_gvisor'),
-                  onTap: () => _picker([
-                    AppStrings.t('tun_stack_gvisor'),
-                    AppStrings.t('tun_stack_mixed'),
-                  ], (v) => _set('tunStack',
-                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'))),
-            _section(AppStrings.t('settings_kernel')),
+            // ③ 网络与端口（低频/高级）
+            _section(AppStrings.t('group_network')),
+            _row(icon: '🔢', title: AppStrings.t('settings_local_port'),
+                desc: AppStrings.t('settings_local_port_desc'),
+                value: '${_s['localPort'] ?? 2080}',
+                onTap: _pickLocalPort),
+            _row(icon: '🔧', title: AppStrings.t('settings_clash_api_port'),
+                desc: AppStrings.t('settings_clash_api_port_desc'),
+                value: '${_s['clashApiPort'] ?? 9090}',
+                onTap: _pickClashApiPort),
+            // ④ 内核与数据
+            _section(AppStrings.t('group_kernel')),
             _row(icon: '🧩', title: AppStrings.t('settings_kernel'),
                 desc: 'MetaCubeX/mihomo',
                 onTap: () => Navigator.of(context).push(
@@ -198,7 +201,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('settings_geo_data_desc'),
                 onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const GeoUpdatePage()))),
-            _section(AppStrings.t('settings_appearance')),
+            // ⑤ 外观
+            _section(AppStrings.t('group_appearance')),
             _row(icon: '🎨', title: AppStrings.t('settings_theme'),
                 value: switch (_s['theme']?.toString()) {
                   'light' => AppStrings.t('theme_light'),
@@ -219,14 +223,16 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
-            _section(AppStrings.t('settings_account')),
+            // ⑥ 账户
+            _section(AppStrings.t('group_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
             _row(icon: '🧹', title: AppStrings.t('settings_clear_data'),
                 desc: AppStrings.t('settings_clear_data_desc'),
                 danger: true,
                 onTap: _clearLocalData),
-            _section(AppStrings.t('settings_about')),
+            // ⑦ 关于与诊断
+            _section(AppStrings.t('group_about')),
             _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
             _row(icon: '📋', title: AppStrings.t('log_center_title'),
                 desc: AppStrings.t('log_center_desc'),
