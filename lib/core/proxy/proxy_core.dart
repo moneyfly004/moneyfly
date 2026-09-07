@@ -247,20 +247,25 @@ class ConnectionController extends ChangeNotifier {
 
   /// 真实出口国家码（连接后通过隧道 IP 定位实测，非节点名猜测）
   String? realCountry;
-  bool _geoLookingUp = false;
+  /// 出口定位的代次：每次发起 +1，只有最新一次的结果才允许写入 —— 切国家时
+  /// 旧的在途定位（慢/命中缓存）完成后不会再把旧国家覆盖回来。
+  int _geoEpoch = 0;
 
-  /// 连接成功后实测出口国家（失败静默，不阻塞连接）
-  Future<void> refreshRealCountry() async {
-    if (_geoLookingUp || status != ConnStatus.connected) return;
-    _geoLookingUp = true;
+  /// 连接成功后实测出口国家（失败静默，不阻塞连接）。
+  /// [force] 切换节点/国家后出口已变，强制重查（绕过 GeoLookup 的 TTL 缓存）。
+  Future<void> refreshRealCountry({bool force = false}) async {
+    if (status != ConnStatus.connected) return;
+    final epoch = ++_geoEpoch; // 本次代次；被后续调用超越即作废
     try {
-      final code = await GeoLookupService.instance.lookupViaProxy();
-      if (status == ConnStatus.connected) {
+      final code = await GeoLookupService.instance.lookupViaProxy(force: force);
+      // 仅当仍是最新一次请求、且仍连接时才写入：避免旧的慢请求覆盖新国家，
+      // 也避免切国家后被 10 分钟缓存的旧值回填
+      if (epoch == _geoEpoch && status == ConnStatus.connected) {
         realCountry = code;
         notifyListeners();
       }
-    } finally {
-      _geoLookingUp = false;
+    } catch (_) {
+      // 定位失败静默，不阻塞连接
     }
   }
 
@@ -579,7 +584,7 @@ class ConnectionController extends ChangeNotifier {
         unawaited(_autoSpeedTestAndSwitch(epoch, forceBest: false));
       }
       _startBackgroundTest(intervalMin);
-      unawaited(refreshRealCountry()); // 实测真实出口国家
+      unawaited(refreshRealCountry(force: true)); // 实测真实出口国家（新隧道，强制重查）
     } catch (e) {
       if (epoch != _epoch) return;
       _releaseWakeLock();
@@ -869,7 +874,9 @@ class ConnectionController extends ChangeNotifier {
       try {
         await _core.switchNode(node.tag);
         realCountry = null;
-        unawaited(refreshRealCountry());
+        notifyListeners(); // 立即清掉旧国家显示（切换后先显示「检测中」，不停在旧值）
+        // 出口已变，强制重查绕过 TTL 缓存 —— 否则 10 分钟内真实出口显示不更新
+        unawaited(refreshRealCountry(force: true));
       } catch (e) {
         error = AppStrings.t('node_switch_fail', {'err': '$e'});
         errorKind = ConnErrorKind.none;

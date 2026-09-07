@@ -837,17 +837,23 @@ class _HomePageState extends State<HomePage>
                 ],
               ],
             ),
-          if (connected && conn.realCountry != null) ...[
+          // 连接期间常驻此行：已测出→显示国旗+国家；切换后 realCountry 暂为
+          // null→显示「检测中…」占位（不再整块消失/闪跳，用户能看到出口在更新）
+          if (connected) ...[
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CountryFlag(conn.realCountry, size: 13, rounded: true),
-                const SizedBox(width: 5),
-                Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
-                    style: const TextStyle(fontSize: 11, color: MFColors.green)),
-              ],
-            ),
+            conn.realCountry != null
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CountryFlag(conn.realCountry, size: 13, rounded: true),
+                      const SizedBox(width: 5),
+                      Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
+                          style: const TextStyle(fontSize: 11, color: MFColors.green)),
+                    ],
+                  )
+                : Text(AppStrings.t('real_exit_detecting'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: MFColors.txt3)),
           ],
           if (conn.error != null) ...[
             const SizedBox(height: 8),

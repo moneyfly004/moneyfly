@@ -527,6 +527,7 @@ class AppStrings {
 
     'tun_title': 'TUN 虚拟网卡',
     'real_exit': '真实出口',
+    'real_exit_detecting': '真实出口 · 检测中…',
     'countdown_resend': '{n}s 后重发',
     'code_sent_email': '验证码已发送到邮箱，5 分钟内有效',
     'reset_code_sent': '重置验证码已发送到邮箱',
@@ -1085,6 +1086,7 @@ class AppStrings {
 
     'tun_title': 'TUN Virtual NIC',
     'real_exit': 'Real exit',
+    'real_exit_detecting': 'Real exit · detecting…',
     'countdown_resend': '{n}s to resend',
     'code_sent_email': 'Code sent to your email, valid for 5 minutes',
     'reset_code_sent': 'Reset code sent to your email',

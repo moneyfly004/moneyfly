@@ -32,11 +32,13 @@ class GeoLookupService {
   DateTime _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _cacheTtl = Duration(minutes: 10);
 
-  /// 走隧道查询真实出口国家码；失败返回 null（不阻塞连接流程）
-  Future<String?> lookupViaProxy() async {
-    // 缓存命中（10min 内）直接返回
+  /// 走隧道查询真实出口国家码；失败返回 null（不阻塞连接流程）。
+  /// [force] 切换节点/国家、重新连接后出口 IP 已变，须强制重查绕过 TTL 缓存
+  /// —— 否则 10 分钟内一直返回旧国家，表现为「切了国家真实出口不变」。
+  Future<String?> lookupViaProxy({bool force = false}) async {
+    // 缓存命中（10min 内）直接返回；force 时跳过读缓存（仍会写入新结果）
     final now = DateTime.now();
-    if (_cachedCode != null && now.difference(_cachedAt) < _cacheTtl) {
+    if (!force && _cachedCode != null && now.difference(_cachedAt) < _cacheTtl) {
       return _cachedCode;
     }
     // 读当前生效的本地代理端口（设置页可改）：出口定位必须走同一个 mixed
