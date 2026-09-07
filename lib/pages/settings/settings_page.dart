@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/app_log.dart';
+import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/services/update_service.dart';
@@ -220,6 +221,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('log_center_desc'),
                 onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const LogCenterPage()))),
+            _row(icon: '💥', title: AppStrings.t('settings_crash_report'),
+                desc: AppStrings.t('settings_crash_report_desc'),
+                trailing: _switch(_s['crashReport'] == true, (v) {
+                  setState(() => _s['crashReport'] = v);
+                  CrashLogger.setEnabled(v);
+                  _set('crashReport', v);
+                })),
             const SizedBox(height: 12),
              Center(
               child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
