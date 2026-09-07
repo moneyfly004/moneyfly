@@ -29,6 +29,8 @@ class Endpoints {
   // 套餐 / 订单 / 支付
   static const packages = '/packages';
   static const orders = '/orders';
+  // 设备增量升级（+N 台，可选 +M 天顺延；preview_only 时仅算价）
+  static const ordersUpgradeDevices = '/orders/upgrade-devices';
   static const paymentMethods = '/payment/methods';
   static const payment = '/payment';
   static const couponsVerify = '/coupons/verify';

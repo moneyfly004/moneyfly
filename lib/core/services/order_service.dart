@@ -7,6 +7,28 @@ class OrderService {
   OrderService._();
   static final OrderService instance = OrderService._();
 
+  /// 设备增量升级预览（不建单，仅算价）：POST /orders/upgrade-devices preview_only
+  /// 返回 {amount, final_amount, ...}
+  Future<Map<String, dynamic>> previewDeviceUpgrade(
+      {required int addDevices, int addDays = 0}) async {
+    final data = await ApiClient.instance.post(Endpoints.ordersUpgradeDevices, data: {
+      'additional_devices': addDevices,
+      'additional_days': addDays,
+      'preview_only': true,
+    });
+    return Map<String, dynamic>.from(data is Map ? data : {});
+  }
+
+  /// 设备增量升级下单，返回 {id, order_no, amount, ...}
+  Future<Map<String, dynamic>> createDeviceUpgrade(
+      {required int addDevices, int addDays = 0}) async {
+    final data = await ApiClient.instance.post(Endpoints.ordersUpgradeDevices, data: {
+      'additional_devices': addDevices,
+      'additional_days': addDays,
+    });
+    return Map<String, dynamic>.from(data is Map ? data : {});
+  }
+
   /// 创建订单，返回 {id, order_no, amount, ...}
   Future<Map<String, dynamic>> create({required int packageId, String? couponCode}) async {
     final data = await ApiClient.instance.post(Endpoints.orders, data: {

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../package/upgrade_devices_page.dart';
 
 import '../../core/models/models.dart';
 import '../../core/proxy/proxy_core.dart';
@@ -185,7 +186,13 @@ class _HomePageState extends State<HomePage>
               ),
               onPressed: () {
                 Navigator.pop(context);
-                mainTabIndex.value = 2; // 跳到购买套餐（到期续费 / 升级设备 / 开通）
+                if (acc.status == AccountStatus.deviceFull) {
+                  // 设备超限 → 走「增量升级设备」页（+N 台/可选加时长/支付）
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const UpgradeDevicesPage()));
+                } else {
+                  mainTabIndex.value = 2; // 到期续费 / 新开通 → 套餐页
+                }
               },
               child: Text(
                 switch (acc.status) {

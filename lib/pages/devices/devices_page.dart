@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
+import '../../core/services/account_service.dart';
 import '../../core/services/device_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../package/upgrade_devices_page.dart';
 
 /// 设备管理：列表 / 删除（踢下线）
 class DevicesPage extends StatefulWidget {
@@ -99,10 +101,65 @@ class _DevicesPageState extends State<DevicesPage> {
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
-                    itemCount: _devices.length,
+                    itemCount: _devices.length + (_showUpgradeBanner ? 1 : 0),
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) => _buildDeviceCard(_devices[i]),
+                    itemBuilder: (_, i) {
+                      if (_showUpgradeBanner && i == 0) {
+                        return _buildUpgradeBanner();
+                      }
+                      return _buildDeviceCard(
+                          _devices[i - (_showUpgradeBanner ? 1 : 0)]);
+                    },
                   ),
+      ),
+    );
+  }
+
+  /// 设备名额是否已满（≥ 上限）：显示升级入口条幅
+  bool get _showUpgradeBanner {
+    final sub = AccountService.instance.sub;
+    return sub != null &&
+        sub.deviceLimit > 0 &&
+        sub.currentDevices >= sub.deviceLimit;
+  }
+
+  Widget _buildUpgradeBanner() {
+    final sub = AccountService.instance.sub;
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const UpgradeDevicesPage())),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+              colors: [
+                MFColors.amber.withValues(alpha: .18),
+                MFColors.brand.withValues(alpha: .08)
+              ]),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: MFColors.amber.withValues(alpha: .5)),
+        ),
+        child: Row(
+          children: [
+            const Text('📈', style: TextStyle(fontSize: 16)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                AppStrings.t('device_full_upgrade_banner', {
+                  'used': '${sub?.currentDevices ?? 0}',
+                  'limit': '${sub?.deviceLimit ?? 0}',
+                }),
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: MFColors.txt,
+                    height: 1.4),
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
+          ],
+        ),
       ),
     );
   }

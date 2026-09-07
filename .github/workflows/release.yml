@@ -202,10 +202,24 @@ jobs:
           name: moneyfly-windows
           path: dist/
 
-  # ================= macOS：Apple 芯片 + Intel 芯片 + 通用版 =================
+  # ================= macOS：arm64(Apple 芯片) 与 x64(Intel) 分别原生构建 =================
+  # 注意：x64 必须在 Intel runner(macos-13)上原生构建 —— 在 Apple Silicon +
+  # Rosetta 上交叉/裁剪出的 x64 包会出现 Dart 快照架构错乱
+  # （Intel 安装后 "Isolate snapshot invalid / Segfault"），
+  # 不再使用 thin_app 单机裁剪方案。
   macos:
-    name: macOS (arm64 Apple 芯片 / x86_64 Intel / universal)
-    runs-on: macos-14
+    name: macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            mihomo_asset: mihomo-darwin-arm64
+          - arch: x64
+            runner: macos-13
+            mihomo_asset: mihomo-darwin-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -214,12 +228,6 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-
-      - name: 安装 Rosetta 2（构建 x86_64 快照需要；已安装则跳过）
-        run: |
-          if ! arch -x86_64 true 2>/dev/null; then
-            softwareupdate --install-rosetta --agree-to-license || true
-          fi
 
       - name: 依赖
         run: flutter pub get
@@ -233,14 +241,14 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
-      # ---- 先下载内核（arm64 即可）：让 flutter test 真实启动内核做端到端验证 ----
-      - name: 下载 mihomo 内核（测试用，官方预编译）
+      # ---- 先下载本架构内核：让 flutter test 真实启动内核做端到端验证 ----
+      - name: 下载 mihomo 内核（测试用）
         run: |
           mkdir -p build/mihomo
-          curl -fL --max-time 300 -o mihomo-arm64.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
-          gunzip -f mihomo-arm64.gz
-          mv mihomo-arm64 build/mihomo/mihomo
+          curl -fL --max-time 300 -o mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/${{ matrix.mihomo_asset }}-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo.gz
+          mv mihomo build/mihomo/mihomo
           chmod +x build/mihomo/mihomo
           ls -la build/mihomo/
 
@@ -250,73 +258,51 @@ jobs:
           flutter analyze
           flutter test --concurrency=1
 
-      # release 默认即 universal（arm64 + x86_64 双架构）
-      - name: 构建 macOS universal
+      # 本 runner 原生架构构建（arm64 runner → arm64；Intel runner → x86_64）
+      - name: 构建 macOS release（${{ matrix.arch }}）
         run: flutter build macos --release
 
-      - name: 校验双架构
-        run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch arm64 x86_64
+      - name: 校验架构
+        run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
 
-      # ---- 内置 mihomo 内核（universal 合并后放入 Contents/MacOS，
-      #      thin_app.sh 会按目标架构自动裁剪）----
-      - name: 下载并内置 mihomo 内核（universal）
+      # ---- 内置本架构 mihomo 内核 ----
+      - name: 下载并内置 mihomo 内核（${{ matrix.arch }}）
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
-          mkdir -p sb && cd sb
-          curl -fL --max-time 300 -o mihomo-arm64.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
-          curl -fL --max-time 300 -o mihomo-amd64.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-v$MIHOMO_VERSION.gz"
-          # 官方 .gz 解压后就是单文件可执行（非目录结构）
-          gunzip -f mihomo-arm64.gz mihomo-amd64.gz
-          lipo -create mihomo-arm64 mihomo-amd64 -output mihomo
-          chmod +x mihomo
-          cd ..
-          cp sb/mihomo "$APP/Contents/MacOS/mihomo"
+          curl -fL --max-time 300 -o mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/${{ matrix.mihomo_asset }}-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo.gz
+          cp mihomo "$APP/Contents/MacOS/mihomo"
           chmod +x "$APP/Contents/MacOS/mihomo"
-          lipo "$APP/Contents/MacOS/mihomo" -verify_arch arm64 x86_64
+          lipo "$APP/Contents/MacOS/mihomo" -verify_arch ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
 
-      - name: 生成三个版本 DMG（Apple 芯片 / Intel / 通用）
+      - name: 打包 DMG（${{ matrix.arch }}）
         run: |
           V="${INPUT_VERSION:-$GITHUB_REF_NAME}"
           V="${V#v}"
           APP="build/macos/Build/Products/Release/MoneyFly.app"
           mkdir -p dist
-
           # 打包辅助：把 App 放入含「应用程序」快捷方式的暂存目录，保证可拖拽安装
-          make_dmg() { # $1=源App $2=输出dmg
-            STAGE="build/dmg-stage"
-            rm -rf "$STAGE" && mkdir -p "$STAGE"
-            cp -R "$1" "$STAGE/MoneyFly.app"
-            ln -s /Applications "$STAGE/Applications"
-            # 保留 entitlements（Keychain/网络），否则登录报 -34018
-            codesign --force --deep -s - \
-              --entitlements macos/Runner/Release.entitlements \
-              "$STAGE/MoneyFly.app"
-            hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "$2"
-          }
-
-          # 通用版（arm64 + x86_64）
-          make_dmg "$APP" "dist/MoneyFly-macos-universal-$V.dmg"
-
-          # Apple 芯片版（仅 arm64）
-          cp -R "$APP" "build/MoneyFly-arm64.app"
-          scripts/thin_app.sh arm64 "build/MoneyFly-arm64.app"
-          make_dmg "build/MoneyFly-arm64.app" "dist/MoneyFly-macos-arm64-$V.dmg"
-
-          # Intel 版（仅 x86_64）
-          cp -R "$APP" "build/MoneyFly-x64.app"
-          scripts/thin_app.sh x86_64 "build/MoneyFly-x64.app"
-          make_dmg "build/MoneyFly-x64.app" "dist/MoneyFly-macos-x64-$V.dmg"
-
-          cd dist && shasum -a 256 * > SHA256SUMS.txt
+          STAGE="build/dmg-stage"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/MoneyFly.app"
+          ln -s /Applications "$STAGE/Applications"
+          # 保留 entitlements（Keychain/网络），否则登录报 -34018
+          codesign --force --deep -s - \
+            --entitlements macos/Runner/Release.entitlements \
+            "$STAGE/MoneyFly.app"
+          hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO \
+            "dist/MoneyFly-macos-${{ matrix.arch }}-$V.dmg"
+          cd dist && shasum -a 256 MoneyFly-macos-${{ matrix.arch }}-$V.dmg > SHA256SUMS-macos-${{ matrix.arch }}.txt
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: moneyfly-macos
-          path: dist/
+          name: moneyfly-macos-${{ matrix.arch }}
+          path: |
+            dist/MoneyFly-macos-${{ matrix.arch }}-*.dmg
+            dist/SHA256SUMS-macos-${{ matrix.arch }}.txt
 
   # ================= 发布到 GitHub Releases =================
   release:
