@@ -322,6 +322,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/**
-          body: "Bug fixes and improvements."
+          body: |
+            # MoneyFly ${{ github.ref_name }}
+
+            ## 安装包与系统要求
+            - **Android**: `MoneyFly-android-arm64-v8a / armeabi-v7a / x86_64 .apk` + `.aab`（Android 8.0+）
+            - **macOS arm64**（Apple 芯片）: `MoneyFly-macos-arm64-*.dmg` — 需 **macOS 11+**
+            - **macOS x64**（Intel，原生构建）: `MoneyFly-macos-x64-*.dmg` — 需 **macOS 10.15+**（建议 11+）
+            - **Windows**: `MoneyFly-setup-*.exe` 安装版 + `MoneyFly-windows-x64-portable-*.zip`（Windows 10+）
+
+            各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
+
+            ## 本版更新
+            - macOS Intel 版改为原生构建（修复此前 Intel 安装后无法启动的问题）
+            - 设备超限可**增量升级设备**：+N 台（可顺带加时长，含推荐时长）→ 扫码支付 → 立即生效
+            - 桌面端：关闭窗口可选择「最小化到托盘 / 退出」；退出前自动清理内核
+            - Android：内核/模式切换/崩溃修复、日志中心、应用代理等
           generate_release_notes: false
           fail_on_unmatched_files: true
