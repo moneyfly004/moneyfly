@@ -15,22 +15,21 @@ class PasswordPolicy {
   /// 合法特殊字符集合（与后端 auth.ValidatePasswordStrength 一致）
   static const specials = '!@#\$%^&*()_+-=[]{}|;:,.<>?';
 
-  /// 校验新密码：合法返回 null，否则返回可直接展示的错误文案
-  static String? errorFor(String pwd) {
-    if (pwd.length < 8) return AppStrings.t('pwd_short');
+  /// 统计密码包含的字符种类数（大写/小写/数字/特殊，0~4）。
+  /// 实时规则清单（PasswordRuleHints）与 errorFor 共用同一口径。
+  static int kindsOf(String pwd) {
     var hasUpper = false;
     var hasLower = false;
     var hasDigit = false;
     var hasSpecial = false;
     for (final c in pwd.runes) {
-      final ch = String.fromCharCode(c);
-      if (ch.codeUnitAt(0) >= 0x41 && ch.codeUnitAt(0) <= 0x5A) {
+      if (c >= 0x41 && c <= 0x5A) {
         hasUpper = true;
-      } else if (ch.codeUnitAt(0) >= 0x61 && ch.codeUnitAt(0) <= 0x7A) {
+      } else if (c >= 0x61 && c <= 0x7A) {
         hasLower = true;
-      } else if (ch.codeUnitAt(0) >= 0x30 && ch.codeUnitAt(0) <= 0x39) {
+      } else if (c >= 0x30 && c <= 0x39) {
         hasDigit = true;
-      } else if (specials.contains(ch)) {
+      } else if (specials.contains(String.fromCharCode(c))) {
         hasSpecial = true;
       }
     }
@@ -39,7 +38,13 @@ class PasswordPolicy {
     if (hasLower) kinds++;
     if (hasDigit) kinds++;
     if (hasSpecial) kinds++;
-    if (kinds < 3) return AppStrings.t('pwd_weak');
+    return kinds;
+  }
+
+  /// 校验新密码：合法返回 null，否则返回可直接展示的错误文案
+  static String? errorFor(String pwd) {
+    if (pwd.length < 8) return AppStrings.t('pwd_short');
+    if (kindsOf(pwd) < 3) return AppStrings.t('pwd_weak');
     return null;
   }
 

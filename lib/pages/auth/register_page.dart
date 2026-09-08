@@ -8,6 +8,7 @@ import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
 import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/password_rules.dart';
 
 /// 注册页（设计稿 07）：邮箱 + 验证码（60s 倒计时）+ 用户名 + 密码 + 邀请码
 class RegisterPage extends StatefulWidget {
@@ -174,6 +175,7 @@ class _RegisterPageState extends State<RegisterPage> {
               _field(AppStrings.t('username_label'), _username, hint: AppStrings.t('username_hint')),
               const SizedBox(height: 12),
               _field(AppStrings.t('password_label'), _password, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
+              PasswordRuleHints(controller: _password),
               const SizedBox(height: 12),
               _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),

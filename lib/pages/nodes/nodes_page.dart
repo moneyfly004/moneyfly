@@ -676,10 +676,10 @@ class _EmptyNodesView extends StatelessWidget {
   }
 }
 
-/// 地区旗标（统一用 ProxyNode.countryFlags）
-String regionFlag(String code) =>
-    ProxyNode.countryFlags[code] ?? '\u{1F310}';
+/// 地区旗标（统一按码计算 emoji，任意国家可用）
+String regionFlag(String code) => ProxyNode.flagEmoji(code);
 
-/// 地区名（统一用 ProxyNode.countryNames）
+/// 地区名（统一用 ProxyNode.countryNames；合法未收录码显示码本身）
 String regionName(String code) =>
-    ProxyNode.countryNames[code] ?? '其他';
+    ProxyNode.countryNames[code] ??
+    (RegExp(r'^[A-Z]{2}$').hasMatch(code) && code != 'XX' ? code : '其他');

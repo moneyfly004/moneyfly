@@ -278,4 +278,74 @@ void main() {
       expect(find.text('密码修改成功'), findsOneWidget);
     });
   });
+
+  group('忘记密码页：校验失败必须有常驻可见反馈（修复「点了没反应」）', () {
+    testWidgets('弱密码 → 按钮上方红字 + SnackBar；改输入后红字清除', (tester) async {
+      _bigScreen(tester);
+      final calls = <Call>[];
+      final dio = Dio(BaseOptions(baseUrl: 'https://dy.moneyfly.top/api/v1'))
+        ..httpClientAdapter = StubAdapter(calls);
+      ApiClient.debugDio = dio;
+
+      await tester.pumpWidget(_host(const ForgotPasswordPage()));
+      await runTap(tester, find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), 'user@test.com');
+      await tester.enterText(find.byType(TextField).at(1), '654321');
+      // 弱密码：只有小写+数字两种 → 不达标
+      await tester.enterText(find.byType(TextField).at(2), 'abc12345');
+      await tester.enterText(find.byType(TextField).at(3), 'abc12345');
+      await tapButton(tester, '重置密码');
+      await tester.pump();
+
+      // 常驻红字（不随 SnackBar 消失）+ 不发请求
+      expect(find.textContaining('密码强度不足'), findsWidgets);
+      expect(calls.where((c) => c.path.endsWith('/auth/reset-password')), isEmpty);
+
+      // 修改输入 → 红字清除
+      await tester.enterText(find.byType(TextField).at(2), 'Abc12345!');
+      await tester.pump();
+      expect(find.textContaining('⚠'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('验证码缺失 → 本地拦截并提示，不发请求', (tester) async {
+      _bigScreen(tester);
+      final calls = <Call>[];
+      final dio = Dio(BaseOptions(baseUrl: 'https://dy.moneyfly.top/api/v1'))
+        ..httpClientAdapter = StubAdapter(calls);
+      ApiClient.debugDio = dio;
+
+      await tester.pumpWidget(_host(const ForgotPasswordPage()));
+      await runTap(tester, find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), 'user@test.com');
+      await tester.enterText(find.byType(TextField).at(2), 'NewAbc123!');
+      await tester.enterText(find.byType(TextField).at(3), 'NewAbc123!');
+      await tapButton(tester, '重置密码');
+      await tester.pump();
+
+      expect(find.textContaining('请输入 6 位邮箱验证码'), findsWidgets);
+      expect(calls.where((c) => c.path.endsWith('/auth/reset-password')), isEmpty);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('新密码实时规则清单随输入打勾', (tester) async {
+      _bigScreen(tester);
+      ApiClient.debugDio =
+          Dio(BaseOptions(baseUrl: 'https://dy.moneyfly.top/api/v1'))
+            ..httpClientAdapter = StubAdapter(<Call>[]);
+      await tester.pumpWidget(_host(const ForgotPasswordPage()));
+      await runTap(tester, find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('当前 0 种'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).at(2), 'Abc123');
+      await tester.pump();
+      expect(find.textContaining('当前 3 种'), findsOneWidget); // 大写+小写+数字
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
 }

@@ -15,8 +15,11 @@ class CountryFlag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = code?.toUpperCase();
-    final emoji = ProxyNode.countryFlags[c] ?? '\u{1F310}';
-    final hasAsset = c != null && ProxyNode.countryFlags.containsKey(c);
+    final emoji = ProxyNode.flagEmoji(c);
+    // 任意合法两位码都先尝试本地 PNG（assets/flags/ 全量打包），
+    // 缺图时回退按码计算的 emoji（Windows 上可能退化为字母，属兜底）
+    final hasAsset =
+        c != null && c != 'XX' && RegExp(r'^[A-Z]{2}$').hasMatch(c);
     Widget child = hasAsset
         ? Image.asset(
             'assets/flags/${c.toLowerCase()}.png',

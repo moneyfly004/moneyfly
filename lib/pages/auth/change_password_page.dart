@@ -5,6 +5,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/password_policy.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/password_rules.dart';
 
 /// 修改密码（登录态，需旧密码 + 新密码）
 class ChangePasswordPage extends StatefulWidget {
@@ -74,6 +75,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
               _field(AppStrings.t('cur_pwd'), _old, hint: AppStrings.t('cur_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 12),
               _field(AppStrings.t('new_pwd'), _newPwd, hint: AppStrings.t('new_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
+              PasswordRuleHints(controller: _newPwd),
               const SizedBox(height: 12),
               _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 26),

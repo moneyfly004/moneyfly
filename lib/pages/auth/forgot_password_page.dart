@@ -8,8 +8,12 @@ import '../../l10n/app_strings.dart';
 import '../../core/api/endpoints.dart';
 import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/password_rules.dart';
 
-/// 找回密码（设计稿 08）：邮箱验证码两步重置
+/// 找回密码（设计稿 08）：邮箱验证码两步重置。
+/// 校验反馈三层：新密码下方实时规则清单（输入即打勾）+ 按钮上方常驻
+/// 红字错误（不随 SnackBar 消失，键盘挡不住）+ 底部 SnackBar —— 修复
+/// 「密码不达标时点重置像没反应」的反馈缺失。
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
 
@@ -29,6 +33,22 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   int _countdown = 0;
   Timer? _timer;
   bool _loading = false;
+
+  /// 最近一次点「重置密码」的校验错误：常驻按钮上方（红字），
+  /// 用户修改任意输入后清除
+  String? _formError;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in [_email, _code, _newPassword, _confirm]) {
+      c.addListener(_clearFormError);
+    }
+  }
+
+  void _clearFormError() {
+    if (_formError != null && mounted) setState(() => _formError = null);
+  }
 
   @override
   void dispose() {
@@ -67,13 +87,29 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     }
   }
 
+  /// 校验失败统一出口：红字常驻按钮上方 + SnackBar 双通道提示
+  void _fail(String msg) {
+    setState(() => _formError = msg);
+    _toast(msg);
+  }
+
   Future<void> _reset() async {
-    // 与后端同规则校验新密码（长度 + 四类字符至少三种）
+    // 就地校验（与后端同规则），失败原因常驻显示，绝不「点了没反应」
+    if (!looksLikeEmail(_email.text)) {
+      return _fail(AppStrings.t('email_reg_invalid'));
+    }
+    if (_code.text.trim().length != 6) {
+      return _fail(AppStrings.t('code_required'));
+    }
     final pwdErr = PasswordPolicy.errorFor(_newPassword.text);
-    if (pwdErr != null) return _toast(pwdErr);
-    if (_newPassword.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
-    if (!looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_reg_invalid'));
-    setState(() => _loading = true);
+    if (pwdErr != null) return _fail(pwdErr);
+    if (_newPassword.text != _confirm.text) {
+      return _fail(AppStrings.t('pwd_mismatch'));
+    }
+    setState(() {
+      _formError = null;
+      _loading = true;
+    });
     try {
       await ApiClient.instance.post(Endpoints.resetPassword, data: {
         'email': _email.text.trim(),
@@ -83,7 +119,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       _toast(AppStrings.t('pwd_reset'));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      // 服务端拒绝（验证码错误/过期等）：同样常驻显示真实原因
+      if (mounted) _fail(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -166,11 +203,21 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               const SizedBox(height: 12),
               _field(AppStrings.t('new_pwd'), _newPassword,
                   hint: PasswordPolicy.hint, obscure: _obscure, suffix: _eyeBtn()),
+              // 实时规则清单：输入即打勾，提交前就知道差哪一条
+              PasswordRuleHints(controller: _newPassword),
               const SizedBox(height: 12),
               _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
               const SizedBox(height: 14),
                Text(AppStrings.t('forgot_tip'),
                   style: TextStyle(fontSize: 11, color: MFColors.txt3, height: 1.7)),
+              // 校验失败原因常驻此处（红字），键盘挡不住、不会一闪而过
+              if (_formError != null) ...[
+                const SizedBox(height: 10),
+                Text('⚠ $_formError',
+                    style: const TextStyle(
+                        fontSize: 12, color: MFColors.red, height: 1.5,
+                        fontWeight: FontWeight.w600)),
+              ],
               const SizedBox(height: 22),
               MFPrimaryButton(label: AppStrings.t('reset_pwd_btn'), loading: _loading, onPressed: _loading ? null : _reset),
             ],

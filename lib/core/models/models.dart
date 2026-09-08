@@ -483,35 +483,81 @@ class ProxyNode {
         online: online,
       );
 
+  /// 国家/地区中文名（ISO 3166 两位码）。覆盖 VPN 服务商常见的全部落地区域;
+  /// 未收录的合法代码 UI 直接显示代码本身，旗帜由 [flagEmoji] 按码计算，
+  /// 不会再出现「节点存在但归到『其他』」的情况。
   static const countryNames = {
-    'HK': '香港', 'TW': '台湾', 'JP': '日本', 'SG': '新加坡', 'KR': '韩国',
-    'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-    'CA': '加拿大', 'RU': '俄罗斯', 'IN': '印度', 'TH': '泰国', 'VN': '越南',
-    'NL': '荷兰', 'SE': '瑞典', 'FI': '芬兰', 'CH': '瑞士', 'AE': '阿联酋',
-    'PH': '菲律宾', 'MY': '马来西亚', 'ID': '印尼', 'TR': '土耳其',
-    'BR': '巴西', 'AR': '阿根廷', 'IE': '爱尔兰', 'PL': '波兰',
-    'IT': '意大利', 'ES': '西班牙', 'PT': '葡萄牙', 'MX': '墨西哥',
-    'CL': '智利', 'ZA': '南非', 'KZ': '哈萨克斯坦', 'UA': '乌克兰',
+    // 东亚
+    'HK': '香港', 'MO': '澳门', 'TW': '台湾', 'JP': '日本', 'KR': '韩国',
+    'CN': '中国', 'MN': '蒙古',
+    // 东南亚
+    'SG': '新加坡', 'VN': '越南', 'TH': '泰国', 'PH': '菲律宾',
+    'MY': '马来西亚', 'ID': '印尼', 'KH': '柬埔寨', 'LA': '老挝',
+    'MM': '缅甸', 'BN': '文莱',
+    // 南亚
+    'IN': '印度', 'PK': '巴基斯坦', 'BD': '孟加拉', 'LK': '斯里兰卡',
+    'NP': '尼泊尔', 'BT': '不丹', 'MV': '马尔代夫',
+    // 中亚
+    'KZ': '哈萨克斯坦', 'UZ': '乌兹别克斯坦', 'KG': '吉尔吉斯斯坦',
+    'TJ': '塔吉克斯坦', 'TM': '土库曼斯坦',
+    // 中东
+    'AE': '阿联酋', 'TR': '土耳其', 'SA': '沙特阿拉伯', 'QA': '卡塔尔',
+    'KW': '科威特', 'BH': '巴林', 'OM': '阿曼', 'JO': '约旦',
+    'IL': '以色列', 'LB': '黎巴嫩', 'IQ': '伊拉克', 'IR': '伊朗',
+    'SY': '叙利亚', 'YE': '也门',
+    // 欧亚 / 高加索
+    'RU': '俄罗斯', 'UA': '乌克兰', 'BY': '白俄罗斯', 'GE': '格鲁吉亚',
+    'AM': '亚美尼亚', 'AZ': '阿塞拜疆', 'MD': '摩尔多瓦',
+    // 欧洲
+    'DE': '德国', 'NL': '荷兰', 'FR': '法国', 'CH': '瑞士', 'GB': '英国',
+    'IE': '爱尔兰', 'SE': '瑞典', 'FI': '芬兰', 'NO': '挪威', 'DK': '丹麦',
+    'IS': '冰岛', 'PL': '波兰', 'IT': '意大利', 'ES': '西班牙',
+    'PT': '葡萄牙', 'AT': '奥地利', 'BE': '比利时', 'LU': '卢森堡',
+    'CZ': '捷克', 'SK': '斯洛伐克', 'HU': '匈牙利', 'GR': '希腊',
+    'RO': '罗马尼亚', 'BG': '保加利亚', 'RS': '塞尔维亚', 'HR': '克罗地亚',
+    'SI': '斯洛文尼亚', 'EE': '爱沙尼亚', 'LT': '立陶宛', 'LV': '拉脱维亚',
+    'MT': '马耳他', 'CY': '塞浦路斯', 'MK': '北马其顿', 'AL': '阿尔巴尼亚',
+    'BA': '波黑', 'ME': '黑山', 'GI': '直布罗陀', 'LI': '列支敦士登',
+    'MC': '摩纳哥', 'AD': '安道尔', 'SM': '圣马力诺',
+    // 大洋洲
+    'AU': '澳大利亚', 'NZ': '新西兰', 'FJ': '斐济', 'GU': '关岛',
+    // 北美 / 加勒比
+    'US': '美国', 'CA': '加拿大', 'MX': '墨西哥', 'PA': '巴拿马',
+    'CR': '哥斯达黎加', 'GT': '危地马拉', 'HN': '洪都拉斯',
+    'SV': '萨尔瓦多', 'NI': '尼加拉瓜', 'DO': '多米尼加',
+    'PR': '波多黎各', 'JM': '牙买加', 'CU': '古巴', 'BS': '巴哈马',
+    'BZ': '伯利兹', 'TT': '特立尼达和多巴哥', 'BB': '巴巴多斯',
+    'KY': '开曼群岛', 'BM': '百慕大', 'VG': '英属维尔京',
+    // 南美
+    'BR': '巴西', 'CL': '智利', 'AR': '阿根廷', 'CO': '哥伦比亚',
+    'PE': '秘鲁', 'VE': '委内瑞拉', 'EC': '厄瓜多尔', 'UY': '乌拉圭',
+    'PY': '巴拉圭', 'BO': '玻利维亚',
+    // 非洲
+    'ZA': '南非', 'EG': '埃及', 'MA': '摩洛哥', 'TN': '突尼斯',
+    'DZ': '阿尔及利亚', 'LY': '利比亚', 'NG': '尼日利亚', 'KE': '肯尼亚',
+    'ET': '埃塞俄比亚', 'GH': '加纳', 'TZ': '坦桑尼亚', 'UG': '乌干达',
+    'AO': '安哥拉', 'ZW': '津巴布韦', 'SN': '塞内加尔', 'CM': '喀麦隆',
+    'RW': '卢旺达', 'MU': '毛里求斯', 'SC': '塞舌尔',
   };
 
-  static const countryFlags = {
-    'HK': '\u{1F1ED}\u{1F1F0}', 'TW': '\u{1F1F9}\u{1F1FC}', 'JP': '\u{1F1EF}\u{1F1F5}',
-    'SG': '\u{1F1F8}\u{1F1EC}', 'KR': '\u{1F1F0}\u{1F1F7}', 'US': '\u{1F1FA}\u{1F1F8}',
-    'GB': '\u{1F1EC}\u{1F1E7}', 'DE': '\u{1F1E9}\u{1F1EA}', 'FR': '\u{1F1EB}\u{1F1F7}',
-    'AU': '\u{1F1E6}\u{1F1FA}', 'CA': '\u{1F1E8}\u{1F1E6}', 'RU': '\u{1F1F7}\u{1F1FA}',
-    'IN': '\u{1F1EE}\u{1F1F3}', 'TH': '\u{1F1F9}\u{1F1ED}', 'VN': '\u{1F1FB}\u{1F1F3}',
-    'NL': '\u{1F1F3}\u{1F1F1}', 'SE': '\u{1F1F8}\u{1F1EA}', 'FI': '\u{1F1EB}\u{1F1EE}',
-    'CH': '\u{1F1E8}\u{1F1ED}', 'AE': '\u{1F1E6}\u{1F1EA}', 'PH': '\u{1F1F5}\u{1F1ED}',
-    'MY': '\u{1F1F2}\u{1F1FE}', 'ID': '\u{1F1EE}\u{1F1E9}', 'TR': '\u{1F1F9}\u{1F1F7}',
-    'BR': '\u{1F1E7}\u{1F1F7}', 'AR': '\u{1F1E6}\u{1F1F7}', 'IE': '\u{1F1EE}\u{1F1EA}',
-    'PL': '\u{1F1F5}\u{1F1F1}', 'IT': '\u{1F1EE}\u{1F1F9}', 'ES': '\u{1F1EA}\u{1F1F8}',
-    'PT': '\u{1F1F5}\u{1F1F9}', 'MX': '\u{1F1F2}\u{1F1FD}', 'CL': '\u{1F1E8}\u{1F1F1}',
-    'ZA': '\u{1F1FF}\u{1F1E6}', 'KZ': '\u{1F1F0}\u{1F1FF}', 'UA': '\u{1F1FA}\u{1F1E6}',
-  };
+  /// 由 ISO 两位码计算国旗 emoji（区域指示符拼合），任意国家零维护;
+  /// 无效码 / 'XX'（未识别）回退地球图标。
+  static String flagEmoji(String? code) {
+    final c = code?.toUpperCase();
+    if (c == null || c.length != 2 || c == 'XX') return '\u{1F310}';
+    final a = c.codeUnitAt(0), b = c.codeUnitAt(1);
+    if (a < 0x41 || a > 0x5A || b < 0x41 || b > 0x5A) return '\u{1F310}';
+    return String.fromCharCodes([0x1F1E6 + a - 0x41, 0x1F1E6 + b - 0x41]);
+  }
 
-  String get flag => countryFlags[countryCode?.toUpperCase()] ?? '\u{1F310}';
+  String get flag => flagEmoji(countryCode);
 
-  String get regionName => countryNames[countryCode?.toUpperCase()] ?? '其他';
+  /// 展示名：已收录 → 中文名；合法但未收录 → 代码本身（不再一律「其他」）
+  String get regionName {
+    final c = countryCode?.toUpperCase();
+    if (c == null || c == 'XX') return '其他';
+    return countryNames[c] ?? c;
+  }
 
   /// 节点列表国家/地区展示顺序：热门在前（港·日·新·美，用户指定），
   /// 其余按「距中国远近」由近及远。三端节点列表统一用此顺序。
@@ -519,33 +565,47 @@ class ProxyNode {
     // 热门（固定置顶顺序）
     'HK', 'JP', 'SG', 'US',
     // 东亚近邻
-    'TW', 'KR',
+    'TW', 'KR', 'MO', 'CN', 'MN',
     // 东南亚
-    'VN', 'TH', 'PH', 'MY', 'ID',
-    // 南亚 / 中亚
-    'IN', 'KZ',
+    'VN', 'TH', 'PH', 'MY', 'ID', 'KH', 'LA', 'MM', 'BN',
+    // 南亚
+    'IN', 'PK', 'BD', 'LK', 'NP', 'BT', 'MV',
+    // 中亚
+    'KZ', 'UZ', 'KG', 'TJ', 'TM',
     // 中东
-    'AE', 'TR',
-    // 欧亚 / 东欧
-    'RU', 'UA',
+    'AE', 'TR', 'SA', 'QA', 'KW', 'BH', 'OM', 'JO', 'IL', 'LB',
+    'IQ', 'IR', 'SY', 'YE',
+    // 欧亚 / 东欧 / 高加索
+    'RU', 'UA', 'BY', 'GE', 'AM', 'AZ', 'MD',
     // 欧洲
-    'DE', 'NL', 'FR', 'CH', 'GB', 'IE', 'SE', 'FI', 'PL', 'IT', 'ES', 'PT',
+    'DE', 'NL', 'FR', 'CH', 'GB', 'IE', 'SE', 'FI', 'NO', 'DK', 'IS',
+    'PL', 'IT', 'ES', 'PT', 'AT', 'BE', 'LU', 'CZ', 'SK', 'HU', 'GR',
+    'RO', 'BG', 'RS', 'HR', 'SI', 'EE', 'LT', 'LV', 'MT', 'CY', 'MK',
+    'AL', 'BA', 'ME', 'GI', 'LI', 'MC', 'AD', 'SM',
     // 大洋洲
-    'AU',
-    // 北美（美国已置顶）
-    'CA', 'MX',
+    'AU', 'NZ', 'FJ', 'GU',
+    // 北美 / 加勒比（美国已置顶）
+    'CA', 'MX', 'PA', 'CR', 'GT', 'HN', 'SV', 'NI', 'DO', 'PR', 'JM',
+    'CU', 'BS', 'BZ', 'TT', 'BB', 'KY', 'BM', 'VG',
     // 南美
-    'BR', 'CL', 'AR',
+    'BR', 'CL', 'AR', 'CO', 'PE', 'VE', 'EC', 'UY', 'PY', 'BO',
     // 非洲
-    'ZA',
+    'ZA', 'EG', 'MA', 'TN', 'DZ', 'LY', 'NG', 'KE', 'ET', 'GH', 'TZ',
+    'UG', 'AO', 'ZW', 'SN', 'CM', 'RW', 'MU', 'SC',
   ];
 
-  /// 国家排序权重：越小越靠前。已列入按其位次；已知但未列入→998；未知→999。
+  /// 国家排序权重：越小越靠前。已列入按其位次；合法但未列入的代码按
+  /// 字母序稳定分组（200~875，保证同国节点聚在一起且排在「未知」前）；
+  /// 未知（null/XX/非法）→ 999 恒最后。
   static int countryRank(String? code) {
-    if (code == null || code.isEmpty) return 999;
-    final i = countryOrder.indexOf(code.toUpperCase());
+    if (code == null || code.length != 2) return 999;
+    final c = code.toUpperCase();
+    if (c == 'XX') return 999;
+    final i = countryOrder.indexOf(c);
     if (i >= 0) return i;
-    return countryNames.containsKey(code.toUpperCase()) ? 998 : 999;
+    final a = c.codeUnitAt(0) - 0x41, b = c.codeUnitAt(1) - 0x41;
+    if (a < 0 || a > 25 || b < 0 || b > 25) return 999;
+    return 200 + a * 26 + b;
   }
 
   /// 节点列表统一比较器：国家（距中国远近/热门）→ 在线优先 → 延迟升序 → 名称。
@@ -592,10 +652,26 @@ class ProxyNode {
     );
   }
 
+  /// 短代码匹配（jp-1、US_02、hk01、sg-premium 等）。
+  /// 两侧必须是非字母（避免 CHINA 误匹配 IN）。刻意排除的高误判码：
+  ///  - CN：节点名常见「CN2/CN2 GIA」线路标注，会整批误判成中国
+  ///  - LA：美国节点常用 LA 指洛杉矶，不能按老挝解析
+  ///  - ME：常被用作「中东/Middle East」区域缩写，黑山只认全称
+  ///  - BT：中文节点常见「禁BT」标注，不丹只认全称
   static final _prefixCodeRe = RegExp(
     r'(?:^|[^A-Z])('
-    r'HK|TW|JP|SG|KR|US|UK|GB|DE|FR|AU|CA|RU|IN|TH|VN|NL|SE|FI|CH|AE'
-    r'|PH|MY|ID|TR|BR|AR|IE|PL|IT|ES|PT|MX|CL|ZA|KZ|UA'
+    r'HK|MO|TW|JP|KR|MN'
+    r'|SG|VN|TH|PH|MY|ID|KH|MM|BN'
+    r'|IN|PK|BD|LK|NP|MV'
+    r'|KZ|UZ|KG|TJ|TM'
+    r'|AE|TR|SA|QA|KW|BH|OM|JO|IL|LB|IQ|IR|SY|YE'
+    r'|RU|UA|BY|GE|AM|AZ|MD'
+    r'|DE|NL|FR|CH|GB|UK|IE|SE|FI|NO|DK|IS|PL|IT|ES|PT|AT|BE|LU'
+    r'|CZ|SK|HU|GR|RO|BG|RS|HR|SI|EE|LT|LV|MT|CY|MK|AL|BA|GI|LI|MC|AD|SM'
+    r'|AU|NZ|FJ|GU'
+    r'|US|CA|MX|PA|CR|GT|HN|SV|NI|DO|PR|JM|CU|BS|BZ|TT|BB|KY|BM|VG'
+    r'|BR|CL|AR|CO|PE|VE|EC|UY|PY|BO'
+    r'|ZA|EG|MA|TN|DZ|LY|NG|KE|ET|GH|TZ|UG|AO|ZW|SN|CM|RW|MU|SC'
     r')(?:$|[^A-Z])',
   );
 
@@ -606,46 +682,232 @@ class ProxyNode {
   static String _inferCountry(String tag, String? region) {
     final upper = '$tag $region'.toUpperCase();
 
-    // 1) 中文/全称/城市名匹配（精确子串）
+    // 1) 中文/全称/城市名匹配（精确子串，按插入顺序检查）。
+    //    顺序即优先级，用于消除子串歧义：
+    //    「印度尼西亚」须先于「印度」、「内蒙古」先于「蒙古」、
+    //    「ROMANIA」先于「OMAN」、美国城市先于「GEORGIA」等。
     const nameMap = {
-      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK',
-      '台湾': 'TW', 'TAIWAN': 'TW', '台北': 'TW',
-      '日本': 'JP', 'JAPAN': 'JP', 'TOKYO': 'JP', '大阪': 'JP', '东京': 'JP', 'OSAKA': 'JP',
-      '新加坡': 'SG', 'SINGAPORE': 'SG',
-      '韩国': 'KR', 'KOREA': 'KR', 'SEOUL': 'KR', '首尔': 'KR',
-      '美国': 'US', 'USA': 'US', 'UNITED STATES': 'US', 'LOS ANGELES': 'US', 'SEATTLE': 'US', 'SAN JOSE': 'US', 'NEW YORK': 'US', '洛杉矶': 'US', '纽约': 'US', '西雅图': 'US', '硅谷': 'US', 'SILICON': 'US', 'DALLAS': 'US', 'CHICAGO': 'US',
-      '英国': 'GB', 'UNITED KINGDOM': 'GB', 'LONDON': 'GB', '伦敦': 'GB',
-      '德国': 'DE', 'GERMANY': 'DE', 'FRANKFURT': 'DE', '法兰克福': 'DE',
-      '法国': 'FR', 'FRANCE': 'FR', 'PARIS': 'FR', '巴黎': 'FR',
-      '澳大利亚': 'AU', 'AUSTRALIA': 'AU', 'SYDNEY': 'AU', '悉尼': 'AU',
-      '加拿大': 'CA', 'CANADA': 'CA', 'TORONTO': 'CA', 'VANCOUVER': 'CA',
-      '俄罗斯': 'RU', 'RUSSIA': 'RU', 'MOSCOW': 'RU', '莫斯科': 'RU',
-      '印度': 'IN', 'INDIA': 'IN', 'MUMBAI': 'IN', '孟买': 'IN',
+      // —— 东亚 ——
+      '香港': 'HK', 'HONGKONG': 'HK', 'HONG KONG': 'HK', 'HKG': 'HK',
+      '澳门': 'MO', 'MACAO': 'MO', 'MACAU': 'MO',
+      '台湾': 'TW', 'TAIWAN': 'TW', '台北': 'TW', '新北': 'TW', '台中': 'TW',
+      '高雄': 'TW', 'KAOHSIUNG': 'TW', 'TWN': 'TW', '彰化': 'TW',
+      '日本': 'JP', 'JAPAN': 'JP', 'TOKYO': 'JP', '大阪': 'JP', '东京': 'JP',
+      'OSAKA': 'JP', 'NAGOYA': 'JP', '名古屋': 'JP', 'FUKUOKA': 'JP',
+      '福冈': 'JP', 'SAITAMA': 'JP', '埼玉': 'JP', 'JPN': 'JP',
+      '韩国': 'KR', 'KOREA': 'KR', 'SEOUL': 'KR', '首尔': 'KR', '釜山': 'KR',
+      'BUSAN': 'KR', 'KOR': 'KR',
+      '内蒙古': 'CN', // 先于「蒙古」检查，避免境内中转节点被判成蒙古国
+      '蒙古': 'MN', 'MONGOLIA': 'MN', 'ULAANBAATAR': 'MN', '乌兰巴托': 'MN',
+      // —— 东南亚 ——
+      '新加坡': 'SG', 'SINGAPORE': 'SG', 'SGP': 'SG', '狮城': 'SG',
+      '越南': 'VN', 'VIETNAM': 'VN', 'HANOI': 'VN', '河内': 'VN',
+      'HO CHI MINH': 'VN', 'HOCHIMINH': 'VN', '胡志明': 'VN', 'SAIGON': 'VN',
       '泰国': 'TH', 'THAILAND': 'TH', 'BANGKOK': 'TH', '曼谷': 'TH',
-      '越南': 'VN', 'VIETNAM': 'VN',
-      '荷兰': 'NL', 'NETHERLANDS': 'NL', 'AMSTERDAM': 'NL', '阿姆斯特丹': 'NL',
+      '菲律宾': 'PH', 'PHILIPPINES': 'PH', 'MANILA': 'PH', '马尼拉': 'PH',
+      '马来西亚': 'MY', 'MALAYSIA': 'MY', 'KUALA LUMPUR': 'MY',
+      'KUALALUMPUR': 'MY', '吉隆坡': 'MY',
+      '印度尼西亚': 'ID', // 先于「印度」检查，否则被误判成 IN
+      '印尼': 'ID', 'INDONESIA': 'ID', 'JAKARTA': 'ID', '雅加达': 'ID',
+      '柬埔寨': 'KH', 'CAMBODIA': 'KH', 'PHNOM PENH': 'KH', 'PHNOMPENH': 'KH',
+      '金边': 'KH',
+      '老挝': 'LA', 'LAOS': 'LA', 'VIENTIANE': 'LA', '万象': 'LA',
+      '缅甸': 'MM', 'MYANMAR': 'MM', 'YANGON': 'MM', '仰光': 'MM',
+      '文莱': 'BN', 'BRUNEI': 'BN',
+      // —— 南亚 ——
+      '印度': 'IN', 'INDIA': 'IN', 'MUMBAI': 'IN', '孟买': 'IN',
+      'CHENNAI': 'IN', '钦奈': 'IN', 'BANGALORE': 'IN', '班加罗尔': 'IN',
+      'DELHI': 'IN', '新德里': 'IN',
+      '巴基斯坦': 'PK', 'PAKISTAN': 'PK', 'KARACHI': 'PK', '卡拉奇': 'PK',
+      'ISLAMABAD': 'PK',
+      '孟加拉': 'BD', 'BANGLADESH': 'BD', 'DHAKA': 'BD', '达卡': 'BD',
+      '斯里兰卡': 'LK', 'SRI LANKA': 'LK', 'SRILANKA': 'LK', 'COLOMBO': 'LK',
+      '科伦坡': 'LK',
+      '尼泊尔': 'NP', 'NEPAL': 'NP', 'KATHMANDU': 'NP', '加德满都': 'NP',
+      '不丹': 'BT', 'BHUTAN': 'BT',
+      '马尔代夫': 'MV', 'MALDIVES': 'MV',
+      // —— 中亚 ——
+      '哈萨克': 'KZ', 'KAZAKHSTAN': 'KZ', 'ALMATY': 'KZ', '阿拉木图': 'KZ',
+      'ASTANA': 'KZ', '阿斯塔纳': 'KZ',
+      '乌兹别克': 'UZ', 'UZBEKISTAN': 'UZ', 'TASHKENT': 'UZ', '塔什干': 'UZ',
+      '吉尔吉斯': 'KG', 'KYRGYZSTAN': 'KG', 'BISHKEK': 'KG', '比什凯克': 'KG',
+      '塔吉克': 'TJ', 'TAJIKISTAN': 'TJ', 'DUSHANBE': 'TJ',
+      '土库曼': 'TM', 'TURKMENISTAN': 'TM',
+      // —— 中东 ——
       '阿联酋': 'AE', 'DUBAI': 'AE', 'UAE': 'AE', '迪拜': 'AE',
-      '瑞典': 'SE', 'SWEDEN': 'SE',
-      '芬兰': 'FI', 'FINLAND': 'FI',
-      '瑞士': 'CH', 'SWITZERLAND': 'CH', 'ZURICH': 'CH',
-      '菲律宾': 'PH', 'PHILIPPINES': 'PH', 'MANILA': 'PH',
-      '马来西亚': 'MY', 'MALAYSIA': 'MY',
-      '印尼': 'ID', 'INDONESIA': 'ID', 'JAKARTA': 'ID',
-      '土耳其': 'TR', 'TURKEY': 'TR', 'ISTANBUL': 'TR',
-      '巴西': 'BR', 'BRAZIL': 'BR', 'SAO PAULO': 'BR',
-      '阿根廷': 'AR', 'ARGENTINA': 'AR',
-      '爱尔兰': 'IE', 'IRELAND': 'IE', 'DUBLIN': 'IE',
-      '波兰': 'PL', 'POLAND': 'PL', 'WARSAW': 'PL',
-      '意大利': 'IT', 'ITALY': 'IT', 'MILAN': 'IT',
-      '西班牙': 'ES', 'SPAIN': 'ES', 'MADRID': 'ES',
+      'ABU DHABI': 'AE', '阿布扎比': 'AE',
+      '土耳其': 'TR', 'TURKEY': 'TR', 'ISTANBUL': 'TR', '伊斯坦布尔': 'TR',
+      'ANKARA': 'TR',
+      '沙特': 'SA', 'SAUDI': 'SA', 'RIYADH': 'SA', '利雅得': 'SA',
+      'JEDDAH': 'SA', '吉达': 'SA',
+      '卡塔尔': 'QA', 'QATAR': 'QA', 'DOHA': 'QA', '多哈': 'QA',
+      '科威特': 'KW', 'KUWAIT': 'KW',
+      '巴林': 'BH', 'BAHRAIN': 'BH',
+      '约旦': 'JO', 'JORDAN': 'JO', 'AMMAN': 'JO', '安曼': 'JO',
+      '以色列': 'IL', 'ISRAEL': 'IL', 'TEL AVIV': 'IL', 'TELAVIV': 'IL',
+      '特拉维夫': 'IL',
+      '黎巴嫩': 'LB', 'LEBANON': 'LB', 'BEIRUT': 'LB', '贝鲁特': 'LB',
+      '伊拉克': 'IQ', 'BAGHDAD': 'IQ', '巴格达': 'IQ',
+      '伊朗': 'IR', 'TEHRAN': 'IR', '德黑兰': 'IR',
+      '叙利亚': 'SY',
+      '也门': 'YE', 'YEMEN': 'YE',
+      // —— 欧亚 / 高加索 ——
+      '俄罗斯': 'RU', 'RUSSIA': 'RU', 'MOSCOW': 'RU', '莫斯科': 'RU',
+      'PETERSBURG': 'RU', '圣彼得堡': 'RU', 'NOVOSIBIRSK': 'RU',
+      '新西伯利亚': 'RU', 'KHABAROVSK': 'RU', '伯力': 'RU',
+      '乌克兰': 'UA', 'UKRAINE': 'UA', 'KYIV': 'UA', 'KIEV': 'UA',
+      '基辅': 'UA',
+      '白俄罗斯': 'BY', 'BELARUS': 'BY', 'MINSK': 'BY', '明斯克': 'BY',
+      '格鲁吉亚': 'GE', 'TBILISI': 'GE', '第比利斯': 'GE',
+      '亚美尼亚': 'AM', 'ARMENIA': 'AM', 'YEREVAN': 'AM', '埃里温': 'AM',
+      '阿塞拜疆': 'AZ', 'AZERBAIJAN': 'AZ', 'BAKU': 'AZ', '巴库': 'AZ',
+      '摩尔多瓦': 'MD', 'MOLDOVA': 'MD',
+      // —— 欧洲 ——
+      '英国': 'GB', 'UNITED KINGDOM': 'GB', 'LONDON': 'GB', '伦敦': 'GB',
+      'MANCHESTER': 'GB', '曼彻斯特': 'GB',
+      '德国': 'DE', 'GERMANY': 'DE', 'FRANKFURT': 'DE', '法兰克福': 'DE',
+      'MUNICH': 'DE', '慕尼黑': 'DE', 'BERLIN': 'DE', '柏林': 'DE',
+      'DUSSELDORF': 'DE',
+      '法国': 'FR', 'FRANCE': 'FR', 'PARIS': 'FR', '巴黎': 'FR',
+      'MARSEILLE': 'FR', '马赛': 'FR',
+      '荷兰': 'NL', 'NETHERLANDS': 'NL', 'AMSTERDAM': 'NL', '阿姆斯特丹': 'NL',
+      '瑞士': 'CH', 'SWITZERLAND': 'CH', 'ZURICH': 'CH', '苏黎世': 'CH',
+      'GENEVA': 'CH', '日内瓦': 'CH',
+      '爱尔兰': 'IE', 'IRELAND': 'IE', 'DUBLIN': 'IE', '都柏林': 'IE',
+      '瑞典': 'SE', 'SWEDEN': 'SE', 'STOCKHOLM': 'SE', '斯德哥尔摩': 'SE',
+      '芬兰': 'FI', 'FINLAND': 'FI', 'HELSINKI': 'FI', '赫尔辛基': 'FI',
+      '挪威': 'NO', 'NORWAY': 'NO', 'OSLO': 'NO', '奥斯陆': 'NO',
+      '丹麦': 'DK', 'DENMARK': 'DK', 'COPENHAGEN': 'DK', '哥本哈根': 'DK',
+      '冰岛': 'IS', 'ICELAND': 'IS', 'REYKJAVIK': 'IS', '雷克雅未克': 'IS',
+      '波兰': 'PL', 'POLAND': 'PL', 'WARSAW': 'PL', '华沙': 'PL',
+      '意大利': 'IT', 'ITALY': 'IT', 'MILAN': 'IT', '米兰': 'IT',
+      'ROME': 'IT', '罗马': 'IT',
+      '西班牙': 'ES', 'SPAIN': 'ES', 'MADRID': 'ES', '马德里': 'ES',
+      'BARCELONA': 'ES', '巴塞罗那': 'ES',
+      '葡萄牙': 'PT', 'PORTUGAL': 'PT', 'LISBON': 'PT', '里斯本': 'PT',
+      // 「AUSTRIA」在前：'AUS' 是它的子串；澳大利亚不收 'AUS' 缩写键
+      // （会误伤 AUSTRIA / 美国 AUSTIN），短码场景由正则 AU 兜底
+      '奥地利': 'AT', 'AUSTRIA': 'AT', 'VIENNA': 'AT', '维也纳': 'AT',
+      '澳大利亚': 'AU', '澳洲': 'AU', 'AUSTRALIA': 'AU', 'SYDNEY': 'AU',
+      '悉尼': 'AU', 'MELBOURNE': 'AU', '墨尔本': 'AU', 'BRISBANE': 'AU',
+      '布里斯班': 'AU', 'PERTH': 'AU', '珀斯': 'AU',
+      '比利时': 'BE', 'BELGIUM': 'BE', 'BRUSSELS': 'BE', '布鲁塞尔': 'BE',
+      '卢森堡': 'LU', 'LUXEMBOURG': 'LU',
+      '捷克': 'CZ', 'CZECH': 'CZ', 'PRAGUE': 'CZ', '布拉格': 'CZ',
+      '斯洛伐克': 'SK', 'SLOVAKIA': 'SK',
+      '匈牙利': 'HU', 'HUNGARY': 'HU', 'BUDAPEST': 'HU', '布达佩斯': 'HU',
+      '希腊': 'GR', 'GREECE': 'GR', 'ATHENS': 'GR', '雅典': 'GR',
+      // 「ROMANIA」必须先于「OMAN」检查（OMAN 是它的子串）
+      '罗马尼亚': 'RO', 'ROMANIA': 'RO', 'BUCHAREST': 'RO', '布加勒斯特': 'RO',
+      '阿曼': 'OM', 'OMAN': 'OM', 'MUSCAT': 'OM', '马斯喀特': 'OM',
+      '保加利亚': 'BG', 'BULGARIA': 'BG', 'SOFIA': 'BG', '索菲亚': 'BG',
+      '塞尔维亚': 'RS', 'SERBIA': 'RS', 'BELGRADE': 'RS', '贝尔格莱德': 'RS',
+      '克罗地亚': 'HR', 'CROATIA': 'HR', 'ZAGREB': 'HR', '萨格勒布': 'HR',
+      '斯洛文尼亚': 'SI', 'SLOVENIA': 'SI',
+      '爱沙尼亚': 'EE', 'ESTONIA': 'EE', 'TALLINN': 'EE', '塔林': 'EE',
+      '立陶宛': 'LT', 'LITHUANIA': 'LT', 'VILNIUS': 'LT', '维尔纽斯': 'LT',
+      '拉脱维亚': 'LV', 'LATVIA': 'LV', 'RIGA': 'LV', '里加': 'LV',
+      '马耳他': 'MT', 'MALTA': 'MT',
+      '塞浦路斯': 'CY', 'CYPRUS': 'CY',
+      '马其顿': 'MK', 'MACEDONIA': 'MK',
+      '阿尔巴尼亚': 'AL', 'ALBANIA': 'AL',
+      '波黑': 'BA', 'BOSNIA': 'BA',
+      '黑山': 'ME', 'MONTENEGRO': 'ME',
+      '直布罗陀': 'GI', 'GIBRALTAR': 'GI',
+      '列支敦士登': 'LI', 'LIECHTENSTEIN': 'LI',
+      '摩纳哥': 'MC', 'MONACO': 'MC',
+      '安道尔': 'AD', 'ANDORRA': 'AD',
+      '圣马力诺': 'SM', 'SAN MARINO': 'SM',
+      // —— 美国（城市在前：ATLANTA 必须先于 GEORGIA，波士顿先于 MA 码等）——
+      '美国': 'US', 'USA': 'US', 'UNITED STATES': 'US',
+      'LOS ANGELES': 'US', 'LOSANGELES': 'US', '洛杉矶': 'US',
+      'SEATTLE': 'US', '西雅图': 'US', 'SAN JOSE': 'US', 'SANJOSE': 'US',
+      '圣何塞': 'US', 'NEW YORK': 'US', 'NEWYORK': 'US', '纽约': 'US',
+      '硅谷': 'US', 'SILICON': 'US', 'DALLAS': 'US', '达拉斯': 'US',
+      'CHICAGO': 'US', '芝加哥': 'US', 'MIAMI': 'US', '迈阿密': 'US',
+      'ATLANTA': 'US', '亚特兰大': 'US', 'BOSTON': 'US', '波士顿': 'US',
+      'HOUSTON': 'US', '休斯敦': 'US', 'PHOENIX': 'US', '凤凰城': 'US',
+      'SAN FRANCISCO': 'US', 'SANFRANCISCO': 'US', '旧金山': 'US',
+      'LAS VEGAS': 'US', 'LASVEGAS': 'US', '拉斯维加斯': 'US',
+      'PORTLAND': 'US', 'DENVER': 'US', '丹佛': 'US', 'ASHBURN': 'US',
+      'BUFFALO': 'US', 'NEW JERSEY': 'US', 'VIRGINIA': 'US',
+      'WASHINGTON': 'US', '华盛顿': 'US', 'OREGON': 'US', 'SALT LAKE': 'US',
+      // 「GEORGIA」歧义（美国州 vs 格鲁吉亚国）：城市名已在前面兜底，
+      // 走到这里的按格鲁吉亚国处理
+      'GEORGIA': 'GE',
+      '加拿大': 'CA', 'CANADA': 'CA', 'TORONTO': 'CA', '多伦多': 'CA',
+      'VANCOUVER': 'CA', '温哥华': 'CA', 'MONTREAL': 'CA', '蒙特利尔': 'CA',
+      '墨西哥': 'MX', 'MEXICO': 'MX',
+      '巴拿马': 'PA', 'PANAMA': 'PA',
+      '哥斯达黎加': 'CR', 'COSTA RICA': 'CR', 'COSTARICA': 'CR',
+      '危地马拉': 'GT', 'GUATEMALA': 'GT',
+      '洪都拉斯': 'HN', 'HONDURAS': 'HN',
+      '萨尔瓦多': 'SV', 'EL SALVADOR': 'SV', 'ELSALVADOR': 'SV',
+      '尼加拉瓜': 'NI', 'NICARAGUA': 'NI',
+      '多米尼加': 'DO', 'DOMINICAN': 'DO', 'SANTO DOMINGO': 'DO',
+      '波多黎各': 'PR', 'PUERTO RICO': 'PR', 'PUERTORICO': 'PR',
+      '圣胡安': 'PR',
+      '牙买加': 'JM', 'JAMAICA': 'JM',
+      '古巴': 'CU', 'HAVANA': 'CU', '哈瓦那': 'CU',
+      '巴哈马': 'BS', 'BAHAMAS': 'BS',
+      '伯利兹': 'BZ', 'BELIZE': 'BZ',
+      '特立尼达': 'TT', 'TRINIDAD': 'TT',
+      '巴巴多斯': 'BB', 'BARBADOS': 'BB',
+      '开曼': 'KY', 'CAYMAN': 'KY',
+      '百慕大': 'BM', 'BERMUDA': 'BM',
+      '英属维尔京': 'VG',
+      // —— 南美 ——
+      '巴西': 'BR', 'BRAZIL': 'BR', 'SAO PAULO': 'BR', 'SAOPAULO': 'BR',
+      '圣保罗': 'BR',
+      '智利': 'CL', 'CHILE': 'CL', 'SANTIAGO': 'CL', '圣地亚哥': 'CL',
+      '阿根廷': 'AR', 'ARGENTINA': 'AR', 'BUENOS AIRES': 'AR',
+      '布宜诺斯艾利斯': 'AR',
+      // 「COLOMBIA」注意与斯里兰卡 COLOMBO 拼写不同，可安全共存
+      '哥伦比亚': 'CO', 'COLOMBIA': 'CO', 'BOGOTA': 'CO', '波哥大': 'CO',
+      '秘鲁': 'PE', 'LIMA': 'PE', '利马': 'PE',
+      '委内瑞拉': 'VE', 'VENEZUELA': 'VE', 'CARACAS': 'VE', '加拉加斯': 'VE',
+      '厄瓜多尔': 'EC', 'ECUADOR': 'EC', 'QUITO': 'EC', '基多': 'EC',
+      '乌拉圭': 'UY', 'URUGUAY': 'UY', 'MONTEVIDEO': 'UY', '蒙得维的亚': 'UY',
+      '巴拉圭': 'PY', 'PARAGUAY': 'PY', 'ASUNCION': 'PY', '亚松森': 'PY',
+      '玻利维亚': 'BO', 'BOLIVIA': 'BO', 'LA PAZ': 'BO', '拉巴斯': 'BO',
+      // —— 大洋洲 ——
+      '新西兰': 'NZ', 'NEW ZEALAND': 'NZ', 'NEWZEALAND': 'NZ',
+      'AUCKLAND': 'NZ', '奥克兰': 'NZ', 'WELLINGTON': 'NZ', '惠灵顿': 'NZ',
+      '斐济': 'FJ', 'FIJI': 'FJ',
+      '关岛': 'GU', 'GUAM': 'GU',
+      // —— 非洲 ——
+      '南非': 'ZA', 'SOUTH AFRICA': 'ZA', 'SOUTHAFRICA': 'ZA',
+      'JOHANNESBURG': 'ZA', '约翰内斯堡': 'ZA', 'CAPE TOWN': 'ZA',
+      'CAPETOWN': 'ZA', '开普敦': 'ZA',
+      '埃及': 'EG', 'EGYPT': 'EG', 'CAIRO': 'EG', '开罗': 'EG',
+      '摩洛哥': 'MA', 'MOROCCO': 'MA', 'CASABLANCA': 'MA', '卡萨布兰卡': 'MA',
+      '突尼斯': 'TN', 'TUNISIA': 'TN',
+      '阿尔及利亚': 'DZ', 'ALGERIA': 'DZ', 'ALGIERS': 'DZ',
+      '利比亚': 'LY', 'LIBYA': 'LY',
+      '尼日利亚': 'NG', 'NIGERIA': 'NG', 'LAGOS': 'NG', '拉各斯': 'NG',
+      '肯尼亚': 'KE', 'KENYA': 'KE', 'NAIROBI': 'KE', '内罗毕': 'KE',
+      '埃塞俄比亚': 'ET', 'ETHIOPIA': 'ET',
+      '加纳': 'GH', 'GHANA': 'GH', 'ACCRA': 'GH', '阿克拉': 'GH',
+      '坦桑尼亚': 'TZ', 'TANZANIA': 'TZ',
+      '乌干达': 'UG', 'UGANDA': 'UG', 'KAMPALA': 'UG', '坎帕拉': 'UG',
+      '安哥拉': 'AO', 'ANGOLA': 'AO', 'LUANDA': 'AO', '罗安达': 'AO',
+      '津巴布韦': 'ZW', 'ZIMBABWE': 'ZW',
+      '塞内加尔': 'SN', 'SENEGAL': 'SN', 'DAKAR': 'SN', '达喀尔': 'SN',
+      '喀麦隆': 'CM', 'CAMEROON': 'CM',
+      '卢旺达': 'RW', 'RWANDA': 'RW', 'KIGALI': 'RW', '基加利': 'RW',
+      '毛里求斯': 'MU', 'MAURITIUS': 'MU',
+      '塞舌尔': 'SC', 'SEYCHELLES': 'SC',
+      // —— 中国（回国节点；置于最后：香港/台湾/澳门等已在前面命中） ——
+      '中国': 'CN', '回国': 'CN', 'CHINA': 'CN', '上海': 'CN', '北京': 'CN',
+      '深圳': 'CN', '广州': 'CN', '江苏': 'CN', '浙江': 'CN', '徐州': 'CN',
     };
     for (final e in nameMap.entries) {
       if (upper.contains(e.key)) return e.value;
     }
 
-    // 2) 短国家代码匹配（jp-1, US_02, hk01, sg-premium 等）
-    //    用正则确保代码两侧不是字母，避免 "CHINA" 误匹配 "IN"
-    final m = _prefixCodeRe.firstMatch(upper);
+    // 2) 短国家代码匹配。先剔除「NO.1」式编号（NO 会被误判成挪威码）
+    final cleaned = upper.replaceAll(RegExp(r'NO\.\s*\d+'), ' ');
+    final m = _prefixCodeRe.firstMatch(cleaned);
     if (m != null) {
       final code = m.group(1)!;
       return _codeMap[code] ?? code;

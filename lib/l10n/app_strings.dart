@@ -405,6 +405,10 @@ class AppStrings {
     'new_pwd': '新密码',
     'new_pwd_hint': '至少 8 位，大小写字母/数字/符号至少三种',
     'pwd_weak': '密码强度不足：需包含大小写字母、数字、特殊字符中的至少三种',
+    // 新密码实时规则清单 + 重置校验
+    'pwd_rule_len': '长度不少于 8 位',
+    'pwd_rule_kinds': '大写 / 小写 / 数字 / 符号 至少三种（当前 {n} 种）',
+    'code_required': '请输入 6 位邮箱验证码',
     'confirm_pwd': '确认新密码',
     'confirm_pwd_hint': '再次输入新密码',
     'save_pwd': '保存新密码',
@@ -980,6 +984,10 @@ class AppStrings {
     'new_pwd': 'New Password',
     'new_pwd_hint': '8+ chars incl. at least 3 of upper/lower/digit/symbol',
     'pwd_weak': 'Weak password: include at least 3 of upper/lower case, digits and symbols',
+    // Live password rule hints + reset validation
+    'pwd_rule_len': 'At least 8 characters',
+    'pwd_rule_kinds': 'At least 3 of: upper / lower / digit / symbol (now {n})',
+    'code_required': 'Enter the 6-digit email code',
     'confirm_pwd': 'Confirm New Password',
     'confirm_pwd_hint': 'Enter new password again',
     'save_pwd': 'Save New Password',

@@ -83,7 +83,7 @@ class TrayService with TrayListener {
       for (final code in countryCodes.take(8))
         MenuItem(
           label:
-              '${ProxyNode.countryFlags[code] ?? '🏳️'} ${ProxyNode.countryNames[code] ?? code}',
+              '${ProxyNode.flagEmoji(code)} ${ProxyNode.countryNames[code] ?? code}',
           key: 'country:$code',
         ),
     ];
