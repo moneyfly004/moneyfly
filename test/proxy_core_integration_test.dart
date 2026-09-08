@@ -81,7 +81,11 @@ void main() {
     expect(rules.any((r) => r.contains('192.168.0.0/16')), isFalse); // 内网不放行
   });
 
-  test('端到端：启动内核 → Clash API 就绪 → 切模式 → 流量统计 → 停止', skip: skip, () async {
+  // 真实内核端到端：一个用例内跑两轮内核启停，Windows runner 上还叠加
+  // killStaleKernels 的 PowerShell 进程枚举 + Defender 扫描新 exe，默认 30s
+  // 超时会偶发被挤爆（环境性 flaky，非逻辑回归）。给足 2 分钟余量。
+  test('端到端：启动内核 → Clash API 就绪 → 切模式 → 流量统计 → 停止',
+      skip: skip, timeout: const Timeout(Duration(minutes: 2)), () async {
     final core = ProxyCoreCli();
     expect(core.isRunning, isFalse);
 
