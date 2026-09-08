@@ -22,10 +22,19 @@ class MainActivity : FlutterActivity() {
         private const val REQ_VPN = 1001
         private const val REQ_NOTIFY = 1002
         private const val REQ_BATTERY = 1003
-    }
 
-    private var pendingVpnResult: MethodChannel.Result? = null
-    private var pendingNotifyResult: MethodChannel.Result? = null
+        // 待回传的 MethodChannel.Result 放 companion（静态）而不是实例字段：
+        // 系统 VPN 授权框 / 通知授权框会把 Activity 切到后台，部分 ROM（MIUI/
+        // EMUI/ColorOS 等激进回收 + 开发者选项「不保留活动」）会在此期间销毁并
+        // 重建 Activity —— 实例字段会随旧实例丢失，onActivityResult 拿到 null。
+        // 静态字段保证同进程内新旧 Activity 实例交替时 Result 引用不丢。
+        // 注意：默认 FlutterActivity 的引擎并未被 FlutterEngineCache 缓存，
+        // Activity 销毁时引擎（连同 Dart isolate 里挂起的 await）一起销毁——
+        // 那种场景下不存在「永久挂起」，回传到死引擎也只是无害空操作。
+        // 真正的兜底是 Dart 侧超时 + isVpnPrepared 复查（permission_service.dart）。
+        private var pendingVpnResult: MethodChannel.Result? = null
+        private var pendingNotifyResult: MethodChannel.Result? = null
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -40,6 +49,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "openBatterySettings" -> {
                     openBatterySettings()
+                    result.success(true)
+                }
+                "openVpnSettings" -> {
+                    openVpnSettings()
                     result.success(true)
                 }
                 "getVendor" -> result.success(Build.MANUFACTURER ?: "unknown")
@@ -136,14 +149,25 @@ class MainActivity : FlutterActivity() {
             return
         }
         pendingVpnResult = result
-        startActivityForResult(intent, REQ_VPN)
+        try {
+            startActivityForResult(intent, REQ_VPN)
+        } catch (e: Exception) {
+            // 极少数 ROM 缺系统 VPN 确认页（ActivityNotFound）/ 被设备策略拦截：
+            // 立刻回传 false 让 Dart 走「授权失败」引导，而不是干等 45s 超时
+            pendingVpnResult = null
+            result.success(false)
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             REQ_VPN -> {
-                pendingVpnResult?.success(resultCode == RESULT_OK)
+                // 以 VpnService.prepare()==null 作为「已授权」的权威判定，而不是
+                // 只看 resultCode==RESULT_OK：部分 ROM 即使拒绝也会回 OK、或弹框
+                // 被系统吞掉时 resultCode 不可靠。prepare() 返回 null 才是真已授权。
+                val granted = VpnService.prepare(this) == null
+                pendingVpnResult?.success(granted)
                 pendingVpnResult = null
             }
             REQ_BATTERY -> Unit
@@ -170,6 +194,18 @@ class MainActivity : FlutterActivity() {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
+    /** 打开系统 VPN 设置页：授权失败引导用 —— 排查其他 VPN 应用
+     *  「始终开启的 VPN」占用导致系统授权框弹不出来的情况。 */
+    private fun openVpnSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            } catch (_: Exception) {}
         }
     }
 

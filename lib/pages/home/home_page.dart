@@ -132,14 +132,162 @@ class _HomePageState extends State<HomePage>
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
     } else {
-      // 连接前：VPN 授权 + 通知 + 电池优化豁免（最高权限，防断连/防杀后台）
-      final ok = await PermissionService.instance.ensureAllForConnect();
-      if (!ok) {
-        _toast(AppStrings.t('vpn_permission_needed'));
-        return;
-      }
+      // 连接前：VPN 授权 + 通知（带首次说明框与授权失败引导卡，
+      // 见 _ensurePermissionsGuided）
+      final ok = await _ensurePermissionsGuided();
+      if (!ok) return;
       unawaited(conn.connect());
     }
+  }
+
+  /// 连接前权限链（带引导）：
+  /// 1) 尚未授权时先弹自家说明框——告诉用户接下来系统会请求 VPN 权限、
+  ///    应该点「允许」，降低首次误点拒绝的概率；
+  /// 2) 授权失败（点了拒绝 / 系统框被吞没有弹出）→ 底部引导卡：
+  ///    重新授权 / 打开系统 VPN 设置（排查其他 VPN「始终开启」占用）/ 取消。
+  /// 返回 true = 权限就绪可继续连接。桌面端 isVpnPrepared 恒 true，直接放行。
+  Future<bool> _ensurePermissionsGuided() async {
+    final ps = PermissionService.instance;
+    // 已授权过 → 不打扰；未授权 → 先解释一次再弹系统框
+    var explained = await ps.isVpnPrepared();
+    while (true) {
+      if (!mounted) return false;
+      if (!explained) {
+        explained = true; // 每轮连接流程只解释一次，后续重试直接弹系统框
+        final go = await _showVpnExplainer();
+        if (!go || !mounted) return false;
+      }
+      final ok = await ps.ensureAllForConnect();
+      if (ok) return true;
+      if (!mounted) return false;
+      final action = await _showVpnDeniedSheet();
+      switch (action) {
+        case 'retry':
+          continue; // 用户主动要求重试 → 再走一遍授权
+        case 'settings':
+          await ps.openVpnSettings();
+          return false; // 用户去系统设置处理，回来后自行再点连接
+        default:
+          return false; // 取消/关闭引导卡
+      }
+    }
+  }
+
+  /// 首次连接的 VPN 授权说明框（仅在尚未授权时出现一次）
+  Future<bool> _showVpnExplainer() async {
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(18))),
+        title: Text('🔐\n${AppStrings.t('vpn_guide_title')}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w700, height: 1.4)),
+        content: Text(AppStrings.t('vpn_guide_text'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, color: MFColors.txt, height: 1.7)),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(AppStrings.t('cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: MFColors.brand,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(AppStrings.t('vpn_guide_ok'),
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    return res == true;
+  }
+
+  /// 授权失败引导卡：返回 'retry' | 'settings' | null（取消）
+  Future<String?> _showVpnDeniedSheet() {
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: MFColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: MFColors.line2,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('🚫 ${AppStrings.t('vpn_denied_title')}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text(AppStrings.t('vpn_denied_text'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 12.5, color: MFColors.txt, height: 1.6)),
+              const SizedBox(height: 8),
+              Text(AppStrings.t('vpn_denied_hint_always_on'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 11.5, color: MFColors.txt3, height: 1.6)),
+              const SizedBox(height: 16),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: MFColors.brand,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                onPressed: () => Navigator.pop(ctx, 'retry'),
+                child: Text(AppStrings.t('re_authorize'),
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: MFColors.brand.withValues(alpha: .5)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                onPressed: () => Navigator.pop(ctx, 'settings'),
+                child: Text(AppStrings.t('open_vpn_settings'),
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(AppStrings.t('cancel'),
+                    style: TextStyle(color: MFColors.txt3)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 受限账号（到期/设备满/禁用/未开通）弹窗 → 一键跳对应处理页
@@ -251,8 +399,12 @@ class _HomePageState extends State<HomePage>
                 SizedBox(height: gap),
               ],
               // 连接卡片(含模式开关)：status/current/error/speedTesting/smartMode 变化时重建
-              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm})>(
-                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode),
+              // 注意：selector 必须包含 realCountry / realCountryFailed —— 切国家后
+              // switchNode 先把 realCountry 置 null（显示「检测中」）、再写回新国家
+              // 或置失败态，若 selector 不监听它们，这几次 notifyListeners 都不会
+              // 触发本卡重建，「真实出口」就停留在旧显示，直到别的字段变化才被动刷新。
+              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm, String? rc, bool rcf})>(
+                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode, rc: c.realCountry, rcf: c.realCountryFailed),
                 builder: (ctx, v, child) {
                   final conn = ctx.read<ConnectionController>();
                   final connected = conn.status == ConnStatus.connected;
@@ -837,23 +989,32 @@ class _HomePageState extends State<HomePage>
                 ],
               ],
             ),
-          // 连接期间常驻此行：已测出→显示国旗+国家；切换后 realCountry 暂为
-          // null→显示「检测中…」占位（不再整块消失/闪跳，用户能看到出口在更新）
+          // 连接期间常驻此行：已测出→国旗+国家；检测中→占位；重试用尽仍
+          // 失败→「检测失败，点按重试」（可点，手动再发起一轮检测）——
+          // 不再整块消失/永远停在「检测中」，用户始终知道出口状态
           if (connected) ...[
             const SizedBox(height: 8),
-            conn.realCountry != null
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CountryFlag(conn.realCountry, size: 13, rounded: true),
-                      const SizedBox(width: 5),
-                      Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
-                          style: const TextStyle(fontSize: 11, color: MFColors.green)),
-                    ],
-                  )
-                : Text(AppStrings.t('real_exit_detecting'),
+            if (conn.realCountry != null)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CountryFlag(conn.realCountry, size: 13, rounded: true),
+                  const SizedBox(width: 5),
+                  Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
+                      style: const TextStyle(fontSize: 11, color: MFColors.green)),
+                ],
+              )
+            else if (conn.realCountryFailed)
+              GestureDetector(
+                onTap: () => conn.refreshRealCountry(force: true),
+                child: Text(AppStrings.t('real_exit_failed_retry'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+                    style: const TextStyle(fontSize: 11, color: MFColors.amber)),
+              )
+            else
+              Text(AppStrings.t('real_exit_detecting'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: MFColors.txt3)),
           ],
           if (conn.error != null) ...[
             const SizedBox(height: 8),
@@ -914,11 +1075,8 @@ class _HomePageState extends State<HomePage>
     final conn = ConnectionController.instance;
     if (kind == ConnErrorKind.noVpnPermission ||
         kind == ConnErrorKind.noNotificationPermission) {
-      final ok = await PermissionService.instance.ensureAllForConnect();
-      if (!ok) {
-        _toast(AppStrings.t('vpn_permission_needed'));
-        return;
-      }
+      final ok = await _ensurePermissionsGuided();
+      if (!ok) return;
     }
     await conn.connect();
   }

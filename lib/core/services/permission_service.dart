@@ -15,7 +15,13 @@ class PermissionService {
   Future<bool> prepareVpn() async {
     if (!_isAndroid) return true;
     try {
-      return await _channel.invokeMethod<bool>('prepareVpn') ?? false;
+      final res = await _channel.invokeMethod<bool>('prepareVpn')
+          .timeout(const Duration(seconds: 45), onTimeout: () => null);
+      if (res != null) return res;
+      // 原生回调超时（极少数 ROM 弹框被吞 / Activity 被系统强杀导致 result
+      // 未回传）时，用 isVpnPrepared 兜底判定，避免连接流程永久挂起：
+      // 弹框期间被静默拒绝 → prepare()!=null → false；已授权但回调丢失 → true。
+      return await isVpnPrepared();
     } catch (_) {
       return false;
     }
@@ -57,6 +63,15 @@ class PermissionService {
     } catch (_) {}
   }
 
+  /// 打开系统 VPN 设置页：授权失败引导用 —— 常见于其他 VPN 应用开启了
+  /// 「始终开启的 VPN」导致系统授权框弹不出来，需用户手动关闭后重试
+  Future<void> openVpnSettings() async {
+    if (!_isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('openVpnSettings');
+    } catch (_) {}
+  }
+
   /// 厂商名（MIUI/EMUI/ColorOS… 用于后台白名单引导）
   Future<String> getVendor() async {
     if (!_isAndroid) return 'desktop';
@@ -70,7 +85,8 @@ class PermissionService {
   Future<bool> requestNotificationPermission() async {
     if (!_isAndroid) return true;
     try {
-      return await _channel.invokeMethod<bool>('requestNotificationPermission') ?? true;
+      return await _channel.invokeMethod<bool>('requestNotificationPermission')
+          .timeout(const Duration(seconds: 20), onTimeout: () => null) ?? true;
     } catch (_) {
       return true;
     }

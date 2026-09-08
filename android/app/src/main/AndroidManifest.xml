@@ -6,8 +6,13 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Android 14+ 前台服务必须声明类型 -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Android 14+ 前台服务必须声明类型:VPN 应用用 specialUse(subtype=vpn,
+         与 FlClash / sing-box 一致)。此前声明的 connectedDevice 在
+         targetSdk>=34 + Android 14+ 设备上因不满足其前置权限要求
+         (需 CHANGE_NETWORK_STATE / 蓝牙 / CDM 关联等,本应用一个都没有),
+         startForeground() 会直接抛 SecurityException → VPN 服务崩溃,
+         表现为「授权过一次之后,点连接不再弹框、也永远连不上」。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Android 13+ 通知权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 连接保活 -->
@@ -53,15 +58,21 @@
             </intent-filter>
         </activity>
 
-        <!-- VpnService 前台服务：系统级 VPN 通道，防断连核心 -->
+        <!-- VpnService 前台服务：系统级 VPN 通道，防断连核心。
+             foregroundServiceType 必须是 specialUse + subtype=vpn:
+             connectedDevice 类型在 Android 14+ 会因前置权限不满足抛
+             SecurityException(见顶部权限注释) -->
         <service
             android:name=".vpn.MoneyFlyVpnService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
         </service>
 
         <!-- Don't delete the meta-data below.

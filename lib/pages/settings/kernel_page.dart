@@ -78,19 +78,82 @@ class _KernelPageState extends State<KernelPage> {
   Future<void> _update() async {
     final latest = _latest;
     if (latest == null || _downloading) return;
+    await _downloadAndApply(latest, null,
+        doneMsg: () => AppStrings.t('kernel_download_done', {'ver': latest}),
+        onApplied: () => setState(() => _current = latest));
+  }
+
+  /// 下载 + 替换 二阶段统一流程（更新版本与切换变体共用）：
+  /// 1) 下载到缓存 —— **连接中也可以**（KernelManager 已连接时经隧道下载，
+  ///    内核托管在 GitHub，国内直连拉不动，「先连上再更新」才是主路径）；
+  /// 2) 替换生效 —— 必须内核已停止：未连接直接替换；连接中询问用户
+  ///    「立即断开替换并自动重连」或「稍后手动断开再来」。
+  Future<void> _downloadAndApply(String version, KernelVariant? variant,
+      {required String Function() doneMsg, VoidCallback? onApplied}) async {
     setState(() {
       _downloading = true;
       _progress = 0;
     });
-    final err = await KernelManager.instance.updateTo(latest,
-        onProgress: (p) {
+    final dl = await KernelManager.instance
+        .downloadToCache(version, variant: variant, onProgress: (p) {
       if (mounted) setState(() => _progress = p);
     });
     if (!mounted) return;
+    if (dl.isNotEmpty) {
+      setState(() => _downloading = false);
+      _toast(AppStrings.t('kernel_update_fail', {'err': dl}));
+      return;
+    }
+
+    // 已下载完毕。连接中 → 询问是否断开替换并自动重连
+    final conn = ConnectionController.instance;
+    var reconnectAfter = false;
+    if (conn.status == ConnStatus.connected) {
+      final choice = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: MFColors.card2,
+          title: Text(AppStrings.t('kernel_apply_now_title'),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: Text(AppStrings.t('kernel_apply_now_text'),
+              style:
+                  TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(AppStrings.t('kernel_apply_later'))),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(AppStrings.t('kernel_apply_now'),
+                  style: const TextStyle(
+                      color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (choice != true) {
+        // 稍后替换：缓存已就位，用户手动断开后再来本页秒切
+        setState(() => _downloading = false);
+        _toast(AppStrings.t('kernel_apply_later_tip'));
+        return;
+      }
+      reconnectAfter = true;
+      await conn.disconnect();
+      if (!mounted) return;
+    }
+
+    final err =
+        await KernelManager.instance.activateCached(version, variant: variant);
+    if (!mounted) return;
     setState(() => _downloading = false);
     if (err.isEmpty) {
-      setState(() => _current = latest);
-      _toast(AppStrings.t('kernel_download_done', {'ver': latest}));
+      onApplied?.call();
+      _toast(doneMsg());
+      if (reconnectAfter) {
+        // 用新内核自动重连（失败由连接层的错误引导兜底）
+        await conn.connect();
+      }
     } else if (err == 'kernel_running') {
       _toast(AppStrings.t('kernel_update_desc'));
     } else {
@@ -100,6 +163,7 @@ class _KernelPageState extends State<KernelPage> {
 
   /// 切换内核变体(兼容版<->标准版)：下载「当前版本」的另一变体并替换。
   /// 缓存命中(该 变体×版本 已下载过) → 本地直接生效,不再下载。
+  /// 连接中允许发起：下载走隧道,替换前询问断开(与更新版本同一流程)。
   Future<void> _switchVariant(KernelVariant v) async {
     if (_downloading || v == _variant) return;
     final ver = _current;
@@ -127,31 +191,19 @@ class _KernelPageState extends State<KernelPage> {
         ],
       ),
     );
-    if (ok != true) return;
-    setState(() {
-      _downloading = true;
-      _progress = 0;
-    });
-    final err = await KernelManager.instance.updateTo(ver, variant: v,
-        onProgress: (p) {
-      if (mounted) setState(() => _progress = p);
-    });
-    if (!mounted) return;
-    setState(() => _downloading = false);
-    if (err.isEmpty) {
-      await KernelManager.instance.setVariant(v);
-      if (mounted) {
-        setState(() {
-          _variant = v;
-          _hasUserKernel = true;
+    if (ok != true || !mounted) return;
+    await _downloadAndApply(ver, v,
+        doneMsg: () =>
+            AppStrings.t('kernel_switch_done', {'label': _variantLabel(v)}),
+        onApplied: () {
+          // 变体偏好仅在真正替换成功后才落盘：替换失败时保持旧偏好,
+          // 避免「偏好=标准版、实际生效=兼容版」的错位
+          KernelManager.instance.setVariant(v);
+          setState(() {
+            _variant = v;
+            _hasUserKernel = true;
+          });
         });
-        _toast(AppStrings.t('kernel_switch_done', {'label': _variantLabel(v)}));
-      }
-    } else if (err == 'kernel_running') {
-      _toast(AppStrings.t('kernel_update_desc'));
-    } else {
-      _toast(AppStrings.t('kernel_update_fail', {'err': err}));
-    }
   }
 
   String _variantLabel(KernelVariant v) => v == KernelVariant.compatible
@@ -247,9 +299,15 @@ class _KernelPageState extends State<KernelPage> {
     );
   }
 
-  /// 恢复安装包内置内核（删除用户副本，无需下载）
+  /// 恢复安装包内置内核（删除用户副本，无需下载）。
+  /// 连接中不允许：正在运行的就是用户副本，macOS 删除后重连即失败、
+  /// Windows 文件被锁删除静默失败 —— 都会造成状态错乱，必须先断开。
   Future<void> _restoreKernel() async {
     if (_downloading) return;
+    if (ConnectionController.instance.status != ConnStatus.disconnected) {
+      _toast(AppStrings.t('kernel_update_desc'));
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(

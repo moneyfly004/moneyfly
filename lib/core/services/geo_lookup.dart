@@ -65,7 +65,26 @@ class GeoLookupService {
         },
       );
 
-      // 主：ip-api.com（免费无需 key）；备：ipinfo.io
+      // 主：Cloudflare trace（返回 loc=US 行；anycast 全球边缘、无按 IP 配额）。
+      // ip-api.com 免费额度是按「来源 IP」限 45 次/分钟，而这里的查询走隧道、
+      // 来源是出口节点 IP —— 同节点全部用户共享配额，上量后必然 429 全挂。
+      // Cloudflare 无此问题，故为主源；ip-api / ipinfo 降为备用。
+      try {
+        final r0 = await dio.get<String>(
+          'https://www.cloudflare.com/cdn-cgi/trace',
+          options: Options(responseType: ResponseType.plain),
+        );
+        final body = r0.data ?? '';
+        final m = RegExp(r'^loc=([A-Za-z]{2})$', multiLine: true).firstMatch(body);
+        final loc = m?.group(1)?.toUpperCase();
+        // Cloudflare 定位不到时返回 loc=XX，视为无效落到备用源
+        if (loc != null && loc != 'XX') {
+          _cachedCode = loc;
+          _cachedAt = DateTime.now();
+          return _cachedCode;
+        }
+      } catch (_) {}
+      // 备 1：ip-api.com（免费无需 key，按出口 IP 限 45/min）
       try {
         final r = await dio.get('http://ip-api.com/json?fields=countryCode,country');
         final d = r.data;
@@ -75,6 +94,7 @@ class GeoLookupService {
           return _cachedCode;
         }
       } catch (_) {}
+      // 备 2：ipinfo.io
       final r2 = await dio.get('https://ipinfo.io/json');
       final d2 = r2.data;
       if (d2 is Map && d2['country'] != null) {

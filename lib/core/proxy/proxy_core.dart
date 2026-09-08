@@ -247,25 +247,45 @@ class ConnectionController extends ChangeNotifier {
 
   /// 真实出口国家码（连接后通过隧道 IP 定位实测，非节点名猜测）
   String? realCountry;
+  /// 出口定位重试用尽仍失败：UI 显示「检测失败，点按重试」——
+  /// 否则两个定位源都挂时会永远停留在「检测中…」。新一轮检测时清零。
+  bool realCountryFailed = false;
   /// 出口定位的代次：每次发起 +1，只有最新一次的结果才允许写入 —— 切国家时
   /// 旧的在途定位（慢/命中缓存）完成后不会再把旧国家覆盖回来。
   int _geoEpoch = 0;
 
-  /// 连接成功后实测出口国家（失败静默，不阻塞连接）。
+  /// 连接成功后实测出口国家（失败不抛出，不阻塞连接）。
   /// [force] 切换节点/国家后出口已变，强制重查（绕过 GeoLookup 的 TTL 缓存）。
+  /// 最多尝试 3 次（间隔 3s）：刚建立的隧道首个外呼可能因链路未就绪而失败，
+  /// 短重试显著提高成功率；全部失败置 [realCountryFailed]（UI 可点按重试）。
   Future<void> refreshRealCountry({bool force = false}) async {
     if (status != ConnStatus.connected) return;
     final epoch = ++_geoEpoch; // 本次代次；被后续调用超越即作废
-    try {
-      final code = await GeoLookupService.instance.lookupViaProxy(force: force);
+    if (realCountryFailed) {
+      realCountryFailed = false;
+      notifyListeners(); // 失败态回到「检测中…」（点按重试的即时反馈）
+    }
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (epoch != _geoEpoch || status != ConnStatus.connected) return;
+      String? code;
+      try {
+        code = await GeoLookupService.instance.lookupViaProxy(force: force);
+      } catch (_) {
+        code = null; // 定位失败静默，走重试
+      }
       // 仅当仍是最新一次请求、且仍连接时才写入：避免旧的慢请求覆盖新国家，
       // 也避免切国家后被 10 分钟缓存的旧值回填
-      if (epoch == _geoEpoch && status == ConnStatus.connected) {
+      if (epoch != _geoEpoch || status != ConnStatus.connected) return;
+      if (code != null) {
         realCountry = code;
         notifyListeners();
+        return;
       }
-    } catch (_) {
-      // 定位失败静默，不阻塞连接
+      if (attempt < 2) await Future.delayed(const Duration(seconds: 3));
+    }
+    if (epoch == _geoEpoch && status == ConnStatus.connected) {
+      realCountryFailed = true;
+      notifyListeners();
     }
   }
 
@@ -809,6 +829,7 @@ class ConnectionController extends ChangeNotifier {
     error = null;
     errorKind = ConnErrorKind.none;
     realCountry = null;
+    realCountryFailed = false;
     lockedCountry = null;
     connectedAt = null;
     sessionUpMB = 0;
@@ -874,6 +895,7 @@ class ConnectionController extends ChangeNotifier {
       try {
         await _core.switchNode(node.tag);
         realCountry = null;
+        realCountryFailed = false;
         notifyListeners(); // 立即清掉旧国家显示（切换后先显示「检测中」，不停在旧值）
         // 出口已变，强制重查绕过 TTL 缓存 —— 否则 10 分钟内真实出口显示不更新
         unawaited(refreshRealCountry(force: true));

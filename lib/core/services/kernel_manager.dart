@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -93,7 +94,10 @@ class KernelManager {
           if (await f.exists()) await f.delete();
         } catch (_) {}
       }
-      return true;
+      // 复查主副本确实已删除：Windows 上「运行中的 exe」删除会因文件锁失败,
+      // 上面静默吞掉 —— 若不复查会出现「提示已恢复内置、实际用户副本还在」
+      // 的假成功（下次连接仍用旧副本）。
+      return !await File('${dir.path}/$_exeName').exists();
     } catch (_) {
       return false;
     }
@@ -199,13 +203,11 @@ class KernelManager {
     }
   }
 
-  /// 官方最新稳定版（GitHub API releases/latest → tag_name）
+  /// 官方最新稳定版（GitHub API releases/latest → tag_name）。
+  /// 已连接时经隧道请求 —— GitHub 在直连网络环境常不可达。
   Future<String?> fetchLatest() async {
     try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-      ));
+      final dio = await _dio(receiveTimeout: const Duration(seconds: 8));
       final r = await dio.get('https://api.github.com/repos/MetaCubeX/mihomo/releases/latest');
       if (r.statusCode == 200 && r.data is Map) {
         final tag = (r.data as Map)['tag_name']?.toString();
@@ -218,43 +220,80 @@ class KernelManager {
     }
   }
 
-  /// 切换/更新内核（仅桌面端；要求内核未运行）。返回空串=成功；非空=错误消息。
+  /// 下载/检查更新用 Dio：**已连接时显式走本地混合代理（隧道）**。
+  /// 内核托管在 GitHub，直连网络环境（国内）常不可达 —— 「先连 VPN 再更新
+  /// 内核」是主路径，下载必须能走隧道；未连接时直连（可直达环境仍可用）。
+  /// App 自身请求不走系统代理，必须像 GeoLookupService 一样显式 findProxy。
+  Future<Dio> _dio({required Duration receiveTimeout}) async {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: receiveTimeout,
+    ));
+    if (ConnectionController.instance.status == ConnStatus.connected) {
+      var port = 2080;
+      try {
+        final s = await SettingsStore.instance.load();
+        port = (s['localPort'] as num?)?.toInt() ?? 2080;
+      } catch (_) {}
+      dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final c = HttpClient();
+          c.connectionTimeout = const Duration(seconds: 15);
+          c.findProxy = (_) => 'PROXY 127.0.0.1:$port';
+          return c;
+        },
+      );
+    }
+    return dio;
+  }
+
+  /// 切换/更新内核（仅桌面端）。返回空串=成功；非空=错误消息。
+  ///
+  /// 两阶段：[downloadToCache]（连接中可下载，经隧道）→ [activateCached]
+  /// （要求内核已停止）。此入口为兼容组合：下载后若内核在跑返回
+  /// 'kernel_running'（UI 层 kernel_page 走两阶段 + 自动断开重连流程）。
   ///
   /// 写入位置为「用户副本目录」（userKernelDir，可写），**绝不修改安装目录**，
   /// 装到 Program Files 等只读目录也能切换/更新。
   /// 下载缓存：`cache/<variant>_<version>` —— 本地已有该 (变体,版本) 内核时
   /// 直接激活、不再下载；来回切换不重复下载。「恢复内置」= 删除用户副本。
-  ///
-  /// [version] 目标版本（如 1.19.30）
-  /// [variant] 目标变体（默认当前偏好）
-  /// [onProgress] 下载进度回调（0~1）
   Future<String> updateTo(String version,
       {KernelVariant? variant, void Function(double progress)? onProgress}) async {
+    final dl =
+        await downloadToCache(version, variant: variant, onProgress: onProgress);
+    if (dl.isNotEmpty) return dl;
+    return activateCached(version, variant: variant);
+  }
+
+  File _cacheFileOf(Directory dir, KernelVariant v, String version) =>
+      File('${dir.path}/cache/${v.key}_$version$_exeName');
+
+  /// 阶段一：下载内核到本地缓存（不激活、**不要求断开连接**）。
+  /// 返回空串=成功（含缓存命中）。
+  ///
+  /// 内核托管在 GitHub Release，直连网络环境（国内）常不可达 ——
+  /// 「先连 VPN → 经隧道下载 → 断开瞬间替换 → 自动重连」是桌面端更新
+  /// 内核的主路径。已连接时 [_dio] 显式走本地混合代理；未连接时直连
+  /// 下载（可直达环境仍可用）。下载/解压/自检任何异常都转为错误消息
+  /// 返回，绝不上抛 —— 否则 UI 的 _downloading 态会卡死在「下载中」。
+  Future<String> downloadToCache(String version,
+      {KernelVariant? variant, void Function(double progress)? onProgress}) async {
     if (!isDesktop) return 'not supported on this platform';
-    if (ConnectionController.instance.status == ConnStatus.connected) {
-      return 'kernel_running';
-    }
     final v = variant ?? await currentVariant();
     final asset = await _assetName(version, v);
     if (asset == null) return 'unsupported platform/arch';
     final dir = await userKernelDir();
     if (dir == null) return 'no writable kernel dir';
-    final cacheFile = File('${dir.path}/cache/${v.key}_$version$_exeName');
+    final cacheFile = _cacheFileOf(dir, v, version);
 
-    // 1) 缓存命中 → 直接本地激活（不再下载，秒切）
-    if (await cacheFile.exists() && await cacheFile.length() > 0) {
-      return await _activate(dir, cacheFile);
-    }
+    // 缓存命中 → 无需下载（切换回该 (变体,版本) 秒切）
+    if (await cacheFile.exists() && await cacheFile.length() > 0) return '';
 
-    // 2) 下载官方预编译 → 解压 → 自检 → 写入缓存 → 激活
     final tmp = Directory.systemTemp.createTempSync('mf_kernel_update');
     try {
       final url =
           'https://github.com/MetaCubeX/mihomo/releases/download/v$version/$asset';
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(minutes: 5),
-      ));
+      final dio = await _dio(receiveTimeout: const Duration(minutes: 5));
       final archive = '${tmp.path}/$asset';
       await dio.download(url, archive, onReceiveProgress: (a, b) {
         if (b > 0) onProgress?.call(a / b);
@@ -280,12 +319,35 @@ class KernelManager {
       } catch (e) {
         return 'cache write failed: $e';
       }
-      return await _activate(dir, cacheFile);
+      return '';
+    } on DioException catch (e) {
+      return 'download failed: ${e.message ?? e.type.name}';
+    } catch (e) {
+      return 'download failed: $e';
     } finally {
       try {
         tmp.deleteSync(recursive: true);
       } catch (_) {}
     }
+  }
+
+  /// 阶段二：把已缓存的 (变体,版本) 内核激活为「当前生效」。
+  /// 要求内核未运行（连接/启动/断开过程中都不允许换二进制 ——
+  /// Windows 上运行中的 exe 文件被锁，替换会失败或产生半新半旧状态）。
+  Future<String> activateCached(String version, {KernelVariant? variant}) async {
+    if (!isDesktop) return 'not supported on this platform';
+    final st = ConnectionController.instance.status;
+    if (st != ConnStatus.disconnected && st != ConnStatus.error) {
+      return 'kernel_running';
+    }
+    final v = variant ?? await currentVariant();
+    final dir = await userKernelDir();
+    if (dir == null) return 'no writable kernel dir';
+    final cacheFile = _cacheFileOf(dir, v, version);
+    if (!await cacheFile.exists() || await cacheFile.length() == 0) {
+      return 'no cached kernel for ${v.key} v$version';
+    }
+    return _activate(dir, cacheFile);
   }
 
   /// 把缓存内核激活为「当前生效」（userKernelDir/mihomo[.exe]），带备份回滚与自检
