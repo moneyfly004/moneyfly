@@ -87,6 +87,20 @@ class _HomePageState extends State<HomePage>
       await AccountService.instance.refresh(force: force);
     }
     if (!mounted) return;
+    // 冷启动即时展示：账号**正常**（非受限）且当前无节点时，先读本地磁盘缓存
+    // 秒显上次的线路（不发网络请求），避免弱网下干等订阅拉取 → 首页转圈或
+    // 「切换主页空白」。放在门禁判定之后：受限账号（到期/禁用/设备满）绝不
+    // 秒显旧线路误导用户，仍走下方 fetchNodes → applySubscriptionNodes([])
+    // 清空展示的既有链路。断开态才注入，避免覆盖已连接会话。
+    if (conn.nodes.isEmpty &&
+        conn.status == ConnStatus.disconnected &&
+        !AccountService.instance.isBlocked) {
+      final cached = await SubscriptionService.instance.loadCachedNodes();
+      if (!mounted) return;
+      if (cached.isNotEmpty && conn.nodes.isEmpty) {
+        await conn.loadNodes(cached);
+      }
+    }
     if (conn.nodes.isNotEmpty && !force) return;
     setState(() => _loadingNodes = true);
     try {

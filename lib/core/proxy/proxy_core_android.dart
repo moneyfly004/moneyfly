@@ -130,7 +130,10 @@ class ProxyCoreAndroid extends ProxyCore {
           ConnErrorKind.unknown, AppStrings.t('vpn_start_fail', {'err': '$e'}));
     }
     final sw = Stopwatch()..start();
-    while (sw.elapsed < const Duration(seconds: 15)) {
+    // 就绪窗口 20s：Clash API 监听在内核完全起来后才可用，Doze/后台限流/
+    // 低端机慢启动都可能让首个 /version 迟到。窗口略放宽 + 超时后问原生
+    // 存活（见下），双保险避免误杀正在正常转发的活内核。
+    while (sw.elapsed < const Duration(seconds: 20)) {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
         if (r.statusCode == 200) {
@@ -142,9 +145,33 @@ class ProxyCoreAndroid extends ProxyCore {
       } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 300));
     }
-    // 内核未就绪：主动清理原生侧（VpnService/内核可能正在慢启动或启动失败），
-    // 避免「UI 报失败但 VPN 通知/隧道残留」的幽灵连接。
-    // 顺带拉取内核日志尾部，把真实原因带给用户（而非笼统的超时）。
+    // 就绪窗口内 Clash API /version 未返回 200 —— 但这**不等于**内核启动失败。
+    // 实测常见误报：内核已解析完配置、listener 在跑、隧道已在转发流量，只是
+    // App 侧因 Doze/后台限流没能在 20s 内拿到 /version 的 200（日志尾部往往
+    // 已是正常的分流/转发记录）。此时若直接 stopVpn，就把一个活内核误杀了，
+    // 表现为「刚连上就自己断了」。
+    //
+    // 因此先向原生确认内核/VpnService 是否存活：
+    //  - 存活 → 判定连接成立（视为已连接），启动看门狗接管后续健康探测。
+    //    看门狗有「连续 3 次失败且原生确认已停才判死」的健壮逻辑，API 通道
+    //    稍后恢复即自愈；真僵死也会被看门狗兜底判死并触发重连，不会卡死。
+    //  - 已停 → 才是真失败，收集真实原因并清理残留。
+    var nativeAlive = false;
+    try {
+      nativeAlive = await _channel.invokeMethod<bool>('isVpnRunning') ?? false;
+    } catch (_) {}
+    if (nativeAlive) {
+      AppLog.kernel(
+          'ready poll timed out (20s) but native kernel alive → treat as connected, watchdog takes over');
+      _running = true;
+      _startWatchdog();
+      _startTrafficStream();
+      // API 通道稍慢时先补测一次真实出口/流量由上层触发；这里直接判成功返回。
+      return;
+    }
+    // 原生也确认内核未运行：这才是真正的启动失败。主动清理原生侧
+    // （VpnService/内核可能启动失败留下残留），避免「UI 报失败但 VPN 通知/
+    // 隧道残留」的幽灵连接。顺带拉取内核日志尾部，把真实原因带给用户。
     var detail = '';
     // 1) 原生侧记录的真实启动错误（最直接、最精确）
     try {

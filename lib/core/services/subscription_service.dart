@@ -43,6 +43,25 @@ class SubscriptionService {
     unawaited(SubscriptionCache.instance.clear());
   }
 
+  /// 冷启动即时展示用：只读本地磁盘缓存并解析出节点，**不发任何网络请求**、
+  /// 不改内存缓存/时间戳/代次。首页冷启动先用它秒显上次的线路（避免弱网下
+  /// 干等 fetchInfo → 首页转圈/空白），随后由 fetchNodes(force:true) 后台
+  /// 刷新覆盖。返回空列表表示无有效缓存（无缓存 / 版本过期 / 换号失效，
+  /// 失效判定与删除由 SubscriptionCache.readLatest 内部完成）。
+  ///
+  /// 注意：这里读到的缓存**不经过账号门禁判定**（到期/禁用），因此仅用于
+  /// UI 即时展示；真正能否连接仍由 AccountService 门禁 + fetchNodes 决定，
+  /// 受限账号的 applySubscriptionNodes([]) 会清空展示，不会放行旧线路。
+  Future<List<ProxyNode>> loadCachedNodes() async {
+    try {
+      final cached = await SubscriptionCache.instance.readLatest();
+      if (cached == null || cached.raw.isEmpty) return const [];
+      return await compute(_parseInIsolate, cached.raw);
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// 获取订阅信息（XBoard 兼容 /user/subscribe）
   Future<SubscriptionInfo> fetchInfo() async {
     final data = await ApiClient.instance.get(Endpoints.userSubscribe);

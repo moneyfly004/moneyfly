@@ -86,6 +86,11 @@ class MihomoConfigBuilder {
       if (sni != null && sni.isNotEmpty) {
         m.putIfAbsent('servername', () => sni);
       }
+      // 开启节点 UDP relay：不写则 mihomo 默认 udp=false，select/GLOBAL 组
+      // 转发 UDP 时报「select UDP is not supported」，QUIC/HTTP3、游戏、
+      // hysteria2/tuic 等 UDP 流量全部 fallback 到 DIRECT（走本地直连 →
+      // 要么泄漏真实 IP、要么直接不通）。订阅节点已显式声明 udp 时尊重原值。
+      m.putIfAbsent('udp', () => true);
       // 节点显式声明了 TLS（如 vless+tls），raw 缺失时补上，避免裸连 443
       if (n.tls == true && m['tls'] == null) {
         m['tls'] = true;
