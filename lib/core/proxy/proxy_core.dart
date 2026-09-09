@@ -483,7 +483,11 @@ class ConnectionController extends ChangeNotifier {
     }
     // 重连时确保旧内核已停干净（上次 start 可能半途失败留下残留进程）
     if (_core.isRunning) {
-      try { await _core.stop(); } catch (_) {}
+      try {
+        await _core.stop();
+      } catch (e) {
+        AppLog.error('stop stale kernel failed: $e');
+      }
     }
     // 从设置读取内核启动参数。smartMode / autoTest / autoReconnect 是运行时
     // 状态（启动时 applySettings 同步、设置页/首页开关即时更新），连接时不再
@@ -852,7 +856,9 @@ class ConnectionController extends ChangeNotifier {
     status = ConnStatus.disconnecting;
     notifyListeners();
     _clearState();
-    final stopFut = _core.stop().catchError((_) {});
+    final stopFut = _core.stop().catchError((e) {
+      AppLog.error('disconnect stop failed: $e');
+    });
     _stopInFlight = stopFut;
     try {
       await stopFut;
@@ -868,7 +874,9 @@ class ConnectionController extends ChangeNotifier {
     _clearState();
     // 登出/切号：清掉持久化的节点选择，避免旧账号的固定线路残留到新账号
     unawaited(_clearPersistedSelection());
-    final stopFut = _core.stop().catchError((_) {});
+    final stopFut = _core.stop().catchError((e) {
+      AppLog.error('resetForLogout stop failed: $e');
+    });
     _stopInFlight = stopFut;
     try {
       await stopFut;

@@ -21,8 +21,15 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    # 更严格的工程规范（在默认 flutter_lints 之上）：
+    # - unawaited_futures：fire-and-forget 的 Future 必须显式 unawaited()/await，
+    #   防止漏 await 导致的静默失败
+    # - prefer_final_locals / prefer_final_fields：能 final 就 final，降低意外改值
+    # - use_super_parameters：构造器透传父类参数用 super.，减少样板
+    unawaited_futures: true
+    prefer_final_locals: true
+    prefer_final_fields: true
+    use_super_parameters: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

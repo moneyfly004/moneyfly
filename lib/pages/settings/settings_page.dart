@@ -108,7 +108,11 @@ class _SettingsPageState extends State<SettingsPage> {
               _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
                   trailing: _switch(_s['launchAtStartup'] == true, (v) async {
                     await _set('launchAtStartup', v);
-                    if (v) { launchAtStartup.enable(); } else { launchAtStartup.disable(); }
+                    if (v) {
+                      unawaited(launchAtStartup.enable());
+                    } else {
+                      unawaited(launchAtStartup.disable());
+                    }
                   })),
             _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
                 trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
@@ -756,7 +760,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (v != null) {
       final mode = v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto');
-      _set('tunMode', mode);
+      unawaited(_set('tunMode', mode));
     }
   }
 
@@ -859,7 +863,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _toast(AppStrings.t('latest_version', {'ver': UpdateInfo.currentVersion}));
       return;
     }
-    showDialog<void>(
+    unawaited(showDialog<void>(
       context: context,
       barrierDismissible: !info.forced,
       builder: (_) => AlertDialog(
@@ -892,7 +896,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Future<void> _picker(List<String> options, ValueChanged<String> onSelected) async {

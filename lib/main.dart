@@ -68,9 +68,9 @@ void main() async {
   if (!Platform.environment.containsKey('FLUTTER_TEST') &&
       (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
     await windowManager.ensureInitialized();
-    windowManager.setPreventClose(true);
-    windowManager.setTitle('MoneyFly');
-    windowManager.setMinimumSize(const Size(380, 620));
+    unawaited(windowManager.setPreventClose(true));
+    unawaited(windowManager.setTitle('MoneyFly'));
+    unawaited(windowManager.setMinimumSize(const Size(380, 620)));
   }
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();

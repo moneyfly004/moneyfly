@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
 import '../models/models.dart';
+import 'app_log.dart';
 import 'settings_store.dart';
 
 /// 真实出口国家检测：连接成功后，通过隧道（本地混合代理端口，设置页可改，
@@ -102,8 +103,9 @@ class GeoLookupService {
         _cachedAt = DateTime.now();
         return _cachedCode;
       }
-    } catch (_) {
-      // 定位失败不影响连接
+    } catch (e) {
+      // 定位失败不影响连接，但记录便于排查「真实出口一直检测失败」
+      AppLog.error('lookupViaProxy 失败: $e');
     } finally {
       dio?.close(force: true);
     }

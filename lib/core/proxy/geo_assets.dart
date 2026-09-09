@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../services/app_log.dart';
 import '../services/update_service.dart';
 
 /// 离线 Geo 数据落盘器（geosite.dat / country.mmdb）。
@@ -156,14 +156,14 @@ class GeoAssets {
         }
         final data = await readSource(file);
         if (data == null) {
-          debugPrint('GeoAssets 源缺失(内置/副本均不可用): $file');
+          AppLog.error('GeoAssets 源缺失(内置/副本均不可用): $file');
           ok = false;
           continue;
         }
         try {
           await target.writeAsBytes(data, flush: true);
         } catch (e) {
-          debugPrint('GeoAssets 写入 $file 失败: $e');
+          AppLog.error('GeoAssets 写入 $file 失败: $e');
           ok = false;
         }
       }
@@ -180,7 +180,7 @@ class GeoAssets {
       }
       return ok;
     } catch (e) {
-      debugPrint('GeoAssets.materialize 失败: $e');
+      AppLog.error('GeoAssets.materialize 失败: $e');
       return false;
     }
   }

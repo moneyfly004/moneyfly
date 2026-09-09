@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/log_rotation.dart';
+import '../utils/serial_executor.dart';
 import 'endpoints.dart';
 import 'user_agent.dart';
 
@@ -30,19 +32,24 @@ class ApiClient {
     // 请求日志（写入 App Support 目录 http.log，登录/网络问题排查用）
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (o, h) {
-        const sensitive = ['/auth/login', '/auth/register', '/auth/reset-password',
-            '/auth/forgot-password', '/users/change-password', '/auth/verification'];
-        final isSensitive = sensitive.any((p) => o.path.contains(p));
-        _logHttp('>>> ${o.method} ${_maskUri(o.uri)}\n    body: ${isSensitive ? '[REDACTED]' : o.data}');
+        _logHttp('>>> ${o.method} ${_maskUri(o.uri)}\n'
+            '    body: ${_isSensitivePath(o.path) ? '[REDACTED]' : o.data}');
         h.next(o);
       },
       onResponse: (r, h) {
         final body = r.data is String ? (r.data as String) : (r.data?.toString() ?? '');
-        _logHttp('<<< ${r.statusCode} ${_maskUri(r.requestOptions.uri)}\n    body: ${body.length > 400 ? body.substring(0, 400) : body}');
+        // 敏感接口（登录/刷新/改密）响应体含 token，同样脱敏，避免凭据明文落盘
+        final masked = _isSensitivePath(r.requestOptions.path) ? '[REDACTED]' : body;
+        _logHttp('<<< ${r.statusCode} ${_maskUri(r.requestOptions.uri)}\n'
+            '    body: ${masked.length > 400 ? masked.substring(0, 400) : masked}');
         h.next(r);
       },
       onError: (e, h) {
-        _logHttp('!!! ${e.type} ${_maskUri(e.requestOptions.uri)} status=${e.response?.statusCode}\n    err: $e\n    resp: ${e.response?.data}');
+        final respBody = _isSensitivePath(e.requestOptions.path)
+            ? '[REDACTED]'
+            : e.response?.data;
+        _logHttp('!!! ${e.type} ${_maskUri(e.requestOptions.uri)} status=${e.response?.statusCode}\n'
+            '    err: $e\n    resp: $respBody');
         h.next(e);
       },
     ));
@@ -213,7 +220,7 @@ class ApiClient {
   static Future<File?>? _logFileFuture;
 
   /// http.log 串行写队列：append 与旋转依次执行，杜绝并发交错/半份改写
-  static Future<void> _logQueue = Future.value();
+  static final SerialExecutor _logQueue = SerialExecutor();
 
   static Future<File?> _resolveLogFile() async {
     _logFileFuture ??= () async {
@@ -226,6 +233,16 @@ class ApiClient {
     }();
     return _logFileFuture;
   }
+
+  /// 响应体/请求体含凭据的敏感接口（登录/刷新/改密/验证码）。
+  /// 这类路径的请求体与响应体都脱敏，避免 access_token/refresh_token 明文落盘。
+  static const _sensitivePaths = [
+    '/auth/login', '/auth/refresh', '/auth/register', '/auth/reset-password',
+    '/auth/forgot-password', '/auth/verification', '/users/change-password',
+  ];
+
+  static bool _isSensitivePath(String path) =>
+      _sensitivePaths.any((p) => path.contains(p));
 
   /// 日志用 URI 脱敏：query 含 token/subscribe_url 等敏感参数时整体打码，
   /// 避免订阅地址/token 明文落盘 http.log（凭据泄露风险）
@@ -243,7 +260,7 @@ class ApiClient {
   static void _logHttp(String line) {
     if (kIsWeb) return;
     // 不 await：日志写入绝不阻塞请求链路；经串行队列避免并发交错
-    final job = _logQueue.then((_) async {
+    _logQueue.run(() async {
       try {
         final f = await _resolveLogFile();
         if (f == null) return;
@@ -252,15 +269,13 @@ class ApiClient {
           mode: FileMode.append,
           flush: false,
         );
-        // 大小上限：超 512KB 截断保留尾部（队列内执行，无并发读改写）
+        // 大小上限：超 512KB 截断保留尾部（按整行，避免切半个字符）
         if (await f.length() > 512 * 1024) {
           final content = await f.readAsString();
-          await f.writeAsString(content.substring(content.length ~/ 2),
-              flush: true);
+          await f.writeAsString(keepSecondHalf(content), flush: true);
         }
       } catch (_) {}
     });
-    _logQueue = job.catchError((_) {});
   }
 
   // ---------- 统一解包 ----------

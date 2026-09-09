@@ -54,7 +54,7 @@ class UpdateService {
   static UpdateInfo? _cacheInfo;
   static DateTime _cacheAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static final String githubRepo = String.fromCharCodes([for (final c in const [55,53,52,63,35,60,54,35,106,106,110,117,55,53,52,63,35,60,54,35]) c ^ 0x5A]);
+  static const String githubRepo = 'moneyfly004/moneyfly';
 
   /// GitHub API 专用裸客户端（不经 [ApiClient]）。
   /// 更新检测不能复用后端通道：ApiClient 会为每个请求注入

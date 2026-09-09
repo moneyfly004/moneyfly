@@ -5,6 +5,7 @@ import 'dart:io';
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
+import '../utils/serial_executor.dart';
 import 'local_paths.dart';
 
 /// 用户服务：我的信息 / 仪表盘
@@ -15,7 +16,7 @@ class UserService {
   static const _cacheFileName = 'dashboard_cache.json';
 
   /// 磁盘缓存读写串行队列：登出删除与新登录写回按顺序执行，避免竞态
-  static Future<void> _cacheIoQueue = Future.value();
+  static final SerialExecutor _cacheIoQueue = SerialExecutor();
 
   /// 内存缓存（会话内）：进入「我的」页只拉一次，切 tab 不重复刷新
   DashboardInfo? _dashboardCache;
@@ -83,11 +84,8 @@ class UserService {
     } catch (_) {}
   }
 
-  static Future<void> _enqueueCacheIo(Future<void> Function() job) {
-    final run = _cacheIoQueue.then((_) => job());
-    _cacheIoQueue = run.catchError((_) {});
-    return run;
-  }
+  static Future<void> _enqueueCacheIo(Future<void> Function() job) =>
+      _cacheIoQueue.run(job);
 
   Future<UserInfo> me() async {
     final data = await ApiClient.instance.get(Endpoints.me);

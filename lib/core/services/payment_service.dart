@@ -5,6 +5,7 @@ import 'dart:io';
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
+import '../utils/serial_executor.dart';
 import 'local_paths.dart';
 
 /// 支付 / 套餐目录服务：支付方式列表 + 套餐列表。
@@ -17,7 +18,7 @@ class PaymentService {
   static const _cacheFileName = 'package_catalog.json';
 
   /// 磁盘缓存写串行队列，避免 plans/methods 两个写方并发交错
-  static Future<void> _cacheIoQueue = Future.value();
+  static final SerialExecutor _cacheIoQueue = SerialExecutor();
 
   List<Plan>? _plans;
   List<PayMethod>? _methods;
@@ -99,9 +100,6 @@ class PaymentService {
     } catch (_) {}
   }
 
-  static Future<void> _enqueueCacheIo(Future<void> Function() job) {
-    final run = _cacheIoQueue.then((_) => job());
-    _cacheIoQueue = run.catchError((_) {});
-    return run;
-  }
+  static Future<void> _enqueueCacheIo(Future<void> Function() job) =>
+      _cacheIoQueue.run(job);
 }

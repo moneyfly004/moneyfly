@@ -20,7 +20,7 @@ class CountryFlag extends StatelessWidget {
     // 缺图时回退按码计算的 emoji（Windows 上可能退化为字母，属兜底）
     final hasAsset =
         c != null && c != 'XX' && RegExp(r'^[A-Z]{2}$').hasMatch(c);
-    Widget child = hasAsset
+    final Widget child = hasAsset
         ? Image.asset(
             'assets/flags/${c.toLowerCase()}.png',
             width: size,

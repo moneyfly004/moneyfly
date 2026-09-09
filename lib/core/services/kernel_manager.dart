@@ -2,11 +2,11 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../proxy/proxy_core.dart';
+import 'app_log.dart';
 import 'settings_store.dart';
 
 /// 内核变体：官方对 amd64(x64) 提供两种构建 ——
@@ -198,7 +198,7 @@ class KernelManager {
       final m = RegExp(r'v?(\d+\.\d+\.\d+)').firstMatch(first);
       return m?.group(1) ?? norm(first);
     } catch (e) {
-      debugPrint('detectCurrent failed: $e');
+      AppLog.error('detectCurrent failed: $e');
       return null;
     }
   }
@@ -215,7 +215,7 @@ class KernelManager {
       }
       return null;
     } catch (e) {
-      debugPrint('fetchLatest failed: $e');
+      AppLog.error('fetchLatest failed: $e');
       return null;
     }
   }

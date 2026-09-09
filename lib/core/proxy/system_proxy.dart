@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../services/app_log.dart';
+
 /// 系统代理管理器（macOS / Windows / Android）
 ///
 /// 职责：连接 VPN 时把系统代理指向本地 mihomo mixed 端口，
@@ -113,7 +115,7 @@ class SystemProxyManager {
       // Android：TUN 接管流量，无需系统代理
       _applied = true;
     } catch (e) {
-      debugPrint('SystemProxyManager.apply 失败: $e');
+      AppLog.error('SystemProxyManager.apply 失败: $e');
     }
   }
 
@@ -131,7 +133,7 @@ class SystemProxyManager {
       _captured = false; // 下次连接重新捕获原始配置
       _original.clear();
     } catch (e) {
-      debugPrint('SystemProxyManager.restore 失败: $e');
+      AppLog.error('SystemProxyManager.restore 失败: $e');
     }
   }
 
@@ -445,7 +447,7 @@ class SystemProxyManager {
       final r2 = internetSetOption(0, internetOptionRefresh, nullptr, 0);
       return r1 != 0 && r2 != 0;
     } catch (e) {
-      debugPrint('SystemProxyManager FFI 通知失败，回退 PowerShell: $e');
+      AppLog.error('SystemProxyManager FFI 通知失败，回退 PowerShell: $e');
       return false;
     }
   }
@@ -465,7 +467,7 @@ $r = [UIntPtr]::Zero
         '-File', ps1.path,
       ], runInShell: true);
     } catch (e) {
-      debugPrint('SystemProxyManager PowerShell 通知失败: $e');
+      AppLog.error('SystemProxyManager PowerShell 通知失败: $e');
     }
   }
 }

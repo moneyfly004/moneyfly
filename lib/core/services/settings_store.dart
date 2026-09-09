@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../utils/serial_executor.dart';
+
 /// 设置持久化（shared_preferences，JSON 序列化）。
 ///
 /// 写路径收敛到本类：所有「读-改-写」必须走 [update]，落盘经全局串行队列，
@@ -15,7 +17,7 @@ class SettingsStore {
   static const _p = 'moneyfly_settings_v1';
 
   /// 全局串行写队列：save/update 依次执行，避免并发交错
-  static Future<void> _writeQueue = Future.value();
+  static final SerialExecutor _writeQueue = SerialExecutor();
 
   Map<String, dynamic> _defaults() => {
         // #10：启动自动连接 / 断线自动重连 默认关闭（手动点击连接）
@@ -97,9 +99,5 @@ class SettingsStore {
   /// 清空用户设置回默认（保留 defaults 语义）
   Future<void> reset() => update((s) => s.clear());
 
-  static Future<void> _enqueue(Future<void> Function() job) {
-    final run = _writeQueue.then((_) => job());
-    _writeQueue = run.catchError((_) {});
-    return run;
-  }
+  static Future<void> _enqueue(Future<void> Function() job) => _writeQueue.run(job);
 }

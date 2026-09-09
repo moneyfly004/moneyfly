@@ -292,7 +292,7 @@ class SubscriptionService {
       final host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
       final port = int.tryParse(hostPort.substring(colon + 1)) ?? 0;
       final query = rest.contains('?') ? rest.substring(rest.indexOf('?') + 1) : '';
-      Map<String, dynamic> params = {};
+      final Map<String, dynamic> params = {};
       for (final kv in query.split('&')) {
         if (kv.contains('=')) params[kv.split('=').first] = Uri.decodeComponent(kv.split('=').last);
       }

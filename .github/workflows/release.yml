@@ -264,6 +264,7 @@ jobs:
           APP="build/macos/Build/Products/Release/MoneyFly.app"; mkdir -p dist
           STAGE="build/dmg-stage-arm64"; rm -rf "$STAGE" && mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/MoneyFly.app" && ln -s /Applications "$STAGE/Applications"
+          cp scripts/uninstall_macos.command "$STAGE/uninstall.command" && chmod +x "$STAGE/uninstall.command"
           codesign --force --deep -s - --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
           hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-arm64-$V.dmg"
           cd dist && shasum -a 256 MoneyFly-macos-arm64-$V.dmg > SHA256SUMS-macos-arm64.txt
@@ -328,6 +329,7 @@ jobs:
           APP="build/macos/Build/Products/Release/MoneyFly.app"; mkdir -p dist
           STAGE="build/dmg-stage-x64"; rm -rf "$STAGE" && mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/MoneyFly.app" && ln -s /Applications "$STAGE/Applications"
+          cp scripts/uninstall_macos.command "$STAGE/uninstall.command" && chmod +x "$STAGE/uninstall.command"
           codesign --force --deep -s - --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
           hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-x64-$V.dmg"
           cd dist && shasum -a 256 MoneyFly-macos-x64-$V.dmg > SHA256SUMS-macos-x64.txt
@@ -397,6 +399,7 @@ jobs:
           APP="build/macos/Build/Products/Release/MoneyFly.app"; mkdir -p dist
           STAGE="build/dmg-stage-universal"; rm -rf "$STAGE" && mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/MoneyFly.app" && ln -s /Applications "$STAGE/Applications"
+          cp scripts/uninstall_macos.command "$STAGE/uninstall.command" && chmod +x "$STAGE/uninstall.command"
           codesign --force --deep -s - --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
           hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-universal-$V.dmg"
           cd dist && shasum -a 256 MoneyFly-macos-universal-$V.dmg > SHA256SUMS-macos-universal.txt
@@ -439,8 +442,10 @@ jobs:
             各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
 
             ## 本版更新
-            - 修复：设备升级页打开时金额显示「—」、支付按钮点不动（首次算价被跳过）
-            - 优化：设备升级的下单与支付合并为一次请求，支付二维码出现更快
-            - 优化：设备升级金额以后端订单为准，余额/全额抵扣可直接开通
+            - 安全：http 日志对登录/刷新等敏感接口的响应体脱敏，不再明文落盘令牌
+            - 修复：http 日志 512KB 截断可能切出乱码（改为按整行截断）
+            - 日志：内核日志新增 error/silent 级别；运行日志支持「只看错误」过滤 + 错误红色高亮
+            - 优化：串行写队列抽为公共组件，修复崩溃日志写盘竞态并限制崩溃文件数量
+            - 卸载：macOS 新增双击卸载脚本（随 DMG 分发），删除配置/节点/缓存/令牌等全部数据
           generate_release_notes: false
           fail_on_unmatched_files: true

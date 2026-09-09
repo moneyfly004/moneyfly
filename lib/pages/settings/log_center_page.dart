@@ -70,7 +70,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
   Timer? _pollTimer;
   String _level = 'warning';
 
-  static const _levels = ['debug', 'info', 'warning'];
+  static const _levels = ['debug', 'info', 'warning', 'error', 'silent'];
 
   // Android 轮询状态：_pollBusy 防止上一轮（含 drain 续读）未结束时定时器重入；
   // _cursorReset 仅首次进入页面时为 true，让第一轮请求原生侧回放「最近行」建立
@@ -200,34 +200,46 @@ class _KernelLogTabState extends State<_KernelLogTab>
               Text(AppStrings.t('kernel_log_level'),
                   style: TextStyle(fontSize: 11, color: MFColors.txt3)),
               const SizedBox(width: 8),
-              for (final lv in _levels) ...[
-                GestureDetector(
-                  onTap: () => _setLevel(lv),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    margin: const EdgeInsets.only(right: 6),
-                    decoration: BoxDecoration(
-                      gradient: _level == lv ? MFColors.brandGradient : null,
-                      color: _level == lv ? null : MFColors.card,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                          color: _level == lv
-                              ? Colors.transparent
-                              : MFColors.line),
-                    ),
-                    child: Text(
-                      lv.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        color: _level == lv ? Colors.white : MFColors.txt2,
-                      ),
-                    ),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final lv in _levels)
+                        GestureDetector(
+                          onTap: () => _setLevel(lv),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              gradient: _level == lv
+                                  ? MFColors.brandGradient
+                                  : null,
+                              color: _level == lv ? null : MFColors.card,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: _level == lv
+                                      ? Colors.transparent
+                                      : MFColors.line),
+                            ),
+                            child: Text(
+                              lv.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: _level == lv
+                                    ? Colors.white
+                                    : MFColors.txt2,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-              ],
-              const Spacer(),
+              ),
+              const SizedBox(width: 8),
               Container(
                 width: 7,
                 height: 7,
@@ -320,9 +332,19 @@ class _AppLogTabState extends State<_AppLogTab>
     with AutomaticKeepAliveClientMixin {
   List<String> _lines = const [];
   bool _loading = true;
+  bool _filterError = false;
 
   @override
   bool get wantKeepAlive => true;
+
+  static bool _isErrorLine(String line) =>
+      line.contains('[ERROR]') || line.toLowerCase().contains('level=error');
+
+  Color _lineColor(String line) =>
+      _isErrorLine(line) ? const Color(0xFFFF6B6B) : MFColors.txt2;
+
+  List<String> get _visible =>
+      _filterError ? _lines.where(_isErrorLine).toList() : _lines;
 
   @override
   void initState() {
@@ -394,14 +416,24 @@ class _AppLogTabState extends State<_AppLogTab>
                 onPressed: _load,
               ),
               IconButton(
+                icon: Icon(
+                    _filterError ? Icons.filter_alt : Icons.filter_alt_outlined,
+                    size: 17),
+                tooltip: AppStrings.t('log_only_errors'),
+                color: _filterError ? MFColors.brandLight : null,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _filterError = !_filterError),
+              ),
+              IconButton(
                 icon: const Icon(Icons.copy, size: 17),
                 tooltip: AppStrings.t('copy'),
                 visualDensity: VisualDensity.compact,
                 onPressed: () async {
-                  if (_lines.isEmpty) return;
+                  final visible = _visible;
+                  if (visible.isEmpty) return;
                   final messenger = ScaffoldMessenger.of(context);
                   await Clipboard.setData(
-                      ClipboardData(text: _lines.join('\n')));
+                      ClipboardData(text: visible.join('\n')));
                   messenger.showSnackBar(SnackBar(
                     content: Text(AppStrings.t('kernel_log_copied'),
                         style: const TextStyle(fontSize: 13)),
@@ -430,27 +462,32 @@ class _AppLogTabState extends State<_AppLogTab>
                       child: Text(AppStrings.t('log_empty'),
                           style: TextStyle(
                               fontSize: 12, color: MFColors.txt3)))
-                  : ListView.builder(
-                      reverse: true,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      itemCount: _lines.length,
-                      itemBuilder: (context, i) {
-                        final line = _lines[_lines.length - 1 - i];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 1),
-                          child: SelectableText(
-                            line,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              height: 1.6,
-                              color: MFColors.txt2,
-                              fontFamily: kNumFont,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                  : _visible.isEmpty
+                      ? Center(
+                          child: Text(AppStrings.t('log_no_errors'),
+                              style: TextStyle(
+                                  fontSize: 12, color: MFColors.txt3)))
+                      : ListView.builder(
+                          reverse: true,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          itemCount: _visible.length,
+                          itemBuilder: (context, i) {
+                            final line = _visible[_visible.length - 1 - i];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 1),
+                              child: SelectableText(
+                                line,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  height: 1.6,
+                                  color: _lineColor(line),
+                                  fontFamily: kNumFont,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
         ),
       ],
     );
