@@ -72,8 +72,9 @@ class _KernelLogTabState extends State<_KernelLogTab>
 
   static const _levels = ['debug', 'info', 'warning'];
 
-  // Android 轮询状态：防止上一轮（含 drain 续读）未结束时定时器重入；
-  // 页面每次进入的第一轮请求原生侧重建「最近行」基线（见 _pollAndroid）。
+  // Android 轮询状态：_pollBusy 防止上一轮（含 drain 续读）未结束时定时器重入；
+  // _cursorReset 仅首次进入页面时为 true，让第一轮请求原生侧回放「最近行」建立
+  // 基线（后续增量）。因 Tab 走 keep-alive，状态不销毁，重置只发生在首次打开。
   bool _pollBusy = false;
   bool _cursorReset = true;
 
@@ -317,7 +318,7 @@ class _AppLogTab extends StatefulWidget {
 
 class _AppLogTabState extends State<_AppLogTab>
     with AutomaticKeepAliveClientMixin {
-  String _content = '';
+  List<String> _lines = const [];
   bool _loading = true;
 
   @override
@@ -331,13 +332,18 @@ class _AppLogTabState extends State<_AppLogTab>
 
   Future<void> _load() async {
     if (mounted) setState(() => _loading = true);
-    String content = '';
+    var lines = const <String>[];
     try {
-      content = await AppLog.read();
+      final content = await AppLog.read();
+      final raw = content.split('\n');
+      // 文件以换行结尾，去掉末尾的空串（避免渲染出多余空行）
+      lines = raw.isNotEmpty && raw.last.isEmpty
+          ? raw.sublist(0, raw.length - 1)
+          : raw;
     } catch (_) {}
     if (!mounted) return;
     setState(() {
-      _content = content;
+      _lines = lines;
       _loading = false;
     });
   }
@@ -392,9 +398,10 @@ class _AppLogTabState extends State<_AppLogTab>
                 tooltip: AppStrings.t('copy'),
                 visualDensity: VisualDensity.compact,
                 onPressed: () async {
-                  if (_content.isEmpty) return;
+                  if (_lines.isEmpty) return;
                   final messenger = ScaffoldMessenger.of(context);
-                  await Clipboard.setData(ClipboardData(text: _content));
+                  await Clipboard.setData(
+                      ClipboardData(text: _lines.join('\n')));
                   messenger.showSnackBar(SnackBar(
                     content: Text(AppStrings.t('kernel_log_copied'),
                         style: const TextStyle(fontSize: 13)),
@@ -418,24 +425,31 @@ class _AppLogTabState extends State<_AppLogTab>
           child: _loading
               ? const Center(
                   child: CircularProgressIndicator(color: MFColors.brand))
-              : _content.isEmpty
+              : _lines.isEmpty
                   ? Center(
                       child: Text(AppStrings.t('log_empty'),
                           style: TextStyle(
                               fontSize: 12, color: MFColors.txt3)))
-                  : SingleChildScrollView(
+                  : ListView.builder(
                       reverse: true,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 10),
-                      child: SelectableText(
-                        _content,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          height: 1.6,
-                          color: MFColors.txt2,
-                          fontFamily: kNumFont,
-                        ),
-                      ),
+                      itemCount: _lines.length,
+                      itemBuilder: (context, i) {
+                        final line = _lines[_lines.length - 1 - i];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1),
+                          child: SelectableText(
+                            line,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              height: 1.6,
+                              color: MFColors.txt2,
+                              fontFamily: kNumFont,
+                            ),
+                          ),
+                        );
+                      },
                     ),
         ),
       ],

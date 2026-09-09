@@ -30,23 +30,41 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    // 无缓存才加载；已有缓存直接展示（切 tab 不再闪烁刷新）
-    if (_dashboard == null) _load();
+    _initLoad();
+  }
+
+  /// 冷启动：先展示磁盘缓存（不再转圈），再后台静默刷新；无缓存才走网络 loading。
+  Future<void> _initLoad() async {
+    if (_dashboard == null) {
+      final disk = await UserService.instance.loadCachedDashboard();
+      if (!mounted) return;
+      if (disk != null) {
+        UserService.instance.adoptCachedDashboard(disk);
+        setState(() {});
+      }
+    }
+    await _load();
   }
 
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _loadFailed = false;
-    });
+    final hadCache = _dashboard != null;
+    if (!hadCache) {
+      setState(() {
+        _loading = true;
+        _loadFailed = false;
+      });
+    }
     try {
       await UserService.instance.dashboard(force: true);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
+      if (!mounted) return;
+      if (!hadCache) {
+        // 无缓存且失败：给「错误+重试」占位
         setState(() => _loadFailed = true);
         _toast(ApiClient.errorMsg(e));
       }
+      // 已有缓存时静默失败：保留旧数据继续浏览，不打断用户
     } finally {
       if (mounted) setState(() => _loading = false);
     }

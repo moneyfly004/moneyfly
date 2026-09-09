@@ -77,6 +77,21 @@ class DashboardInfo {
   /// 订阅是否生效（后端 subscription_status: active / inactive / disabled 等，
   /// 只有 active 视为生效；未设置视为无订阅）
   bool get hasSubscription => subscriptionStatus == 'active';
+
+  /// 序列化（本地磁盘缓存用），字段名与后端 JSON 一致
+  Map<String, dynamic> toJson() => {
+        'username': username,
+        'email': email,
+        'balance': balance,
+        'membership': membership,
+        'online_devices': onlineDevices,
+        'total_devices': totalDevices,
+        'subscription_status': subscriptionStatus,
+        'expire_time': expireTime,
+        'remaining_days': remainingDays,
+        'has_special_nodes': hasSpecialNodes,
+        'is_active': isActive,
+      };
 }
 
 // ============ 订阅 ============
@@ -157,6 +172,16 @@ class Plan {
         deviceLimit: (j['device_limit'] as num?)?.toInt() ?? 0,
         isRecommended: j['is_recommended'] == true,
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'price': price,
+        'duration_days': durationDays,
+        'device_limit': deviceLimit,
+        'is_recommended': isRecommended,
+      };
 }
 
 class PayMethod {
@@ -179,6 +204,13 @@ class PayMethod {
   bool get isAlipay => payType.contains('alipay');
   bool get isWechat => payType.contains('wechat') || payType.contains('wxpay');
   bool get isCrypto => payType.contains('usdt') || payType.contains('crypto');
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'key': payType,
+        'name': name,
+        'sort_order': sortOrder,
+      };
 }
 
 class PaymentResult {

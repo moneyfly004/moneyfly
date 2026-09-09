@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/api/endpoints.dart';
 import '../../core/models/models.dart';
 import '../../core/services/account_service.dart';
 import '../../core/services/order_service.dart';
@@ -36,42 +35,57 @@ class _PackagePageState extends State<PackagePage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _initLoad();
+  }
+
+  /// 冷启动：先展示磁盘缓存（不再整页转圈），再后台静默刷新；无缓存才走网络 loading。
+  Future<void> _initLoad() async {
+    final cached = await PaymentService.instance.loadCatalog();
+    if (!mounted) return;
+    if (cached != null) {
+      PaymentService.instance.adoptCatalog(cached.plans, cached.methods);
+      _apply(cached.plans, cached.methods);
+    }
+    await _load();
   }
 
   Future<void> _load() async {
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    final hadCache = _plans.isNotEmpty || _methods.isNotEmpty;
+    if (!hadCache) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
-      final plans = await ApiClient.instance.get(Endpoints.packages);
-      final methods = await PaymentService.instance.methods();
-      if (mounted) {
-        setState(() {
-          _plans = (plans is List ? plans : [])
-              .map((e) => Plan.fromJson(Map<String, dynamic>.from(e as Map)))
-              .toList()
-            ..sort((a, b) => a.price.compareTo(b.price));
-          _methods = methods;
-          _selectedPlan = _plans.isEmpty
-              ? null
-              : (_plans.indexWhere((p) => p.isRecommended) >= 0
-                  ? _plans.indexWhere((p) => p.isRecommended)
-                  : 0);
-          _selectedMethod = _methods.isEmpty ? null : 0;
-          _loading = false;
-        });
-      }
+      final plans = await PaymentService.instance.plans(force: true);
+      final methods = await PaymentService.instance.methods(force: true);
+      if (mounted) _apply(plans, methods);
     } catch (e) {
-      if (mounted) {
+      // 有缓存时静默失败：保留旧目录继续浏览
+      if (mounted && !hadCache) {
         setState(() {
           _loading = false;
           _error = ApiClient.errorMsg(e);
         });
       }
     }
+  }
+
+  void _apply(List<Plan> plans, List<PayMethod> methods) {
+    if (!mounted) return;
+    setState(() {
+      _plans = plans;
+      _methods = methods;
+      _selectedPlan = _plans.isEmpty
+          ? null
+          : (_plans.indexWhere((p) => p.isRecommended) >= 0
+              ? _plans.indexWhere((p) => p.isRecommended)
+              : 0);
+      _selectedMethod = _methods.isEmpty ? null : 0;
+      _loading = false;
+      _error = null;
+    });
   }
 
   double get _amount =>

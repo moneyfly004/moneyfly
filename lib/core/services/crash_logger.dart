@@ -41,25 +41,53 @@ class CrashLogger {
   static final List<String> _pending = [];
   static Future<void>? _flushing;
 
+  /// 崩溃日志目录保留的最大文件数，防止无限堆积
+  static const _maxCrashFiles = 20;
+
   static void _log(String content) {
     if (!_enabled || kIsWeb) return;
-    final line = '${DateTime.now().toIso8601String()}\n$content\n\n';
-    _pending.add(line);
-    _flushing ??= _flush().whenComplete(() => _flushing = null);
+    _pending.add('${DateTime.now().toIso8601String()}\n$content\n\n');
+    _flushing ??= _drain();
   }
 
-  static Future<void> _flush() async {
+  /// 把待写日志串行落盘。写盘期间若有新崩溃追加，末尾同步判断后立即
+  /// 接续下一轮（判断与清空 `_flushing` 之间无 await，不会漏掉并发日志）。
+  static Future<void> _drain() async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final logDir = Directory('${dir.path}/crash_logs');
       if (!logDir.existsSync()) logDir.createSync(recursive: true);
       final file = File('${logDir.path}/crash-${DateTime.now().millisecondsSinceEpoch}.log');
-      // 合并等待期间的日志，一次性写入
       while (_pending.isNotEmpty) {
-        await file.writeAsString(_pending.removeAt(0), mode: FileMode.append);
+        final batch = List<String>.of(_pending);
+        _pending.clear();
+        for (final line in batch) {
+          await file.writeAsString(line, mode: FileMode.append);
+        }
       }
+      await _pruneOld(logDir);
     } catch (_) {
       // 日志失败不产生新的崩溃
     }
+    if (_pending.isNotEmpty) {
+      _flushing = _drain();
+    } else {
+      _flushing = null;
+    }
+  }
+
+  /// 仅保留最近 [_maxCrashFiles] 个崩溃文件（文件名毫秒时间戳，字典序即时间序）
+  static Future<void> _pruneOld(Directory dir) async {
+    try {
+      final files = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.log'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+      while (files.length > _maxCrashFiles) {
+        await files.removeAt(0).delete();
+      }
+    } catch (_) {}
   }
 }

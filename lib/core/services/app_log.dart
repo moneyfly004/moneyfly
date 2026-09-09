@@ -78,14 +78,22 @@ class AppLog {
         final f = await _resolve();
         if (f == null) return;
         await f.writeAsString(line, mode: FileMode.append, flush: false);
-        // 超 512KB：保留后半(截半旋转)。在队列内执行，无并发交错。
+        // 超 512KB：保留后半（按行旋转，在队列内执行无并发交错）
         if (await f.length() > _maxSize) {
           final content = await f.readAsString();
-          await f.writeAsString(
-              content.substring(content.length ~/ 2), flush: true);
+          await f.writeAsString(_keepSecondHalf(content), flush: true);
         }
       } catch (_) {}
     });
     _writeQueue = job.catchError((_) {});
+  }
+
+  /// 取后半段日志用于旋转。找中点后的第一个换行再截断，保证：
+  /// - 不在半个 UTF-16 代理对（emoji）中间切，避免写出损坏字符；
+  /// - 不切断一行，首行始终完整。
+  static String _keepSecondHalf(String content) {
+    final nl = content.indexOf('\n', content.length ~/ 2);
+    if (nl < 0 || nl + 1 >= content.length) return content; // 无换行/已到末尾：不截断
+    return content.substring(nl + 1);
   }
 }
