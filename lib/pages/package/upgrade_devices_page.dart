@@ -57,7 +57,6 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
           _selectedMethod = _methods.isEmpty ? null : 0;
         });
       }
-      await _preview();
     } catch (e) {
       if (mounted) {
         setState(() => _previewError = ApiClient.errorMsg(e));
@@ -65,6 +64,8 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    // 置 _loading=false 后再算价：否则 _preview 开头的 if(_loading) return 会跳过首个算价
+    await _preview();
   }
 
   SubscriptionInfo? get _sub => AccountService.instance.sub;
@@ -126,29 +127,16 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
     }
     setState(() => _paying = true);
     try {
-      final order = await OrderService.instance
-          .createDeviceUpgrade(addDevices: _addDevices, addDays: _addDays);
+      // 合并下单+支付：带支付方式 key，后端直接返回二维码，省一个来回
+      final order = await OrderService.instance.createDeviceUpgrade(
+          addDevices: _addDevices, addDays: _addDays, paymentMethodKey: method.payType);
       final orderId = (order['id'] as num?)?.toInt() ?? 0;
       final orderNo = order['order_no']?.toString() ?? '';
       if (orderId == 0) throw Exception(AppStrings.t('order_failed'));
 
-      final pay = await OrderService.instance
-          .pay(orderId: orderId, paymentMethodId: method.id);
-      if (pay.qrCode.isEmpty) throw Exception(AppStrings.t('no_qrcode'));
-
-      if (!mounted) return;
-      final paid = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => PaymentQrDialog(
-          qrContent: pay.qrCode,
-          orderNo: pay.orderNo.isEmpty ? orderNo : pay.orderNo,
-          amount: _finalAmount ?? 0,
-          methodName: method.name,
-          onPaid: () {},
-        ),
-      );
-      if (paid == true && mounted) {
+      // 开通并刷新（付款成功 / 余额抵扣直接开通 共用）
+      Future<void> activate() async {
+        if (!mounted) return;
         _toast(AppStrings.t('upgrade_done'));
         try {
           final nodes = await AccountService.instance.refreshAfterPurchase();
@@ -158,6 +146,40 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
         } catch (_) {}
         if (mounted) Navigator.of(context).pop(true);
       }
+
+      // 余额/全额抵扣：后端直接置 paid，无需二维码，直接开通
+      if (order['status']?.toString() == 'paid') {
+        await activate();
+        return;
+      }
+
+      // 金额以后端订单为准，为 0/缺省则回退预览价
+      final fa = (order['final_amount'] as num?)?.toDouble() ?? 0;
+      final orderAmount = fa > 0 ? fa : (_finalAmount ?? 0);
+
+      // 优先用下单响应里的二维码；为空再回退单独发起支付
+      var qr = order['payment_qr_code']?.toString() ?? order['payment_url']?.toString() ?? '';
+      var payOrderNo = orderNo;
+      if (qr.isEmpty) {
+        final pay = await OrderService.instance.pay(orderId: orderId, paymentMethodId: method.id);
+        qr = pay.qrCode;
+        if (pay.orderNo.isNotEmpty) payOrderNo = pay.orderNo;
+      }
+      if (qr.isEmpty) throw Exception(AppStrings.t('no_qrcode'));
+
+      if (!mounted) return;
+      final paid = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PaymentQrDialog(
+          qrContent: qr,
+          orderNo: payOrderNo,
+          amount: orderAmount,
+          methodName: method.name,
+          onPaid: () {},
+        ),
+      );
+      if (paid == true) await activate();
     } catch (e) {
       _toast(ApiClient.errorMsg(e));
     } finally {

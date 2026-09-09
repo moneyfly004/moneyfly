@@ -19,12 +19,15 @@ class OrderService {
     return Map<String, dynamic>.from(data is Map ? data : {});
   }
 
-  /// 设备增量升级下单，返回 {id, order_no, amount, ...}
+  /// 设备增量升级下单。传 [paymentMethodKey] 时后端在响应里直接返回 payment_qr_code，
+  /// 省掉单独的 /payment 调用（与套餐购买一致）。返回 {id, order_no, amount, final_amount, status, ...}
   Future<Map<String, dynamic>> createDeviceUpgrade(
-      {required int addDevices, int addDays = 0}) async {
+      {required int addDevices, int addDays = 0, String? paymentMethodKey}) async {
     final data = await ApiClient.instance.post(Endpoints.ordersUpgradeDevices, data: {
       'additional_devices': addDevices,
       'additional_days': addDays,
+      'payment_method':
+          (paymentMethodKey != null && paymentMethodKey.trim().isNotEmpty) ? paymentMethodKey.trim() : null,
     });
     return Map<String, dynamic>.from(data is Map ? data : {});
   }
