@@ -8,8 +8,6 @@ import '../../core/models/models.dart';
 import '../../core/services/account_service.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
-import '../../core/services/subscription_service.dart';
-import '../../core/services/user_service.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
@@ -153,11 +151,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
       if (paid == true && mounted) {
         _toast(AppStrings.t('upgrade_done'));
         try {
-          // 刷新账号状态（设备数/到期）与节点
-          await AccountService.instance.refresh(force: true);
-          UserService.instance.invalidateCache();
-          final nodes =
-              await SubscriptionService.instance.fetchNodes(force: true);
+          final nodes = await AccountService.instance.refreshAfterPurchase();
           if (mounted) {
             await context.read<ConnectionController>().applySubscriptionNodes(nodes);
           }

@@ -4,6 +4,7 @@ import '../../l10n/app_strings.dart';
 import '../api/api_client.dart';
 import '../models/models.dart';
 import 'subscription_service.dart';
+import 'user_service.dart';
 
 /// 账号可用状态（三端统一判定「能否连接 VPN / 该给什么提示」）：
 ///
@@ -107,6 +108,16 @@ class AccountService extends ChangeNotifier {
     loaded = true;
     notifyListeners();
     return status;
+  }
+
+  /// 购买/升级成功后：失效用户资料缓存，并发刷新账号状态与订阅节点，返回最新节点。
+  /// 节点应用到连接控制器由调用方在 context 校验后完成（本层不依赖 UI）。
+  Future<List<ProxyNode>> refreshAfterPurchase() async {
+    UserService.instance.invalidateCache();
+    final accF = refresh(force: true);
+    final nodesF = SubscriptionService.instance.fetchNodes(force: true);
+    await accF;
+    return nodesF;
   }
 
   /// 登出 / 切换账号时清理，防止旧账号状态残留

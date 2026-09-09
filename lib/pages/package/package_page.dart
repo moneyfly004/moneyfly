@@ -7,8 +7,6 @@ import '../../core/services/account_service.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
-import '../../core/services/subscription_service.dart';
-import '../../core/services/user_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/mf_empty.dart';
@@ -58,8 +56,11 @@ class _PackagePageState extends State<PackagePage> {
       });
     }
     try {
-      final plans = await PaymentService.instance.plans(force: true);
-      final methods = await PaymentService.instance.methods(force: true);
+      // plans 与 methods 相互独立，并发发起再一起 await，省一次串行往返
+      final plansF = PaymentService.instance.plans(force: true);
+      final methodsF = PaymentService.instance.methods(force: true);
+      final plans = await plansF;
+      final methods = await methodsF;
       if (mounted) _apply(plans, methods);
     } catch (e) {
       // 有缓存时静默失败：保留旧目录继续浏览
@@ -99,38 +100,61 @@ class _PackagePageState extends State<PackagePage> {
     if (method == null) return _toast(AppStrings.t('select_pay'));
     setState(() => _paying = true);
     try {
-      final order = await OrderService.instance.create(packageId: plan.id);
+      // 合并下单+支付：下单时带支付方式 key，后端直接返回 payment_qr_code，省一个来回
+      final order = await OrderService.instance.create(
+        packageId: plan.id,
+        paymentMethodKey: method.payType,
+      );
       final orderId = (order['id'] as num?)?.toInt() ?? 0;
       final orderNo = order['order_no']?.toString() ?? '';
       if (orderId == 0) throw Exception(AppStrings.t('order_failed'));
 
-      final pay = await OrderService.instance.pay(orderId: orderId, paymentMethodId: method.id);
-      if (pay.qrCode.isEmpty) throw Exception(AppStrings.t('no_qrcode'));
+      // 开通并刷新（付款成功 / 免费订单直接开通 共用）
+      Future<void> activate() async {
+        if (!mounted) return;
+        _toast(AppStrings.t('activated'));
+        try {
+          final nodes = await AccountService.instance.refreshAfterPurchase();
+          if (mounted) {
+            await context.read<ConnectionController>().applySubscriptionNodes(nodes);
+          }
+        } catch (_) {}
+      }
+
+      // 免费/全额抵扣订单：后端直接置 paid，无需二维码，直接开通
+      if (order['status']?.toString() == 'paid') {
+        await activate();
+        return;
+      }
+
+      // 金额以后端订单为准：final_amount 含折扣，为 0/缺省则回退 amount，再回退套餐价
+      final fa = (order['final_amount'] as num?)?.toDouble() ?? 0;
+      final am = (order['amount'] as num?)?.toDouble() ?? 0;
+      final orderAmount = fa > 0 ? fa : (am > 0 ? am : _amount);
+
+      // 优先用下单响应里的二维码；为空再回退单独发起支付
+      var qr = order['payment_qr_code']?.toString() ?? order['payment_url']?.toString() ?? '';
+      var payOrderNo = orderNo;
+      if (qr.isEmpty) {
+        final pay = await OrderService.instance.pay(orderId: orderId, paymentMethodId: method.id);
+        qr = pay.qrCode;
+        if (pay.orderNo.isNotEmpty) payOrderNo = pay.orderNo;
+      }
+      if (qr.isEmpty) throw Exception(AppStrings.t('no_qrcode'));
 
       if (!mounted) return;
       final paid = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
         builder: (_) => PaymentQrDialog(
-          qrContent: pay.qrCode,
-          orderNo: pay.orderNo.isEmpty ? orderNo : pay.orderNo,
-          amount: _amount,
+          qrContent: qr,
+          orderNo: payOrderNo,
+          amount: orderAmount,
           methodName: method.name,
           onPaid: () {},
         ),
       );
-      if (paid == true && mounted) {
-        _toast(AppStrings.t('activated'));
-        try {
-          // 开通成功后立即刷新账号状态（到期→生效）与节点，首页横幅即时消失
-          await AccountService.instance.refresh(force: true);
-          UserService.instance.invalidateCache();
-          final nodes = await SubscriptionService.instance.fetchNodes(force: true);
-          if (mounted) {
-            await context.read<ConnectionController>().applySubscriptionNodes(nodes);
-          }
-        } catch (_) {}
-      }
+      if (paid == true) await activate();
     } catch (e) {
       _toast(ApiClient.errorMsg(e));
     } finally {
@@ -165,12 +189,75 @@ class _PackagePageState extends State<PackagePage> {
     return parts.join(' · ');
   }
 
+  /// 首次无缓存加载的占位骨架：静态灰块镜像真实布局（不做 shimmer 动画，低端机不掉帧）。
+  Widget _buildSkeleton() {
+    Widget block(double w, double h, {double r = 8}) => Container(
+          width: w,
+          height: h,
+          decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(r)),
+        );
+    Widget planRow() => Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+          decoration: BoxDecoration(
+              color: MFColors.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: MFColors.line)),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                block(120, 15),
+                const SizedBox(height: 8),
+                block(180, 11),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            block(54, 22),
+          ]),
+        );
+    Widget methodRow() => Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          decoration: BoxDecoration(
+              color: MFColors.card, borderRadius: BorderRadius.circular(15), border: Border.all(color: MFColors.line)),
+          child: Row(children: [
+            block(34, 34, r: 10),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                block(90, 14),
+                const SizedBox(height: 6),
+                block(140, 10),
+              ]),
+            ),
+          ]),
+        );
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+      children: [
+        block(140, 21),
+        const SizedBox(height: 8),
+        block(200, 12),
+        const SizedBox(height: 18),
+        planRow(),
+        planRow(),
+        planRow(),
+        const SizedBox(height: 10),
+        block(80, 13),
+        const SizedBox(height: 12),
+        methodRow(),
+        methodRow(),
+        const SizedBox(height: 20),
+        block(double.infinity, 50, r: 14),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: _loading
-            ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
+            ? _buildSkeleton()
             : RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
@@ -299,36 +386,16 @@ class _PackagePageState extends State<PackagePage> {
               ),
             ),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text.rich(TextSpan(children: [
-                  TextSpan(text: '¥${p.price.toStringAsFixed(0)}',
-                      style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
-                          fontFamily: kNumFont,
-                          color: selected ? MFColors.brandLight : MFColors.txt)),
-                  TextSpan(text: _periodLabel(p), style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
-                ])),
-                const SizedBox(height: 7),
-                GestureDetector(
-                  onTap: () {
-                    setState(() => _selectedPlan = index);
-                    _pay();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 6),
-                    decoration: BoxDecoration(
-                      gradient: MFColors.brandGradient,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Text(AppStrings.t('buy_now'),
-                        style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
-                  ),
-                ),
-              ],
-            ),
+            // 只显示价格；下单入口统一走底部「合计 + 立即支付」，避免双入口/漏选支付方式
+            Text.rich(TextSpan(children: [
+              TextSpan(text: '¥${p.price.toStringAsFixed(0)}',
+                  style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: kNumFont,
+                      color: selected ? MFColors.brandLight : MFColors.txt)),
+              TextSpan(text: _periodLabel(p), style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+            ])),
           ],
         ),
       ),

@@ -1,15 +1,17 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_strings.dart';
-import '../../core/api/api_client.dart';
 import '../../core/services/order_service.dart';
 import '../../theme/app_theme.dart';
 
-/// 支付二维码弹窗（设计稿 05）：渲染二维码 + 真实轮询订单状态
+/// 支付二维码弹窗：渲染二维码 + 后台静默轮询订单状态。
+/// 手机端对支付宝额外提供跳转 App 按钮（同机无法自扫屏幕）；桌面端仅二维码。
 class PaymentQrDialog extends StatefulWidget {
   const PaymentQrDialog({
     super.key,
@@ -30,71 +32,133 @@ class PaymentQrDialog extends StatefulWidget {
   State<PaymentQrDialog> createState() => _PaymentQrDialogState();
 }
 
-class _PaymentQrDialogState extends State<PaymentQrDialog> {
-  int _elapsed = 0;
+class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingObserver {
+  static const int _timeoutSecs = 900; // 轮询超时：真实 15 分钟，与二维码有效期对齐
+  static const int _pollIntervalMs = 3000; // 与网站端一致；后端每次查询会实时向网关查单，勿过密
+
   bool _zoom = false;
-  bool _polling = true;
-  String? _pollError;
+  bool _polling = true; // 是否仍在轮询（超时/终态后置 false）
+  bool _launching = false; // 跳转按钮防连点
   Timer? _timer;
+  bool _pollInFlight = false;
+  late DateTime _startAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startPolling();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
 
-  bool _pollInFlight = false;
+  /// 从支付宝/浏览器切回 App 时立即补查一次，不必等下个轮询周期。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _polling && mounted) {
+      _pollOnce();
+    }
+  }
 
-  /// 轮询：2.5s 一次，最长 15 分钟；paid → 回调并关闭
+  bool get _isMobile =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// 支付宝当面付/易支付收银台等可唤起；微信 NATIVE(weixin://) 只能扫码、USDT 是地址码，均不跳转。
+  bool get _launchable {
+    final s = widget.qrContent.trim().toLowerCase();
+    if (s.startsWith('weixin://') || s.startsWith('wxp://') || s.startsWith('usdt:')) {
+      return false;
+    }
+    return s.startsWith('http://') ||
+        s.startsWith('https://') ||
+        s.startsWith('alipay://') ||
+        s.startsWith('alipays://');
+  }
+
+  /// 启动/重启后台静默轮询：立即查一次（不等首个间隔），再周期节流轮询。
   void _startPolling() {
     _timer?.cancel();
+    _startAt = DateTime.now();
     _pollInFlight = false;
-    _timer = Timer.periodic(const Duration(milliseconds: 2500), (_) async {
-      if (!_polling || !mounted || _pollInFlight) return;
-      _pollInFlight = true;
-      setState(() => _elapsed += 2);
-      if (_elapsed >= 900) {
+    _polling = true;
+    _pollOnce();
+    _timer = Timer.periodic(const Duration(milliseconds: _pollIntervalMs), (_) {
+      if (!mounted || !_polling) return;
+      if (DateTime.now().difference(_startAt).inSeconds >= _timeoutSecs) {
         _timer?.cancel();
-        setState(() => _polling = false);
+        _polling = false;
         return;
       }
-      try {
-        final s = await OrderService.instance.status(widget.orderNo);
-        if (!mounted) return;
-        if (s.isPaid) {
-          _timer?.cancel();
-          setState(() => _polling = false);
-          widget.onPaid?.call();
-          Navigator.of(context).pop(true);
-        } else if (s.status == 'cancelled' || s.status == 'expired') {
-          _timer?.cancel();
-          setState(() {
-            _polling = false;
-            _pollError = AppStrings.t('order_status_tip', {'status': s.status == 'cancelled' ? AppStrings.t('cancelled') : AppStrings.t('expired')});
-          });
-        }
-      } catch (e) {
-        if (mounted) setState(() => _pollError = ApiClient.errorMsg(e));
-      } finally {
-        _pollInFlight = false;
-      }
+      _pollOnce();
     });
   }
 
-  String get _clock {
-    final m = (_elapsed ~/ 60).toString().padLeft(2, '0');
-    final s = (_elapsed % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+  /// 查一次订单状态：paid → 回调并关闭；cancelled/expired → 停轮询并提示；
+  /// pending / 瞬时网络错误 → 静默，下个周期继续。
+  Future<void> _pollOnce() async {
+    if (!_polling || !mounted || _pollInFlight) return;
+    _pollInFlight = true;
+    try {
+      final s = await OrderService.instance.status(widget.orderNo);
+      if (!mounted) return;
+      if (s.isPaid) {
+        _timer?.cancel();
+        _polling = false;
+        widget.onPaid?.call();
+        Navigator.of(context).pop(true);
+        return;
+      }
+      if (s.status == 'cancelled' || s.status == 'expired') {
+        _timer?.cancel();
+        _polling = false;
+        _snack(AppStrings.t('order_status_tip', {
+          'status': s.status == 'cancelled'
+              ? AppStrings.t('cancelled')
+              : AppStrings.t('expired'),
+        }));
+      }
+    } catch (_) {
+      // 瞬时网络错误：静默，下个周期重试
+    } finally {
+      _pollInFlight = false;
+    }
+  }
+
+  /// 手机端拉起支付 App
+  Future<void> _openPayApp() async {
+    if (_launching) return;
+    setState(() => _launching = true);
+    try {
+      final raw = widget.qrContent.trim();
+      // 支付宝当面付二维码包成 App 深链直接唤起支付宝（与网站端一致），比开网页再跳更可靠
+      final target = raw.toLowerCase().contains('qr.alipay.com')
+          ? 'alipays://platformapi/startapp?saId=10000007&qrcode=${Uri.encodeComponent(raw)}'
+          : raw;
+      final ok = await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+      if (!ok && mounted) _snack(AppStrings.t('open_pay_failed'));
+    } catch (_) {
+      if (mounted) _snack(AppStrings.t('open_pay_failed'));
+    } finally {
+      if (mounted) setState(() => _launching = false);
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final showLaunch = _isMobile && _launchable;
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 26),
@@ -167,21 +231,30 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
-            if (_polling)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(width: 13, height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: MFColors.brandLight)),
-                  const SizedBox(width: 8),
-                  Text('${AppStrings.t('waiting_pay')} $_clock，${AppStrings.t('pay_success_auto')}',
-                      style: const TextStyle(fontSize: 12, color: Colors.white70)),
-                ],
-              )
-            else
-              Text(_pollError ?? AppStrings.t('poll_stopped'),
-                  style: TextStyle(fontSize: 12, color: _pollError != null ? const Color(0xFFFF6B6B) : Colors.white60)),
+            // 手机端一键拉起支付 App
+            if (showLaunch) ...[
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: _launching ? null : _openPayApp,
+                child: Container(
+                  height: 48,
+                  decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
+                  alignment: Alignment.center,
+                  child: _launching
+                      ? const SizedBox(width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.open_in_new, size: 16, color: Colors.white),
+                            const SizedBox(width: 7),
+                            Text(AppStrings.t('open_pay_app', {'method': widget.methodName}),
+                                style: const TextStyle(fontSize: 14.5, color: Colors.white, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             Row(
               children: [
@@ -201,12 +274,9 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () {
-                      // 手动立即查一次：重置计时与轮询状态，避免超时后无法再查
-                      _timer?.cancel();
-                      _elapsed = 0;
-                      _polling = true;
-                      _pollError = null;
+                      // 立即确认一次：重启轮询（首查不等间隔），超时后也能靠它救回
                       _startPolling();
+                      _snack(AppStrings.t('confirming_pay'));
                     },
                     child: Container(
                       height: 50,

@@ -41,6 +41,7 @@ class PaymentService {
     final data = await ApiClient.instance.get(Endpoints.paymentMethods);
     final list = (data is List ? data : <dynamic>[])
         .map((e) => PayMethod.fromJson(Map<String, dynamic>.from(e as Map)))
+        .where((m) => !m.isCrypto) // USDT/加密货币移动端不提供
         .toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     _methods = list;
@@ -60,6 +61,7 @@ class PaymentService {
             .toList();
         final methods = (decoded['methods'] as List? ?? const [])
             .map((e) => PayMethod.fromJson(Map<String, dynamic>.from(e as Map)))
+            .where((m) => !m.isCrypto) // 旧缓存里可能残留 USDT，移动端一并过滤
             .toList();
         if (plans.isEmpty && methods.isEmpty) return null;
         return (plans: plans, methods: methods);

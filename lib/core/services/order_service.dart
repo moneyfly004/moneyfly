@@ -29,11 +29,18 @@ class OrderService {
     return Map<String, dynamic>.from(data is Map ? data : {});
   }
 
-  /// 创建订单，返回 {id, order_no, amount, ...}
-  Future<Map<String, dynamic>> create({required int packageId, String? couponCode}) async {
+  /// 创建订单。传 [paymentMethodKey]（如 alipay / yipay_alipay）时后端会在响应里直接返回
+  /// payment_qr_code / payment_url，省掉单独的 /payment 调用（购买少一个网络来回）。
+  Future<Map<String, dynamic>> create({
+    required int packageId,
+    String? paymentMethodKey,
+    String? couponCode,
+  }) async {
     final data = await ApiClient.instance.post(Endpoints.orders, data: {
       'package_id': packageId,
       'coupon_code': (couponCode != null && couponCode.trim().isNotEmpty) ? couponCode.trim() : null,
+      'payment_method':
+          (paymentMethodKey != null && paymentMethodKey.trim().isNotEmpty) ? paymentMethodKey.trim() : null,
     });
     return Map<String, dynamic>.from(data as Map);
   }

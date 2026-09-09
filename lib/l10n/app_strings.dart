@@ -432,6 +432,9 @@ class AppStrings {
     'qr_tap_zoom': '点按二维码可放大',
     'order_copied': '订单号已复制',
     'pay_success_auto': '支付成功后自动开通套餐…',
+    'open_pay_app': '打开{method}支付',
+    'open_pay_failed': '未能打开支付应用，请改用扫码支付',
+    'confirming_pay': '正在确认支付…',
     // 设置补充
     'pick_option': '请选择',
     'latest_version': '已是最新版本 v{ver}',
@@ -1011,6 +1014,9 @@ class AppStrings {
     'qr_tap_zoom': 'Tap QR to zoom',
     'order_copied': 'Order No. copied',
     'pay_success_auto': 'Activating automatically after payment…',
+    'open_pay_app': 'Open {method}',
+    'open_pay_failed': 'Could not open the payment app, please scan the QR code',
+    'confirming_pay': 'Confirming payment…',
     // 设置补充
     'pick_option': 'Select',
     'latest_version': 'Already latest v{ver}',
