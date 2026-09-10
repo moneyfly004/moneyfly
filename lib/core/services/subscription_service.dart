@@ -225,7 +225,8 @@ class SubscriptionService {
         .toList();
   }
 
-  /// 兼容 v2ray base64 链接列表（vmess:// vless:// trojan:// ss://）
+  /// 兼容 base64/明文链接列表：vmess / vless / trojan / ss / socks5 /
+  /// hysteria2 / tuic / anytls 等，统一转成 mihomo 认识的 Clash map。
   static List<ProxyNode> parseBase64Nodes(String raw) {
     String text = raw;
     try {
@@ -236,21 +237,89 @@ class SubscriptionService {
     for (final line in text.split('\n')) {
       final s = line.trim();
       if (s.isEmpty) continue;
-      if (s.startsWith('vmess://')) {
-        final n = _parseVmess(s);
-        if (n != null) nodes.add(n);
-      } else if (s.startsWith('vless://')) {
-        final n = _parseShareLink('vless', s);
-        if (n != null) nodes.add(n);
-      } else if (s.startsWith('trojan://')) {
-        final n = _parseShareLink('trojan', s);
-        if (n != null) nodes.add(n);
-      } else if (s.startsWith('ss://')) {
-        final n = _parseShareLink('ss', s);
-        if (n != null) nodes.add(n);
-      }
+      final n = _parseLink(s);
+      if (n != null) nodes.add(n);
     }
     return nodes;
+  }
+
+  static ProxyNode? _parseLink(String s) {
+    if (s.startsWith('vmess://')) return _parseVmess(s);
+    if (s.startsWith('vless://')) return _parseVless(s);
+    if (s.startsWith('trojan://')) return _parseTrojan(s);
+    if (s.startsWith('ss://')) return _parseSs(s);
+    if (s.startsWith('ssr://')) return _parseSsr(s);
+    if (s.startsWith('socks://') || s.startsWith('socks5://')) return _parseSocks(s);
+    if (s.startsWith('hysteria2://')) return _parseHysteria2(s);
+    if (s.startsWith('hysteria://')) return _parseHysteria(s);
+    if (s.startsWith('tuic://')) return _parseTuic(s);
+    if (s.startsWith('anytls://')) return _parseAnyTls(s);
+    if (s.startsWith('wireguard://')) return _parseWireguard(s);
+    return null;
+  }
+
+  /// host:port → (host, port)；IPv6（[::1]:443）与非法端口返回 null
+  static (String, int)? _hostPort(String s) {
+    final colon = s.lastIndexOf(':');
+    if (colon <= 0) return null;
+    final port = int.tryParse(s.substring(colon + 1));
+    if (port == null || port <= 0) return null;
+    return (s.substring(0, colon), port);
+  }
+
+  /// query 字符串 → 已解码的键值对（URL 解码 key/value）
+  static Map<String, String> _queryParams(String q) {
+    final params = <String, String>{};
+    for (final kv in q.split('&')) {
+      if (kv.isEmpty) continue;
+      final i = kv.indexOf('=');
+      final k = i >= 0 ? kv.substring(0, i) : kv;
+      final v = i >= 0 ? kv.substring(i + 1) : '';
+      params[Uri.decodeQueryComponent(k)] = Uri.decodeQueryComponent(v);
+    }
+    return params;
+  }
+
+  /// 安全的 URL 解码：非法百分号编码（如裸中文 tag）回退原串，不丢节点
+  static String _safeDecode(String raw) {
+    try {
+      return Uri.decodeComponent(raw);
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  /// base64url 解码（SSR 各字段用 base64url、无 padding）；非 base64 原样返回
+  static String _b64UrlDecode(String s) {
+    if (s.isEmpty) return '';
+    try {
+      return utf8.decode(base64.decode(base64.normalize(s)));
+    } catch (_) {
+      return s;
+    }
+  }
+
+  static String? _uriTag(String uri) {
+    final hash = uri.indexOf('#');
+    return hash >= 0 ? _safeDecode(uri.substring(hash + 1)) : null;
+  }
+
+  /// 解析 `scheme://cred@host:port?query#tag`（不含 ss/socks 的 base64 userinfo 特例）
+  static ({String cred, String host, int port, Map<String, String> q})?
+      _parseUserinfoUri(String scheme, String uri) {
+    final without = uri.substring('$scheme://'.length);
+    final hash = without.indexOf('#');
+    final body = hash >= 0 ? without.substring(0, hash) : without;
+    final at = body.indexOf('@');
+    if (at < 0) return null;
+    final cred = body.substring(0, at);
+    final rest = body.substring(at + 1);
+    final qm = rest.indexOf('?');
+    final hostPort = qm >= 0 ? rest.substring(0, qm) : rest;
+    final hp = _hostPort(hostPort);
+    if (hp == null) return null;
+    final q = qm >= 0 ? _queryParams(rest.substring(qm + 1)) : <String, String>{};
+    return (cred: cred, host: hp.$1, port: hp.$2, q: q);
   }
 
   static ProxyNode? _parseVmess(String uri) {
@@ -258,58 +327,493 @@ class SubscriptionService {
       final b64 = uri.substring('vmess://'.length).split('#').first;
       final decoded = utf8.decode(base64.decode(base64.normalize(b64)));
       final m = jsonDecode(decoded) as Map<String, dynamic>;
+      final tag = _uriTag(uri) ?? m['ps']?.toString() ?? 'vmess';
+      final server = m['add']?.toString() ?? '';
+      final port = int.tryParse(m['port']?.toString() ?? '') ?? 0;
+      final uuid = m['id']?.toString() ?? '';
+      final tls = m['tls']?.toString() == 'tls';
+      final net = m['net']?.toString() ?? 'tcp';
+      final sni = m['sni']?.toString();
+      // 转成 mihomo 标准 vmess map：避免 vmess JSON 的 `type`(加密) 与
+      // mihomo 的 `type`(协议) 冲突导致内核把节点当成 type=none 而加载失败
+      final raw = <String, dynamic>{
+        'name': tag,
+        'type': 'vmess',
+        'server': server,
+        'port': port,
+        'uuid': uuid,
+        'alterId': int.tryParse(m['aid']?.toString() ?? '') ?? 0,
+        'cipher': m['scy']?.toString() ?? 'auto',
+      };
+      if (tls) {
+        raw['tls'] = true;
+        if (sni != null && sni.isNotEmpty) raw['servername'] = sni;
+        if (m['alpn']?.toString().isNotEmpty == true) {
+          raw['alpn'] = m['alpn']!.toString().split(',');
+        }
+        if (m['fp']?.toString().isNotEmpty == true) raw['client-fingerprint'] = m['fp'];
+      }
+      if (net != 'tcp') raw['network'] = net;
+      if (net == 'ws') {
+        final wsOpts = <String, dynamic>{
+          if (m['path']?.toString().isNotEmpty == true) 'path': m['path'],
+        };
+        if (m['host']?.toString().isNotEmpty == true) {
+          wsOpts['headers'] = {'Host': m['host']};
+        }
+        if (wsOpts.isNotEmpty) raw['ws-opts'] = wsOpts;
+      } else if (net == 'grpc') {
+        raw['grpc-opts'] = {'grpc-service-name': m['path']?.toString() ?? ''};
+      } else if (net == 'h2' || net == 'httpupgrade') {
+        final opts = <String, dynamic>{
+          if (m['path']?.toString().isNotEmpty == true) 'path': m['path'],
+          if (m['host']?.toString().isNotEmpty == true) 'host': [m['host']],
+        };
+        raw[net == 'h2' ? 'h2-opts' : 'ws-opts'] = opts;
+      }
       return ProxyNode(
-        tag: uri.contains('#') ? Uri.decodeComponent(uri.split('#').last) : (m['ps']?.toString() ?? 'vmess'),
+        tag: tag,
         type: 'vmess',
-        server: m['add']?.toString() ?? '',
-        port: (m['port'] as num?)?.toInt() ?? 0,
-        uuid: m['id']?.toString(),
-        cipher: m['type']?.toString() == 'none' ? 'auto' : (m['scy']?.toString() ?? 'auto'),
-        tls: m['tls']?.toString() == 'tls',
-        sni: m['sni']?.toString(),
-        network: m['net']?.toString(),
+        server: server,
+        port: port,
+        uuid: uuid,
+        cipher: raw['cipher']?.toString(),
+        tls: tls,
+        sni: sni,
+        network: net,
         wsPath: m['path']?.toString(),
         host: m['host']?.toString(),
-        raw: m,
+        raw: raw,
       );
     } catch (_) {
       return null;
     }
   }
 
-  static ProxyNode? _parseShareLink(String type, String uri) {
-    try {
-      final withoutScheme = uri.substring('$type://'.length);
-      final parts = withoutScheme.split('#');
-      final tag = parts.length > 1 ? Uri.decodeComponent(parts.last) : type;
-      final beforeHash = parts.first;
-      // trojan://password@host:port?params 或 ss://base64@host:port
-      final at = beforeHash.indexOf('@');
-      final cred = at >= 0 ? beforeHash.substring(0, at) : '';
-      final rest = at >= 0 ? beforeHash.substring(at + 1) : beforeHash;
-      final hostPort = rest.split('?').first;
-      final colon = hostPort.lastIndexOf(':');
-      final host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
-      final port = int.tryParse(hostPort.substring(colon + 1)) ?? 0;
-      final query = rest.contains('?') ? rest.substring(rest.indexOf('?') + 1) : '';
-      final Map<String, dynamic> params = {};
-      for (final kv in query.split('&')) {
-        if (kv.contains('=')) params[kv.split('=').first] = Uri.decodeComponent(kv.split('=').last);
+  static ProxyNode? _parseVless(String uri) {
+    final p = _parseUserinfoUri('vless', uri);
+    if (p == null) return null;
+    final tag = _uriTag(uri) ?? 'vless';
+    final security = p.q['security'] ?? '';
+    final tls = security == 'tls' || security == 'reality' || p.q['tls'] == '1';
+    final net = p.q['type'] ?? 'tcp';
+    final sni = p.q['sni'] ?? p.q['peer'] ?? p.q['host'];
+    final raw = <String, dynamic>{
+      'name': tag,
+      'type': 'vless',
+      'server': p.host,
+      'port': p.port,
+      'uuid': p.cred,
+    };
+    if (tls) {
+      raw['tls'] = true;
+      if (sni != null && sni.isNotEmpty) raw['servername'] = sni;
+      if ((p.q['fp'] ?? '').isNotEmpty) raw['client-fingerprint'] = p.q['fp'];
+    }
+    if (security == 'reality') {
+      final pbk = p.q['pbk'];
+      final sid = p.q['sid'];
+      if (pbk != null && pbk.isNotEmpty) {
+        raw['reality-opts'] = {
+          'public-key': pbk,
+          if (sid != null && sid.isNotEmpty) 'short-id': sid,
+        };
       }
-      final password = cred.contains(':') ? Uri.decodeComponent(cred.split(':').last) : Uri.decodeComponent(cred);
+    }
+    if (net != 'tcp') raw['network'] = net;
+    if (net == 'ws') {
+      final wsOpts = <String, dynamic>{
+        if ((p.q['path'] ?? '').isNotEmpty) 'path': p.q['path'],
+      };
+      if ((p.q['host'] ?? '').isNotEmpty) wsOpts['headers'] = {'Host': p.q['host']};
+      if (wsOpts.isNotEmpty) raw['ws-opts'] = wsOpts;
+    } else if (net == 'grpc') {
+      raw['grpc-opts'] = {'grpc-service-name': p.q['serviceName'] ?? ''};
+    }
+    if ((p.q['flow'] ?? '').isNotEmpty) raw['flow'] = p.q['flow'];
+    if (p.q['insecure'] == '1' || p.q['allowInsecure'] == '1') {
+      raw['skip-cert-verify'] = true;
+    }
+    return ProxyNode(
+      tag: tag,
+      type: 'vless',
+      server: p.host,
+      port: p.port,
+      uuid: p.cred,
+      tls: tls,
+      sni: sni,
+      network: net,
+      wsPath: p.q['path'],
+      host: p.q['host'],
+      flow: p.q['flow'],
+      raw: raw,
+    );
+  }
+
+  static ProxyNode? _parseTrojan(String uri) {
+    final p = _parseUserinfoUri('trojan', uri);
+    if (p == null) return null;
+    final tag = _uriTag(uri) ?? 'trojan';
+    final sni = p.q['sni'] ?? p.q['peer'];
+    final net = p.q['type'] ?? 'tcp';
+    final raw = <String, dynamic>{
+      'name': tag,
+      'type': 'trojan',
+      'server': p.host,
+      'port': p.port,
+      'password': p.cred,
+    };
+    if (sni != null && sni.isNotEmpty) raw['sni'] = sni;
+    if ((p.q['alpn'] ?? '').isNotEmpty) raw['alpn'] = p.q['alpn']!.split(',');
+    if ((p.q['fp'] ?? '').isNotEmpty) raw['client-fingerprint'] = p.q['fp'];
+    if (p.q['insecure'] == '1' || p.q['allowInsecure'] == '1') {
+      raw['skip-cert-verify'] = true;
+    }
+    if (net != 'tcp') raw['network'] = net;
+    if (net == 'ws') {
+      final wsOpts = <String, dynamic>{
+        if ((p.q['path'] ?? '').isNotEmpty) 'path': p.q['path'],
+      };
+      if ((p.q['host'] ?? '').isNotEmpty) wsOpts['headers'] = {'Host': p.q['host']};
+      if (wsOpts.isNotEmpty) raw['ws-opts'] = wsOpts;
+    } else if (net == 'grpc') {
+      raw['grpc-opts'] = {'grpc-service-name': p.q['serviceName'] ?? ''};
+    }
+    return ProxyNode(
+      tag: tag,
+      type: 'trojan',
+      server: p.host,
+      port: p.port,
+      password: p.cred,
+      tls: true,
+      sni: sni,
+      network: net,
+      wsPath: p.q['path'],
+      host: p.q['host'],
+      raw: raw,
+    );
+  }
+
+  /// 解析 Shadowsocks 链接，兼容两种主流格式：
+  /// - SIP002：`ss://base64(method:password)@host:port#tag`（userinfo 是 base64）
+  /// - legacy：`ss://base64(method:password@host:port)#tag`（整串 base64）
+  static ProxyNode? _parseSs(String uri) {
+    try {
+      final withoutScheme = uri.substring('ss://'.length);
+      final hash = withoutScheme.indexOf('#');
+      final tag = hash >= 0 ? _safeDecode(withoutScheme.substring(hash + 1)) : 'ss';
+      var body = hash >= 0 ? withoutScheme.substring(0, hash) : withoutScheme;
+      // legacy：整串 base64，无明文 @ → 先整体解出 method:password@host:port
+      if (!body.contains('@')) {
+        body = utf8.decode(base64.decode(base64.normalize(body)));
+      }
+      final at = body.indexOf('@');
+      if (at < 0) return null;
+      final credPart = body.substring(0, at);
+      final hp = _hostPort(body.substring(at + 1).split('?').first);
+      if (hp == null) return null;
+      // SIP002 的 userinfo 是 base64(method:password)；legacy 已是明文
+      var cred = credPart;
+      if (!cred.contains(':')) {
+        cred = utf8.decode(base64.decode(base64.normalize(cred)));
+      }
+      final sep = cred.indexOf(':');
+      final method = sep > 0 ? cred.substring(0, sep) : cred;
+      final password = sep >= 0 ? cred.substring(sep + 1) : '';
       return ProxyNode(
         tag: tag,
-        type: type,
+        type: 'ss',
+        server: hp.$1,
+        port: hp.$2,
+        cipher: method,
+        password: password,
+        raw: {
+          'name': tag,
+          'type': 'ss',
+          'server': hp.$1,
+          'port': hp.$2,
+          'cipher': method,
+          'password': password,
+        },
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// socks5：`socks://base64(user:pass)@host:port#tag`（userinfo 可选、可 base64）
+  static ProxyNode? _parseSocks(String uri) {
+    try {
+      final scheme = uri.startsWith('socks5://') ? 'socks5://' : 'socks://';
+      final without = uri.substring(scheme.length);
+      final hash = without.indexOf('#');
+      final tag = hash >= 0 ? _safeDecode(without.substring(hash + 1)) : 'socks5';
+      final body = hash >= 0 ? without.substring(0, hash) : without;
+      final at = body.indexOf('@');
+      String? username;
+      String? password;
+      String host;
+      int port;
+      if (at >= 0) {
+        var cred = body.substring(0, at);
+        if (cred.isNotEmpty) {
+          if (!cred.contains(':')) {
+            try {
+              cred = utf8.decode(base64.decode(base64.normalize(cred)));
+            } catch (_) {}
+          }
+          final sep = cred.indexOf(':');
+          username = sep > 0 ? cred.substring(0, sep) : cred;
+          password = sep >= 0 ? cred.substring(sep + 1) : '';
+        }
+        final hp = _hostPort(body.substring(at + 1).split('?').first);
+        if (hp == null) return null;
+        host = hp.$1;
+        port = hp.$2;
+      } else {
+        final hp = _hostPort(body.split('?').first);
+        if (hp == null) return null;
+        host = hp.$1;
+        port = hp.$2;
+      }
+      return ProxyNode(
+        tag: tag,
+        type: 'socks5',
         server: host,
         port: port,
         password: password,
-        tls: type == 'trojan' || params['security'] == 'tls' || params['tls'] == '1',
-        sni: params['sni']?.toString() ?? params['peer']?.toString(),
-        network: params['type']?.toString(),
-        wsPath: params['path']?.toString(),
-        host: params['host']?.toString(),
-        flow: params['flow']?.toString(),
-        raw: params,
+        raw: {
+          'name': tag,
+          'type': 'socks5',
+          'server': host,
+          'port': port,
+          if (username != null && username.isNotEmpty) 'username': username,
+          if (password != null && password.isNotEmpty) 'password': password,
+        },
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static ProxyNode? _parseHysteria2(String uri) {
+    final p = _parseUserinfoUri('hysteria2', uri);
+    if (p == null) return null;
+    final tag = _uriTag(uri) ?? 'hysteria2';
+    final sni = p.q['sni'];
+    final raw = <String, dynamic>{
+      'name': tag,
+      'type': 'hysteria2',
+      'server': p.host,
+      'port': p.port,
+      'password': p.cred,
+      if (sni != null && sni.isNotEmpty) 'sni': sni,
+      if (p.q['insecure'] == '1' || p.q['allowInsecure'] == '1')
+        'skip-cert-verify': true,
+    };
+    return ProxyNode(
+      tag: tag,
+      type: 'hysteria2',
+      server: p.host,
+      port: p.port,
+      password: p.cred,
+      sni: sni,
+      raw: raw,
+    );
+  }
+
+  static ProxyNode? _parseTuic(String uri) {
+    final p = _parseUserinfoUri('tuic', uri);
+    if (p == null) return null;
+    final tag = _uriTag(uri) ?? 'tuic';
+    // tuic://uuid:password@host:port（: 常被百分号编码为 %3A）
+    final cred = _safeDecode(p.cred);
+    final sep = cred.indexOf(':');
+    final uuid = sep > 0 ? cred.substring(0, sep) : cred;
+    final password = sep >= 0 ? cred.substring(sep + 1) : '';
+    final raw = <String, dynamic>{
+      'name': tag,
+      'type': 'tuic',
+      'server': p.host,
+      'port': p.port,
+      'uuid': uuid,
+      'password': password,
+      if ((p.q['sni'] ?? '').isNotEmpty) 'sni': p.q['sni'],
+      if ((p.q['alpn'] ?? '').isNotEmpty) 'alpn': p.q['alpn']!.split(','),
+      if ((p.q['congestion_control'] ?? p.q['congestion-controller'] ?? '').isNotEmpty)
+        'congestion-controller': p.q['congestion_control'] ?? p.q['congestion-controller'],
+      if (p.q['insecure'] == '1' || p.q['allowInsecure'] == '1')
+        'skip-cert-verify': true,
+    };
+    return ProxyNode(
+      tag: tag,
+      type: 'tuic',
+      server: p.host,
+      port: p.port,
+      uuid: uuid,
+      password: password,
+      sni: p.q['sni'],
+      raw: raw,
+    );
+  }
+
+  static ProxyNode? _parseAnyTls(String uri) {
+    final p = _parseUserinfoUri('anytls', uri);
+    if (p == null) return null;
+    final tag = _uriTag(uri) ?? 'anytls';
+    final raw = <String, dynamic>{
+      'name': tag,
+      'type': 'anytls',
+      'server': p.host,
+      'port': p.port,
+      'password': p.cred,
+      if ((p.q['sni'] ?? '').isNotEmpty) 'sni': p.q['sni'],
+      if (p.q['insecure'] == '1' || p.q['allowInsecure'] == '1')
+        'skip-cert-verify': true,
+    };
+    return ProxyNode(
+      tag: tag,
+      type: 'anytls',
+      server: p.host,
+      port: p.port,
+      password: p.cred,
+      sni: p.q['sni'],
+      raw: raw,
+    );
+  }
+
+  /// 解析 ShadowsocksR：`ssr://base64(server:port:protocol:method:obfs:password/?obfsparam=...&remarks=...)`
+  /// 其中 password/obfsparam/protoparam/remarks/group 均为 base64url。
+  static ProxyNode? _parseSsr(String uri) {
+    try {
+      final decoded = _b64UrlDecode(uri.substring('ssr://'.length));
+      final qm = decoded.indexOf('?');
+      final main = qm >= 0 ? decoded.substring(0, qm) : decoded;
+      final qs = qm >= 0 ? decoded.substring(qm + 1) : '';
+      final p = main.split(':');
+      if (p.length < 6) return null;
+      final server = p[0];
+      final port = int.tryParse(p[1]) ?? 0;
+      final protocol = p[2];
+      final method = p[3];
+      final obfs = p[4];
+      final password = _b64UrlDecode(p[5].split('/').first);
+      final params = <String, String>{};
+      for (final kv in qs.split('&')) {
+        if (kv.isEmpty) continue;
+        final i = kv.indexOf('=');
+        final k = i >= 0 ? kv.substring(0, i) : kv;
+        final v = i >= 0 ? kv.substring(i + 1) : '';
+        params[k] = _b64UrlDecode(v);
+      }
+      final tag = params['remarks']?.isNotEmpty == true ? params['remarks']! : 'ssr';
+      final raw = <String, dynamic>{
+        'name': tag,
+        'type': 'ssr',
+        'server': server,
+        'port': port,
+        'cipher': method,
+        'password': password,
+        'protocol': protocol,
+        'obfs': obfs,
+        if (params['obfsparam']?.isNotEmpty == true) 'obfs-param': params['obfsparam'],
+        if (params['protoparam']?.isNotEmpty == true)
+          'protocol-param': params['protoparam'],
+      };
+      return ProxyNode(
+        tag: tag,
+        type: 'ssr',
+        server: server,
+        port: port,
+        cipher: method,
+        password: password,
+        raw: raw,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 解析 Hysteria v1：`hysteria://host:port/?auth=...&peer=...&obfs=xplus#tag`
+  /// （v1 无 userinfo，密码在 auth 参数里，与 hysteria2 不同）
+  static ProxyNode? _parseHysteria(String uri) {
+    try {
+      final without = uri.substring('hysteria://'.length);
+      final hash = without.indexOf('#');
+      final tag = hash >= 0 ? _safeDecode(without.substring(hash + 1)) : 'hysteria';
+      final body = hash >= 0 ? without.substring(0, hash) : without;
+      final qm = body.indexOf('?');
+      final hostPort = qm >= 0 ? body.substring(0, qm) : body;
+      final hp = _hostPort(hostPort);
+      if (hp == null) return null;
+      final q = qm >= 0 ? _queryParams(body.substring(qm + 1)) : <String, String>{};
+      final auth = q['auth'] ?? '';
+      final sni = q['peer'] ?? q['sni'];
+      final raw = <String, dynamic>{
+        'name': tag,
+        'type': 'hysteria',
+        'server': hp.$1,
+        'port': hp.$2,
+        if (auth.isNotEmpty) 'auth_str': auth,
+        if (sni != null && sni.isNotEmpty) 'sni': sni,
+        if ((q['upmbps'] ?? '').isNotEmpty) 'up': int.tryParse(q['upmbps']!) ?? 0,
+        if ((q['downmbps'] ?? '').isNotEmpty)
+          'down': int.tryParse(q['downmbps']!) ?? 0,
+        if ((q['alpn'] ?? '').isNotEmpty) 'alpn': q['alpn']!.split(','),
+        if ((q['obfs'] ?? '').isNotEmpty) 'obfs': q['obfs'],
+        if ((q['obfsParam'] ?? q['obfs-param'] ?? '').isNotEmpty)
+          'obfs-param': q['obfsParam'] ?? q['obfs-param'],
+        if (q['insecure'] == '1') 'skip-cert-verify': true,
+      };
+      return ProxyNode(
+        tag: tag,
+        type: 'hysteria',
+        server: hp.$1,
+        port: hp.$2,
+        password: auth,
+        sni: sni,
+        raw: raw,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 解析 WireGuard：`wireguard://base64(ini_conf)#tag`
+  /// （链接里直接是 base64 的 .conf 内容，解析成 mihomo wireguard map）
+  static ProxyNode? _parseWireguard(String uri) {
+    try {
+      final conf = _b64UrlDecode(uri.substring('wireguard://'.length).split('#').first);
+      final tag = _uriTag(uri) ?? 'wireguard';
+      final kv = <String, String>{};
+      for (final line in conf.split('\n')) {
+        final l = line.trim();
+        if (l.isEmpty || l.startsWith('[')) continue;
+        final i = l.indexOf('=');
+        if (i < 0) continue;
+        kv[l.substring(0, i).trim().toLowerCase()] = l.substring(i + 1).trim();
+      }
+      final endpoint = kv['endpoint'];
+      if (endpoint == null) return null;
+      final hp = _hostPort(endpoint);
+      if (hp == null) return null;
+      final raw = <String, dynamic>{
+        'name': tag,
+        'type': 'wireguard',
+        'server': hp.$1,
+        'port': hp.$2,
+        'udp': true,
+        if (kv['privatekey'] != null) 'private-key': kv['privatekey'],
+        if (kv['publickey'] != null) 'public-key': kv['publickey'],
+        if (kv['address'] != null) 'ip': kv['address']!.split(',').first.trim(),
+        if (kv['presharedkey'] != null) 'preshared-key': kv['presharedkey'],
+      };
+      return ProxyNode(
+        tag: tag,
+        type: 'wireguard',
+        server: hp.$1,
+        port: hp.$2,
+        raw: raw,
       );
     } catch (_) {
       return null;
