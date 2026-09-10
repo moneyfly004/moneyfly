@@ -13,8 +13,11 @@ class SpeedTester {
   static const _probeCount = 3;
   static const _maxConcurrent = 12;
 
-  /// 测单个节点延迟（ms），失败返回 -1
+  /// 测单个节点延迟（ms），失败返回 -1。
+  /// UDP-only 协议（hysteria/hysteria2/tuic/wireguard）无 TCP 监听，
+  /// 裸 TCP 探测必然失败，直接返回 -1（调用方不应据此判离线，见 testAll）。
   Future<int> testOne(ProxyNode node) async {
+    if (node.isUdpOnly) return -1;
     final samples = <int>[];
     for (var i = 0; i < _probeCount; i++) {
       final sw = Stopwatch()..start();
@@ -48,12 +51,15 @@ class SpeedTester {
     Future<void> worker() async {
       while (queue.isNotEmpty) {
         final idx = queue.removeLast();
-        final ms = await testOne(result[idx]);
-        result[idx].latencyMs = ms;
-        result[idx].online = ms >= 0;
+        final n = result[idx];
+        final udp = n.isUdpOnly;
+        final ms = udp ? -1 : await testOne(n);
+        n.latencyMs = ms;
+        // UDP 协议裸 TCP 测不了，保持「在线但延迟未知」，等连接后内核实测
+        n.online = udp ? true : ms >= 0;
         done++;
         onProgress?.call(done, result.length);
-        onEach?.call(result[idx].tag, ms, ms >= 0);
+        onEach?.call(n.tag, ms, n.online);
       }
     }
 
