@@ -108,7 +108,8 @@ class _NodesPageState extends State<NodesPage> {
       if (idx >= 0) {
         final fresh = conn.nodes[idx].clone()
           ..latencyMs = ms
-          ..online = ms >= 0;
+          // UDP 协议裸 TCP 测不了，保持在线；真实延迟连接后内核实测
+          ..online = n.isUdpOnly ? true : ms >= 0;
         final list = List<ProxyNode>.of(conn.nodes);
         list[idx] = fresh;
         await conn.loadNodes(list);
@@ -372,6 +373,15 @@ class _NodesPageState extends State<NodesPage> {
   static final _flagRadius = BorderRadius.circular(11);
   static final _latencyRadius = BorderRadius.circular(20);
 
+  /// 延迟胶囊文案：UDP 协议未连接时无法测，提示「连接后测速」而非误导成离线
+  String _latencyLabel(dynamic n) {
+    if (n.isUdpOnly && n.latencyMs < 0) {
+      return AppStrings.t('node_need_connect_test');
+    }
+    if (n.online && n.latencyMs >= 0) return '${n.latencyMs} ms';
+    return '— ms';
+  }
+
   Widget _buildNodeRow(ConnectionController conn, dynamic n) {
     final isCurrent = conn.current?.tag == n.tag;
     final latencyColor = mfLatencyColor(n.latencyMs, n.online);
@@ -431,9 +441,14 @@ class _NodesPageState extends State<NodesPage> {
                         child: CircularProgressIndicator(
                             strokeWidth: 1.6, color: latencyColor))
                     : Text(
-                        n.online && n.latencyMs >= 0 ? '${n.latencyMs} ms' : '— ms',
-                        style: TextStyle(fontSize: 11.5, color: latencyColor,
-                            fontFamily: kNumFont, fontWeight: FontWeight.w600)),
+                        _latencyLabel(n),
+                        style: TextStyle(
+                            fontSize: (n.online && n.latencyMs >= 0) ? 11.5 : 9.5,
+                            color: latencyColor,
+                            fontFamily: (n.online && n.latencyMs >= 0)
+                                ? kNumFont
+                                : null,
+                            fontWeight: FontWeight.w600)),
               ),
             ),
             if (isCurrent) ...[

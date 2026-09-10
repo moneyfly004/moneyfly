@@ -515,6 +515,12 @@ class ProxyNode {
         online: online,
       );
 
+  /// 是否 UDP-only 协议（hysteria / hysteria2 / tuic / wireguard）。
+  /// 这类协议无 TCP 监听，未连接时的「裸 TCP 测速」必然失败而误判离线；
+  /// 真实延迟需连接后走内核 /proxies/{tag}/delay 实测。
+  bool get isUdpOnly =>
+      const {'hysteria', 'hysteria2', 'tuic', 'wireguard'}.contains(type);
+
   /// 国家/地区中文名（ISO 3166 两位码）。覆盖 VPN 服务商常见的全部落地区域;
   /// 未收录的合法代码 UI 直接显示代码本身，旗帜由 [flagEmoji] 按码计算，
   /// 不会再出现「节点存在但归到『其他』」的情况。
