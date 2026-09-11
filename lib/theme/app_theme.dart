@@ -204,3 +204,15 @@ Color mfLatencyColor(int latencyMs, bool online) {
   if (latencyMs < 300) return MFColors.amber;
   return MFColors.red;
 }
+
+/// 金额显示：去掉无意义的尾零。
+/// 0.02 → "0.02"；200 → "200"；200.5 → "200.5"；0 → "0"。
+/// 修复「0.02 元套餐被 toStringAsFixed(0) 显示成 0 元」的问题。
+String formatPrice(double v) {
+  var s = v.toStringAsFixed(2);
+  if (s.contains('.')) {
+    s = s.replaceAll(RegExp(r'0+$'), '');
+    s = s.replaceAll(RegExp(r'\.$'), '');
+  }
+  return s;
+}
