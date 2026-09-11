@@ -209,7 +209,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
             Text.rich(TextSpan(children: [
               TextSpan(text: '¥',
                   style: const TextStyle(fontSize: 15, color: Colors.white)),
-              TextSpan(text: widget.amount.toStringAsFixed(1),
+              TextSpan(text: formatPrice(widget.amount),
                   style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont, color: Colors.white)),
             ])),
             const SizedBox(height: 5),

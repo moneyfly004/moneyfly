@@ -317,7 +317,7 @@ class _PackagePageState extends State<PackagePage> {
                             const Spacer(),
                             Text.rich(TextSpan(children: [
                               TextSpan(text: '¥', style: TextStyle(fontSize: 14, color: MFColors.txt3)),
-                              TextSpan(text: _amount.toStringAsFixed(1),
+                              TextSpan(text: formatPrice(_amount),
                                   style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, fontFamily: kNumFont)),
                             ])),
                           ],
@@ -388,7 +388,7 @@ class _PackagePageState extends State<PackagePage> {
             const SizedBox(width: 12),
             // 只显示价格；下单入口统一走底部「合计 + 立即支付」，避免双入口/漏选支付方式
             Text.rich(TextSpan(children: [
-              TextSpan(text: '¥${p.price.toStringAsFixed(0)}',
+              TextSpan(text: '¥${formatPrice(p.price)}',
                   style: TextStyle(
                       fontSize: 19,
                       fontWeight: FontWeight.w800,

@@ -442,6 +442,7 @@ jobs:
             各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
 
             ## 本版更新
+            - 修复：套餐价格显示取整导致小数金额（如 0.02 元）在列表显示成 0 元
             - 节点兼容：链接订阅新增支持 Shadowsocks / SSR / SOCKS5 / Hysteria(v1/v2) / TUIC / AnyTLS / WireGuard 等协议
             - 修复：Shadowsocks(SIP002) 密码与加密方式解析错误导致无法连接
             - 修复：VLESS 链接 UUID 错位、Reality/gRPC 参数丢失；VMess 链接 type 冲突导致内核拒载
