@@ -74,6 +74,8 @@ void main() async {
   }
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();
+  // 后台静默检查更新：有新版则点亮全局红点（底部「我的」tab / 设置「版本更新」行）
+  unawaited(UpdateService.instance.check());
   // 全新安装检测：卸载残留/数据被清 → 清空旧配置、旧 token、旧缓存，
   // 保证重装后必须重新登录并重新拉取订阅（不沿用旧配置）；版本升级 →
   // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。
@@ -433,26 +435,41 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  /// 窄屏底部导航（原有外观与文案保持不变）
+  /// tab 图标：有新版时右上角挂红点角标
+  Widget _tabIcon(IconData icon, double size, bool showDot) {
+    final i = Icon(icon, size: size);
+    if (!showDot) return i;
+    return Stack(clipBehavior: Clip.none, children: [
+      i,
+      Positioned(right: -2, top: -2, child: RedDot(size: 7)),
+    ]);
+  }
+
+  /// 窄屏底部导航（原有外观与文案保持不变；「我的」tab 有新版时显示红点）
   Widget _buildBottomNavigationBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: MFColors.bg,
-        border: Border(top: BorderSide(color: MFColors.line)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: BottomNavigationBar(
-          currentIndex: _index,
-          onTap: _onTap,
-          items: [
-            for (final e in _mainNavEntries)
-              BottomNavigationBarItem(
-                icon: Icon(e.icon, size: 22),
-                activeIcon: Icon(e.activeIcon, size: 22),
-                label: AppStrings.t(e.labelKey),
-              ),
-          ],
+    return ValueListenableBuilder<bool>(
+      valueListenable: UpdateService.hasUpdate,
+      builder: (context, hasUpdate, _) => Container(
+        decoration: BoxDecoration(
+          color: MFColors.bg,
+          border: Border(top: BorderSide(color: MFColors.line)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: BottomNavigationBar(
+            currentIndex: _index,
+            onTap: _onTap,
+            items: [
+              for (var i = 0; i < _mainNavEntries.length; i++)
+                BottomNavigationBarItem(
+                  icon: _tabIcon(
+                      _mainNavEntries[i].icon, 22, i == 3 && hasUpdate),
+                  activeIcon: _tabIcon(
+                      _mainNavEntries[i].activeIcon, 22, i == 3 && hasUpdate),
+                  label: AppStrings.t(_mainNavEntries[i].labelKey),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -461,31 +478,36 @@ class _MainShellState extends State<MainShell> {
   /// 宽屏左侧 NavigationRail：4 个 destination 与底部导航同源（图标/文案一致），
   /// 配色沿用底部导航语义（选中 brandLight / 未选中 txt3）。
   Widget _buildNavigationRail() {
-    return Container(
-      decoration: BoxDecoration(
-        color: MFColors.bg,
-        border: Border(right: BorderSide(color: MFColors.line)),
-      ),
-      child: NavigationRail(
-        backgroundColor: Colors.transparent,
-        selectedIndex: _index,
-        onDestinationSelected: _onTap,
-        labelType: NavigationRailLabelType.all,
-        indicatorColor: MFColors.brand.withValues(alpha: .12),
-        selectedIconTheme: IconThemeData(color: MFColors.brandLight),
-        unselectedIconTheme: IconThemeData(color: MFColors.txt3),
-        selectedLabelTextStyle: TextStyle(
-            color: MFColors.brandLight, fontSize: 12, fontWeight: FontWeight.w500),
-        unselectedLabelTextStyle:
-            TextStyle(color: MFColors.txt3, fontSize: 12),
-        destinations: [
-          for (final e in _mainNavEntries)
-            NavigationRailDestination(
-              icon: Icon(e.icon),
-              selectedIcon: Icon(e.activeIcon),
-              label: Text(AppStrings.t(e.labelKey)),
-            ),
-        ],
+    return ValueListenableBuilder<bool>(
+      valueListenable: UpdateService.hasUpdate,
+      builder: (context, hasUpdate, _) => Container(
+        decoration: BoxDecoration(
+          color: MFColors.bg,
+          border: Border(right: BorderSide(color: MFColors.line)),
+        ),
+        child: NavigationRail(
+          backgroundColor: Colors.transparent,
+          selectedIndex: _index,
+          onDestinationSelected: _onTap,
+          labelType: NavigationRailLabelType.all,
+          indicatorColor: MFColors.brand.withValues(alpha: .12),
+          selectedIconTheme: IconThemeData(color: MFColors.brandLight),
+          unselectedIconTheme: IconThemeData(color: MFColors.txt3),
+          selectedLabelTextStyle: TextStyle(
+              color: MFColors.brandLight, fontSize: 12, fontWeight: FontWeight.w500),
+          unselectedLabelTextStyle:
+              TextStyle(color: MFColors.txt3, fontSize: 12),
+          destinations: [
+            for (var i = 0; i < _mainNavEntries.length; i++)
+              NavigationRailDestination(
+                icon: _tabIcon(
+                    _mainNavEntries[i].icon, 24, i == 3 && hasUpdate),
+                selectedIcon: _tabIcon(
+                    _mainNavEntries[i].activeIcon, 24, i == 3 && hasUpdate),
+                label: Text(AppStrings.t(_mainNavEntries[i].labelKey)),
+              ),
+          ],
+        ),
       ),
     );
   }

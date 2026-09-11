@@ -237,7 +237,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _clearLocalData),
             // ⑦ 关于与诊断
             _section(AppStrings.t('group_about')),
-            _row(icon: '🔄', title: AppStrings.t('settings_check_update'), value: 'v${UpdateInfo.currentVersion}', onTap: _checkUpdate),
+            ValueListenableBuilder<bool>(
+              valueListenable: UpdateService.hasUpdate,
+              builder: (_, hasUpdate, _) => _row(
+                icon: '🔄',
+                title: AppStrings.t('settings_check_update'),
+                value: 'v${UpdateInfo.currentVersion}',
+                showDot: hasUpdate,
+                onTap: _checkUpdate,
+              ),
+            ),
             _row(icon: '📋', title: AppStrings.t('log_center_title'),
                 desc: AppStrings.t('log_center_desc'),
                 onTap: () => Navigator.of(context).push(
@@ -275,6 +284,7 @@ class _SettingsPageState extends State<SettingsPage> {
     String? value,
     Widget? trailing,
     bool danger = false,
+    bool showDot = false,
     VoidCallback? onTap,
   }) {
     return Container(
@@ -325,6 +335,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         color: MFColors.txt3,
                         fontFamily: kNumFont)),
               ),
+            if (showDot) ...[
+              const SizedBox(width: 5),
+              const RedDot(size: 7),
+            ],
             if (value != null || onTap != null) ...[
               const SizedBox(width: 4),
                Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),

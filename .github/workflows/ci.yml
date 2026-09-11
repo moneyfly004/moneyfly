@@ -33,9 +33,9 @@ jobs:
       - name: 下载 mihomo 离线分流数据（assets 声明依赖，缺失会导致 test/构建失败）
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 

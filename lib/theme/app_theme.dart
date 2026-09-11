@@ -33,7 +33,9 @@ class MFColors {
   // 文本
   static Color get txt => _light ? const Color(0xFF1A2233) : const Color(0xFFF5F7FF);
   static Color get txt2 => _light ? const Color(0xFF4A5568) : const Color(0xFF9AA3B5);
-  static Color get txt3 => _light ? const Color(0xFF8A94A6) : const Color(0xFF5E6778);
+  // 暗色下 txt3 之前用 0xFF5E6778（近背景深灰蓝），对比度仅 ~2.9:1，文字几乎看不清；
+  // 改为 0xFF8A94A6（中灰，~5:1），浅深两套都清晰可读。
+  static Color get txt3 => _light ? const Color(0xFF8A94A6) : const Color(0xFF8A94A6);
 
   // 语义
   static const green = Color(0xFF2EE6A8);
@@ -55,7 +57,7 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
   final card2 = dark ? const Color(0xFF1A2132) : const Color(0xFFF0F3FA);
   final txt = dark ? const Color(0xFFF5F7FF) : const Color(0xFF1A2233);
   final txt2 = dark ? const Color(0xFF9AA3B5) : const Color(0xFF4A5568);
-  final txt3 = dark ? const Color(0xFF5E6778) : const Color(0xFF8A94A6);
+  final txt3 = dark ? const Color(0xFF8A94A6) : const Color(0xFF8A94A6);
   final line = dark ? const Color(0x12FFFFFF) : const Color(0x141A2B4A);
   final line2 = dark ? const Color(0x1FFFFFFF) : const Color(0x241A2B4A);
 
@@ -215,4 +217,18 @@ String formatPrice(double v) {
     s = s.replaceAll(RegExp(r'\.$'), '');
   }
   return s;
+}
+
+/// 新版提示红点（8px 圆形，用于 tab 图标角标 / 设置行提示）
+class RedDot extends StatelessWidget {
+  const RedDot({super.key, this.size = 8});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        decoration:
+            const BoxDecoration(color: MFColors.red, shape: BoxShape.circle),
+      );
 }
