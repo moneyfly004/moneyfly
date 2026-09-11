@@ -54,6 +54,10 @@ class UpdateService {
   static UpdateInfo? _cacheInfo;
   static DateTime _cacheAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// 是否有新版本（全局红点：底部「我的」tab、设置「版本更新」行共用）。
+  /// 启动后台检查与设置页手动检查都会刷新它。
+  static final ValueNotifier<bool> hasUpdate = ValueNotifier(false);
+
   static const String githubRepo = 'moneyfly004/moneyfly';
 
   /// GitHub API 专用裸客户端（不经 [ApiClient]）。
@@ -74,6 +78,7 @@ class UpdateService {
     // 5 分钟缓存，避免重复请求限流
     if (_cacheInfo != null &&
         DateTime.now().difference(_cacheAt) < const Duration(minutes: 5)) {
+      hasUpdate.value = _cacheInfo!.isNewer;
       return _cacheInfo;
     }
     try {
@@ -99,6 +104,7 @@ class UpdateService {
         sizeText: sizeText,
       );
       _cacheAt = DateTime.now();
+      hasUpdate.value = _cacheInfo!.isNewer;
       return _cacheInfo;
     } catch (_) {
       return null;

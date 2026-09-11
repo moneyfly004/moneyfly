@@ -59,9 +59,9 @@ jobs:
       - name: 下载离线分流数据（构建时从 GitHub 拉最新，不在仓库里存二进制）
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
@@ -70,7 +70,7 @@ jobs:
       - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
         run: |
           mkdir -p android/app/libs
-          curl -fL --max-time 120 -o android/app/libs/libmihomo.aar \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o android/app/libs/libmihomo.aar \
             "https://github.com/moneyfly004/mihomo-lib/releases/download/v$MIHOMO_VERSION/libmihomo.aar"
           ls -lh android/app/libs/libmihomo.aar
 
@@ -144,9 +144,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
@@ -155,7 +155,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p build/mihomo
-          curl -fL --max-time 300 -o mihomo.zip \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.zip \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-compatible-v$MIHOMO_VERSION.zip"
           unzip -o mihomo.zip -d sb
           # 官方 zip 内文件名带平台前缀，按扩展名取
@@ -232,14 +232,14 @@ jobs:
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
       - name: 下载 mihomo 内核（测试用）
         run: |
           mkdir -p build/mihomo
-          curl -fL --max-time 300 -o mihomo.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
       - name: 测试（含真实内核 e2e）
@@ -254,7 +254,7 @@ jobs:
       - name: 内置 mihomo 内核
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
-          curl -fL --max-time 300 -o mihomo.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && cp mihomo "$APP/Contents/MacOS/mihomo" && chmod +x "$APP/Contents/MacOS/mihomo"
           lipo "$APP/Contents/MacOS/mihomo" -verify_arch arm64
@@ -297,14 +297,14 @@ jobs:
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
       - name: 下载 mihomo 内核（测试用，compatible 版）
         run: |
           mkdir -p build/mihomo
-          curl -fL --max-time 300 -o mihomo.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
       - name: 测试（含真实内核 e2e）
@@ -319,7 +319,7 @@ jobs:
       - name: 内置 mihomo 内核（compatible 版）
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
-          curl -fL --max-time 300 -o mihomo.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && cp mihomo "$APP/Contents/MacOS/mihomo" && chmod +x "$APP/Contents/MacOS/mihomo"
           lipo "$APP/Contents/MacOS/mihomo" -verify_arch x86_64
@@ -357,14 +357,14 @@ jobs:
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
-          curl -fL --max-time 120 -o assets/rules/geosite.dat \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --max-time 120 -o assets/rules/country.mmdb \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
       - name: 下载 mihomo 内核（测试用，arm64）
         run: |
           mkdir -p build/mihomo
-          curl -fL --max-time 300 -o mihomo.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
       - name: 测试（含真实内核 e2e）
@@ -382,9 +382,9 @@ jobs:
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
           mkdir -p sb && cd sb
-          curl -fL --max-time 300 -o mihomo-arm64.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo-arm64.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
-          curl -fL --max-time 300 -o mihomo-x64.gz \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo-x64.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo-arm64.gz mihomo-x64.gz
           lipo -create mihomo-arm64 mihomo-x64 -output mihomo
@@ -442,6 +442,8 @@ jobs:
             各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
 
             ## 本版更新
+            - 修复：暗色主题下弱化文字（提示/描述/占位符等）对比度过低、几乎看不清
+            - 新增：新版红点提示（底部「我的」tab 与设置「版本更新」行），启动后台静默检测
             - 修复：套餐价格显示取整导致小数金额（如 0.02 元）在列表显示成 0 元
             - 节点兼容：链接订阅新增支持 Shadowsocks / SSR / SOCKS5 / Hysteria(v1/v2) / TUIC / AnyTLS / WireGuard 等协议
             - 修复：Shadowsocks(SIP002) 密码与加密方式解析错误导致无法连接
