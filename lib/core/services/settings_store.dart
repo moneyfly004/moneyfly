@@ -52,9 +52,8 @@ class SettingsStore {
         // 用户自定义「直连名单」（域名后缀列表，命中直接不走代理）
         'bypassDomains': <String>[],
         'bypassLan': true,
-        'theme': 'system',
-        // 主题 key：ocean/midnight/graphite/emerald/violet/warm
-        'themeStyle': 'ocean',
+        // 外观模式：light / warm / gray / darkgray / darkblue / black
+        'appearance': 'light',
         'language': 'zh',
         'notify': true,
         'crashReport': false,

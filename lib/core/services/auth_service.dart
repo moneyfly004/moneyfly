@@ -111,9 +111,9 @@ class AuthService {
     SubscriptionScheduler.instance.stop();
     // 磁盘出厂清理（token/偏好/订阅缓存/内核目录/日志），保留 install_id
     await AppDataCleaner.wipeForLogout();
-    // 内存态收尾：主题回系统默认（偏好已在上面清空，下次启动即出厂）；
+    // 内存态收尾：外观回默认（偏好已在上面清空，下次启动即出厂）；
     // 语言保持当前会话不变（持久化偏好已清，下次启动跟随设备语言）
-    ThemeController.instance.setTheme('system');
+    ThemeController.instance.setAppearance('light');
     CrashLogger.setEnabled(false);
   }
 }

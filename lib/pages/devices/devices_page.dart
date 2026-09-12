@@ -58,7 +58,7 @@ class _DevicesPageState extends State<DevicesPage> {
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel_text'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(AppStrings.t('delete'), style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+            child: Text(AppStrings.t('delete'), style: TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

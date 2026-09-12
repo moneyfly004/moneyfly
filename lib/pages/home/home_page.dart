@@ -888,7 +888,7 @@ class _HomePageState extends State<HomePage>
                   CountryFlag(conn.realCountry, size: 13, rounded: true),
                   const SizedBox(width: 5),
                   Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
-                      style: const TextStyle(fontSize: 11, color: MFColors.green)),
+                      style: TextStyle(fontSize: 11, color: MFColors.green)),
                 ],
               )
             else if (conn.realCountryFailed)
@@ -906,7 +906,7 @@ class _HomePageState extends State<HomePage>
           if (conn.error != null) ...[
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11, color: MFColors.red, height: 1.5)),
+                style: TextStyle(fontSize: 11, color: MFColors.red, height: 1.5)),
             // 类型化失败 → 分场景引导（授权 VPN / 允许通知 / 保持前台重试）；
             // 受限状态（自动连接被账号门禁拦截）不放按钮——
             // 顶部横幅已给续费/升级/管理入口；点电源键也会弹对应说明弹窗

@@ -364,7 +364,7 @@ class _BypassPageState extends State<BypassPage> {
                                         color: MFColors.red
                                             .withValues(alpha: .1),
                                         borderRadius: BorderRadius.circular(9)),
-                                    child: const Icon(Icons.close,
+                                    child: Icon(Icons.close,
                                         size: 15, color: MFColors.red),
                                   ),
                                 ),

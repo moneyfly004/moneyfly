@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoneyFly 外观模式设计稿（6 套 × 5 页面）</title>
+<style>
+  :root{font-family:-apple-system,"PingFang SC",sans-serif;background:#14171c;color:#e8ecf2;}
+  body{margin:0;padding:24px;}
+  h1{font-size:22px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#9aa3b5;margin:0 0 28px;}
+  h2{font-size:17px;margin:30px 0 4px;padding-top:16px;border-top:1px solid #2a2d34;}
+  .h2sub{font-size:12px;color:#8a94a6;margin:0 0 14px;}
+  .grid6{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;}
+
+  /* ===== 6 套外观模式（CSS 变量） ===== */
+  .m1{--bg:#F5F6FA;--card:#FFFFFF;--card2:#F0F2F8;--txt:#1A2233;--txt2:#4A5568;--txt3:#8A94A6;--ac:#455FE9;--ac2:#6C7BFF;--bd:#E5E8F0;--green:#0E9F6E;--red:#F04438;--redbd:#F04438;}
+  .m2{--bg:#FAF6F1;--card:#FFFFFF;--card2:#F5EDE3;--txt:#2A2118;--txt2:#5C5344;--txt3:#948A79;--ac:#E8862E;--ac2:#F0A35C;--bd:#EDE4D8;--green:#0E9F6E;--red:#E0443A;--redbd:#E0443A;}
+  .m3{--bg:#EEF0F4;--card:#FFFFFF;--card2:#E8EBF0;--txt:#22262E;--txt2:#4B5058;--txt3:#82868E;--ac:#5B7CFA;--ac2:#7D97FB;--bd:#DFE3EA;--green:#0E9F6E;--red:#F04438;--redbd:#F04438;}
+  .m4{--bg:#1B1E24;--card:#242830;--card2:#2E333D;--txt:#F2F4F8;--txt2:#B6BEC8;--txt3:#8A929C;--ac:#5B8DEF;--ac2:#7DA6F2;--bd:#343A45;--green:#2EE6A8;--red:#FF5A5F;--redbd:#FF5A5F;}
+  .m5{--bg:#0F1626;--card:#182036;--card2:#222B44;--txt:#F2F5FB;--txt2:#B4BFD2;--txt3:#8A97AC;--ac:#4E7CF6;--ac2:#729AF8;--bd:#2A3550;--green:#2EE6A8;--red:#FF5A5F;--redbd:#FF5A5F;}
+  .m6{--bg:#0A0A0C;--card:#16181D;--card2:#20232A;--txt:#F5F6F8;--txt2:#B0B6C0;--txt3:#848A94;--ac:#6C7BFF;--ac2:#8B9BFF;--bd:#2A2D34;--green:#2EE6A8;--red:#FF5A5F;--redbd:#FF5A5F;}
+
+  .phone{background:var(--bg);color:var(--txt);border:1px solid var(--bd);border-radius:14px;padding:12px;position:relative;}
+  .mode-tag{position:absolute;top:-10px;left:10px;font-size:10px;font-weight:700;background:var(--ac);color:#fff;padding:2px 8px;border-radius:20px;}
+  .p-title{font-size:13px;font-weight:700;margin-bottom:9px;text-align:center;color:var(--txt);}
+  .row{display:flex;align-items:center;}
+  .gap{width:8px;flex:none;}
+  .sp{flex:1;}
+
+  /* 通用组件 */
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:11px;padding:10px;margin-bottom:8px;}
+  .menu-item{display:flex;align-items:center;gap:8px;padding:10px 11px;border-radius:10px;border:1px solid var(--bd);background:var(--card);margin-bottom:6px;font-size:12.5px;font-weight:500;color:var(--txt);}
+  .menu-item .ic{font-size:13px;}
+  .menu-item .tail{margin-left:auto;font-size:10px;color:var(--txt3);}
+  .chip{background:var(--card);border:1px solid var(--bd);border-radius:20px;padding:5px 10px;font-size:11px;color:var(--txt);}
+  .btn{background:var(--ac);color:#fff;border-radius:9px;text-align:center;font-size:12px;font-weight:700;padding:9px;}
+  .btn-lg{background:var(--ac);color:#fff;border-radius:12px;text-align:center;font-size:13px;font-weight:700;padding:12px;}
+  .txt2{color:var(--txt2);} .txt3{color:var(--txt3);} .ac{color:var(--ac);} .ac2{color:var(--ac2);}
+  .green{color:var(--green);} .red{color:var(--red);}
+  .s{font-size:10px;} .m{font-size:12px;} .l{font-size:14px;} .xl{font-size:18px;} .b{font-weight:700;}
+  .badge{border:1px solid var(--green);color:var(--green);font-size:9px;padding:1px 7px;border-radius:20px;}
+
+  /* 首页专用 */
+  .power{width:64px;height:64px;border-radius:50%;margin:6px auto;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--card2);border:2px solid var(--bd);color:var(--ac);}
+  .stat{flex:1;background:var(--card);border:1px solid var(--bd);border-radius:11px;padding:9px;}
+  .seg{display:flex;background:var(--card2);border-radius:9px;padding:2px;}
+  .seg div{flex:1;text-align:center;padding:6px;font-size:11px;border-radius:7px;color:var(--txt2);}
+  .seg .on{background:var(--ac);color:#fff;font-weight:700;}
+  .tabs{display:flex;margin-top:10px;padding-top:8px;border-top:1px solid var(--bd);}
+  .tab{flex:1;text-align:center;font-size:9.5px;color:var(--txt2);}
+  .tab.on{color:var(--ac);font-weight:700;}
+
+  /* 节点专用 */
+  .node{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;border:1px solid var(--bd);background:var(--card);margin-bottom:6px;font-size:12px;}
+  .lat{padding:1px 7px;border-radius:20px;font-size:10px;background:var(--card2);color:var(--txt2);}
+  .group{font-size:11px;font-weight:700;color:var(--txt2);margin:7px 0 5px;}
+
+  /* 套餐专用 */
+  .plan{border:1px solid var(--bd);border-radius:11px;background:var(--card);padding:10px;margin-bottom:7px;display:flex;align-items:center;}
+  .plan .price{font-size:16px;font-weight:800;color:var(--ac);}
+  .method{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--bd);background:var(--card);margin-bottom:6px;font-size:12px;}
+
+  /* 设置专用 */
+  .set-row{display:flex;align-items:center;gap:9px;padding:11px 12px;border-radius:10px;border:1px solid var(--bd);background:var(--card);margin-bottom:6px;font-size:12.5px;color:var(--txt);}
+  .set-row .ic{width:22px;height:22px;border-radius:7px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:11px;}
+  .set-row .tail{margin-left:auto;font-size:11px;color:var(--txt3);}
+  .switch{width:34px;height:19px;border-radius:20px;background:var(--ac);position:relative;}
+  .switch::after{content:"";position:absolute;right:2px;top:2px;width:15px;height:15px;border-radius:50%;background:#fff;}
+  .section{margin:11px 0 5px;font-size:10.5px;color:var(--txt3);font-weight:700;}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ac);display:inline-block;margin-right:4px;}
+</style>
+</head>
+<body>
+<h1>MoneyFly 外观模式设计稿</h1>
+<p class="sub">6 套外观模式：①浅色 ②暖白 ③浅灰 ④深灰 ⑤深蓝 ⑥纯黑。每个页面按这 6 套逐一渲染，颜色随模式整套切换。</p>
+
+<!-- ============ 首页 ============ -->
+<h2>首页</h2>
+<p class="h2sub">头部 + 订阅信息条 + 连接卡（电源按钮/当前节点/切换）+ 上下行速率 + 快捷切国家</p>
+<div class="grid6">
+  <div class="phone m1"><span class="mode-tag">①浅色</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m2"><span class="mode-tag">②暖白</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m3"><span class="mode-tag">③浅灰</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m4"><span class="mode-tag">④深灰</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac2 b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac2 b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m5"><span class="mode-tag">⑤深蓝</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac2 b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac2 b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m6"><span class="mode-tag">⑥纯黑</span>
+    <div class="p-title">MoneyFly</div>
+    <div class="row"><div class="s txt2">到期 2026-01-01</div><div class="sp"></div><div class="s txt2">3/5 设备</div><div class="gap"></div><div class="s txt2">360 天</div></div>
+    <div class="card"><div class="s ac2 b">已连接</div><div class="power">⏻</div><div class="menu-item" style="margin:0"><span class="ic">🇭🇰</span><div><div class="s txt3">当前节点</div><div class="m b">香港线路 01</div></div><div class="tail"><span class="green">38ms ›</span></div></div>
+      <div class="seg" style="margin-top:8px"><div class="on">智能</div><div>全局</div></div>
+    </div>
+    <div class="row"><div class="stat"><div class="s txt3">上行</div><div class="l b ac2">1.2 MB/s</div></div><div class="gap"></div><div class="stat"><div class="s txt3">下行</div><div class="l b green">8.6 MB/s</div></div></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><div class="chip ac2 b">✦ 自动最优</div><div class="chip">🇭🇰 香港</div><div class="chip">🇯🇵 日本</div><div class="chip">🇸🇬 新加坡</div></div>
+    <div class="tabs"><div class="tab on">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+</div>
+
+<!-- ============ 节点 ============ -->
+<h2>节点</h2>
+<p class="h2sub">标题 + 排序/刷新 + 搜索框 + ⚡测速 + 国家分组节点列表（延迟徽标）</p>
+<div class="grid6">
+  <div class="phone m1"><span class="mode-tag">①浅色</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m2"><span class="mode-tag">②暖白</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m3"><span class="mode-tag">③浅灰</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m4"><span class="mode-tag">④深灰</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac2">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m5"><span class="mode-tag">⑤深蓝</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac2">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m6"><span class="mode-tag">⑥纯黑</span>
+    <div class="p-title">节点</div>
+    <div class="row" style="margin-bottom:8px"><div class="chip">排序 ▾</div><div class="sp"></div><div class="btn" style="padding:6px 12px">🔄 刷新</div></div>
+    <div class="row" style="margin-bottom:8px"><div class="menu-item" style="margin:0;flex:1;color:var(--txt3)">🔍 搜索节点/国家</div><div class="gap"></div><div class="btn" style="padding:8px 12px">⚡ 测速</div></div>
+    <div class="group">🇭🇰 香港 <span class="s txt3">(12)</span></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 01 · ss</div><div class="lat green">38ms</div><div class="ac2">✓</div></div>
+    <div class="node">🇭🇰 <div class="sp">香港线路 02 · vless</div><div class="lat green">52ms</div></div>
+    <div class="group">🇯🇵 日本 <span class="s txt3">(8)</span></div>
+    <div class="node">🇯🇵 <div class="sp">日本东京 · vless</div><div class="lat">—</div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab on">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+</div>
+
+<!-- ============ 套餐 ============ -->
+<h2>套餐</h2>
+<p class="h2sub">标题 + 套餐列表（名称/说明/价格/购买）+ 支付方式 + 合计 + 立即支付</p>
+<div class="grid6">
+  <div class="phone m1"><span class="mode-tag">①浅色</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m2"><span class="mode-tag">②暖白</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m3"><span class="mode-tag">③浅灰</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m4"><span class="mode-tag">④深灰</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac2">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac2">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m5"><span class="mode-tag">⑤深蓝</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac2">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac2">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+  <div class="phone m6"><span class="mode-tag">⑥纯黑</span>
+    <div class="p-title">购买套餐</div>
+    <div class="plan"><div class="sp"><div class="m b">月度套餐 <span class="badge">推荐</span></div><div class="s txt2">30 天 · 5 设备 · 不限流量</div></div><div class="price">¥15<span class="s txt2">/月</span></div></div>
+    <div class="plan"><div class="sp"><div class="m b">年度套餐</div><div class="s txt2">360 天 · 10 设备 · 不限流量</div></div><div class="price">¥120<span class="s txt2">/年</span></div></div>
+    <div class="s b txt2" style="margin:10px 0 6px">支付方式</div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">支</span><div class="sp">支付宝 <div class="s txt3">扫码支付 · 推荐</div></div><div class="ac2">●</div></div>
+    <div class="method"><span style="width:26px;height:26px;border-radius:7px;background:#07C160;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px">微</span><div class="sp">微信支付</div><div class="txt3">○</div></div>
+    <div class="row" style="margin-top:10px"><div class="m txt2">合计</div><div class="sp"></div><div class="xl b ac2">¥15.00</div></div>
+    <div class="btn-lg" style="margin-top:10px">立即支付</div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab on">🛒 套餐</div><div class="tab">👤 我的</div></div>
+  </div>
+</div>
+
+<!-- ============ 设置 ============ -->
+<h2>设置</h2>
+<p class="h2sub">分组：连接 / 代理 / 外观 / 账户 / 关于（开关 + 值 + 箭头）</p>
+<div class="grid6">
+  <div class="phone m1"><span class="mode-tag">①浅色</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">浅色 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+  <div class="phone m2"><span class="mode-tag">②暖白</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">暖白 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+  <div class="phone m3"><span class="mode-tag">③浅灰</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">浅灰 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+  <div class="phone m4"><span class="mode-tag">④深灰</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">深灰 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+  <div class="phone m5"><span class="mode-tag">⑤深蓝</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">深蓝 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+  <div class="phone m6"><span class="mode-tag">⑥纯黑</span>
+    <div class="p-title">设置</div>
+    <div class="section">连接与线路</div>
+    <div class="set-row"><span class="ic">🎯</span>默认模式<div class="tail">智能 / 全局 ›</div></div>
+    <div class="set-row"><span class="ic">🔌</span>启动时自动连接<div class="tail"><span class="switch"></span></div></div>
+    <div class="set-row"><span class="ic">⚡</span>自动测速<div class="tail"><span class="switch"></span></div></div>
+    <div class="section">代理与分流</div>
+    <div class="set-row"><span class="ic">🚀</span>TUN 模式<div class="tail">自动 ›</div></div>
+    <div class="set-row"><span class="ic">🧭</span>DNS 模式<div class="tail">auto ›</div></div>
+    <div class="section">外观</div>
+    <div class="set-row"><span class="ic">🎨</span>外观模式<div class="tail">纯黑 ›</div></div>
+    <div class="section">关于</div>
+    <div class="set-row"><span class="ic">🔄</span>版本更新<div class="tail">v2.2.0 <span class="dot"></span></div></div>
+    <div class="tabs"><div class="tab">🏠 首页</div><div class="tab">🧭 节点</div><div class="tab">🛒 套餐</div><div class="tab on">👤 我的</div></div>
+  </div>
+</div>
+
+</body>
+</html>

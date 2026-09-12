@@ -2,85 +2,119 @@ import 'package:flutter/material.dart';
 
 import 'theme_controller.dart';
 
-/// 完整主题：一套暗色背景（bg/card/card2）+ 品牌色（brand/brandLight/brandDeep）。
-/// 浅色模式统一用浅色背景，仅品牌色随主题变化。
+/// 完整「外观模式」：一套完整配色（背景/卡片/文字/品牌/边框）。
+/// 每个模式自带明暗属性（isDark）：浅色模式用浅色卡片 + 深色文字，
+/// 深色模式用深色卡片 + 浅色文字 —— 6 套模式整套切换，而非只换品牌色。
 class MFTheme {
   const MFTheme({
-    required this.darkBg,
-    required this.darkBg2,
-    required this.darkCard,
-    required this.darkCard2,
+    required this.isDark,
+    required this.bg,
+    required this.bg2,
+    required this.card,
+    required this.card2,
+    required this.txt,
+    required this.txt2,
+    required this.txt3,
     required this.brand,
     required this.brandLight,
     required this.brandDeep,
+    required this.line,
+    required this.line2,
   });
-  final Color darkBg;
-  final Color darkBg2;
-  final Color darkCard;
-  final Color darkCard2;
+  final bool isDark;
+  final Color bg;
+  final Color bg2;
+  final Color card;
+  final Color card2;
+  final Color txt;
+  final Color txt2;
+  final Color txt3;
   final Color brand;
   final Color brandLight;
   final Color brandDeep;
+  final Color line;
+  final Color line2;
 }
 
-/// 6 套完整主题（key → 配色）
+/// 6 套外观模式（key → 完整配色），颜色严格对应 design/theme_design.html：
+/// ①浅色 ②暖白 ③浅灰（浅色系） ④深灰 ⑤深蓝 ⑥纯黑（深色系）。
 const Map<String, MFTheme> _mfThemes = {
-  'ocean': MFTheme(
-      darkBg: Color(0xFF0E1420), darkBg2: Color(0xFF121826),
-      darkCard: Color(0xFF182032), darkCard2: Color(0xFF222C40),
-      brand: Color(0xFF455FE9), brandLight: Color(0xFF6C7BFF), brandDeep: Color(0xFF7A5CFF)),
-  'midnight': MFTheme(
-      darkBg: Color(0xFF0A0B0E), darkBg2: Color(0xFF101216),
-      darkCard: Color(0xFF15171C), darkCard2: Color(0xFF1F2229),
-      brand: Color(0xFF6C7BFF), brandLight: Color(0xFF8B9BFF), brandDeep: Color(0xFF5A67D8)),
-  'graphite': MFTheme(
-      darkBg: Color(0xFF16181D), darkBg2: Color(0xFF1B1E24),
-      darkCard: Color(0xFF20242B), darkCard2: Color(0xFF2A2F37),
-      brand: Color(0xFF94A3B8), brandLight: Color(0xFFA8B3C2), brandDeep: Color(0xFF7C8798)),
-  'emerald': MFTheme(
-      darkBg: Color(0xFF0D1A15), darkBg2: Color(0xFF112019),
-      darkCard: Color(0xFF172720), darkCard2: Color(0xFF22342B),
-      brand: Color(0xFF10B981), brandLight: Color(0xFF34D399), brandDeep: Color(0xFF059669)),
-  'violet': MFTheme(
-      darkBg: Color(0xFF151022), darkBg2: Color(0xFF1A1428),
-      darkCard: Color(0xFF1F1730), darkCard2: Color(0xFF2B2240),
-      brand: Color(0xFF8B5CF6), brandLight: Color(0xFFA78BFA), brandDeep: Color(0xFF6D28D9)),
+  'light': MFTheme(
+      isDark: false,
+      bg: Color(0xFFF5F6FA), bg2: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF), card2: Color(0xFFF0F2F8),
+      txt: Color(0xFF1A2233), txt2: Color(0xFF4A5568), txt3: Color(0xFF8A94A6),
+      brand: Color(0xFF455FE9), brandLight: Color(0xFF6C7BFF), brandDeep: Color(0xFF3346C4),
+      line: Color(0xFFE5E8F0), line2: Color(0xFFD6DBE6)),
   'warm': MFTheme(
-      darkBg: Color(0xFF1A140D), darkBg2: Color(0xFF201811),
-      darkCard: Color(0xFF261D13), darkCard2: Color(0xFF332819),
-      brand: Color(0xFFF97316), brandLight: Color(0xFFFB923C), brandDeep: Color(0xFFC2410C)),
+      isDark: false,
+      bg: Color(0xFFFAF6F1), bg2: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF), card2: Color(0xFFF5EDE3),
+      txt: Color(0xFF2A2118), txt2: Color(0xFF5C5344), txt3: Color(0xFF948A79),
+      brand: Color(0xFFE8862E), brandLight: Color(0xFFF0A35C), brandDeep: Color(0xFFC96E1E),
+      line: Color(0xFFEDE4D8), line2: Color(0xFFE0D4C4)),
+  'gray': MFTheme(
+      isDark: false,
+      bg: Color(0xFFEEF0F4), bg2: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF), card2: Color(0xFFE8EBF0),
+      txt: Color(0xFF22262E), txt2: Color(0xFF4B5058), txt3: Color(0xFF82868E),
+      brand: Color(0xFF5B7CFA), brandLight: Color(0xFF7D97FB), brandDeep: Color(0xFF4560D8),
+      line: Color(0xFFDFE3EA), line2: Color(0xFFCFD4DD)),
+  'darkgray': MFTheme(
+      isDark: true,
+      bg: Color(0xFF1B1E24), bg2: Color(0xFF20232A),
+      card: Color(0xFF242830), card2: Color(0xFF2E333D),
+      txt: Color(0xFFF2F4F8), txt2: Color(0xFFB6BEC8), txt3: Color(0xFF8A929C),
+      brand: Color(0xFF5B8DEF), brandLight: Color(0xFF7DA6F2), brandDeep: Color(0xFF4370CC),
+      line: Color(0xFF343A45), line2: Color(0xFF3E4552)),
+  'darkblue': MFTheme(
+      isDark: true,
+      bg: Color(0xFF0F1626), bg2: Color(0xFF141C2E),
+      card: Color(0xFF182036), card2: Color(0xFF222B44),
+      txt: Color(0xFFF2F5FB), txt2: Color(0xFFB4BFD2), txt3: Color(0xFF8A97AC),
+      brand: Color(0xFF4E7CF6), brandLight: Color(0xFF729AF8), brandDeep: Color(0xFF3A5FD0),
+      line: Color(0xFF2A3550), line2: Color(0xFF35415F)),
+  'black': MFTheme(
+      isDark: true,
+      bg: Color(0xFF0A0A0C), bg2: Color(0xFF101216),
+      card: Color(0xFF16181D), card2: Color(0xFF20232A),
+      txt: Color(0xFFF5F6F8), txt2: Color(0xFFB0B6C0), txt3: Color(0xFF848A94),
+      brand: Color(0xFF6C7BFF), brandLight: Color(0xFF8B9BFF), brandDeep: Color(0xFF5560D8),
+      line: Color(0xFF2A2D34), line2: Color(0xFF363A43)),
 };
 
-/// 全部主题 key（设置页遍历顺序）
+/// 全部外观模式 key（设置页遍历顺序）
 const List<String> mfThemeKeys = [
-  'ocean', 'midnight', 'graphite', 'emerald', 'violet', 'warm',
+  'light', 'warm', 'gray', 'darkgray', 'darkblue', 'black',
 ];
 
-/// 主题 key → 展示名 i18n key
+/// 外观模式 key → 展示名 i18n key
 const Map<String, String> mfThemeLabels = {
-  'ocean': 'theme_ocean',
-  'midnight': 'theme_midnight',
-  'graphite': 'theme_graphite',
-  'emerald': 'theme_emerald',
-  'violet': 'theme_violet',
-  'warm': 'theme_warm',
+  'light': 'appearance_light',
+  'warm': 'appearance_warm',
+  'gray': 'appearance_gray',
+  'darkgray': 'appearance_darkgray',
+  'darkblue': 'appearance_darkblue',
+  'black': 'appearance_black',
 };
 
-/// 取某主题（设置页色卡预览用）
-MFTheme mfThemeOf(String key) => _mfThemes[key] ?? _mfThemes['ocean']!;
+/// 取某外观模式（设置页色卡预览用）
+MFTheme mfThemeOf(String key) => _mfThemes[key] ?? _mfThemes['light']!;
 
-/// MoneyFly 设计令牌（与 design/ 设计稿一致）
-/// 颜色为动态 getter：随 ThemeController.isLight 在暗色/浅色间切换，
-/// 页面里 `MFColors.xxx` 的写法不用改，切主题自动生效。
+/// MoneyFly 设计令牌（与 design/theme_design.html 一致）
+/// 颜色为动态 getter：随 ThemeController.appearance 整套切换，
+/// 页面里 `MFColors.xxx` 的写法不用改，切外观模式自动生效。
 class MFColors {
   MFColors._();
 
-  static bool get _light => ThemeController.instance.isLight;
-
+  /// 当前选中的外观模式（key → 完整配色）
   static MFTheme get _theme =>
-      _mfThemes[ThemeController.instance.themeStyle] ?? _mfThemes['ocean']!;
+      _mfThemes[ThemeController.instance.appearance] ?? _mfThemes['light']!;
 
-  // 品牌（随所选主题动态变化）
+  /// 当前是否为深色外观模式（模式 ④⑤⑥ 为深色）
+  static bool get isDark => _theme.isDark;
+
+  // 品牌（随所选外观模式动态变化）
   static Color get brand => _theme.brand;
   static Color get brandLight => _theme.brandLight;
   static Color get brandDeep => _theme.brandDeep;
@@ -90,127 +124,128 @@ class MFColors {
         end: Alignment.bottomRight,
       );
 
-  // 背景（暗色随主题；浅色统一浅色）
-  static Color get bg => _light ? const Color(0xFFF5F7FB) : _theme.darkBg;
-  static Color get bg2 => _light ? const Color(0xFFFFFFFF) : _theme.darkBg2;
-  static Color get card => _light ? const Color(0xFFFFFFFF) : _theme.darkCard;
-  static Color get card2 => _light ? const Color(0xFFF0F3FA) : _theme.darkCard2;
+  // 背景 / 卡片（整套随模式切换：浅色模式浅底，深色模式深底）
+  static Color get bg => _theme.bg;
+  static Color get bg2 => _theme.bg2;
+  static Color get card => _theme.card;
+  static Color get card2 => _theme.card2;
 
   // 线条
-  static Color get line => _light ? const Color(0x141A2B4A) : const Color(0x14FFFFFF);
-  static Color get line2 => _light ? const Color(0x241A2B4A) : const Color(0x20FFFFFF);
+  static Color get line => _theme.line;
+  static Color get line2 => _theme.line2;
 
   // 文本
-  static Color get txt => _light ? const Color(0xFF1A2233) : const Color(0xFFF7F8FA);
-  static Color get txt2 => _light ? const Color(0xFF4A5568) : const Color(0xFFB7C0CD);
-  static Color get txt3 => _light ? const Color(0xFF8A94A6) : const Color(0xFF99A3B5);
+  static Color get txt => _theme.txt;
+  static Color get txt2 => _theme.txt2;
+  static Color get txt3 => _theme.txt3;
 
-  // 语义
-  static const green = Color(0xFF2EE6A8);
-  static const greenDeep = Color(0xFF1FA97E); // 浅色模式下深一点的绿（可读性）
+  // 语义（浅色模式用深一点的绿/红保证白底可读，深色模式用亮色）
+  static Color get green => _theme.isDark ? const Color(0xFF2EE6A8) : const Color(0xFF0E9F6E);
+  static Color get greenDeep => _theme.isDark ? const Color(0xFF1FA97E) : const Color(0xFF0E9F6E);
+  static Color get red => _theme.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438);
   static const amber = Color(0xFFFFB020);
-  static const red = Color(0xFFFF5A5F);
 }
 
 /// 数字字体（Chakra Petch 在桌面端可用；移动端回退 monospace）
 const kNumFont = 'Chakra Petch';
 
 ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
-  final dark = brightness == Brightness.dark;
-  // 颜色必须跟 brightness 参数绑定，不能读 ThemeController.isLight。
-  // 否则 MaterialApp 同时构建 light/dark 两套主题时，输入框底色与文字色会错位
-  // （白底白字 / 黑底黑字），登录页等输入框不可读。
-  final mfTheme = _mfThemes[ThemeController.instance.themeStyle] ?? _mfThemes['ocean']!;
-  final bg = dark ? mfTheme.darkBg : const Color(0xFFF5F7FB);
-  final card = dark ? mfTheme.darkCard : const Color(0xFFFFFFFF);
-  final card2 = dark ? mfTheme.darkCard2 : const Color(0xFFF0F3FA);
-  final txt = dark ? const Color(0xFFF7F8FA) : const Color(0xFF1A2233);
-  final txt2 = dark ? const Color(0xFFB7C0CD) : const Color(0xFF4A5568);
-  final txt3 = dark ? const Color(0xFF99A3B5) : const Color(0xFF8A94A6);
-  final line = dark ? const Color(0x14FFFFFF) : const Color(0x141A2B4A);
-  final line2 = dark ? const Color(0x20FFFFFF) : const Color(0x241A2B4A);
-
-  final scheme = dark
+  // 关键：颜色必须跟 brightness 参数绑定（MaterialApp 同时构建 light/dark 两套主题）。
+  // 若选中深色外观，light 主题回退到默认浅色配色；反之亦然 —— 保证任意模式下
+  // 被展示的那套主题颜色自洽（输入框底/文字不出现白底白字、黑底黑字错位）。
+  final t = _paletteFor(brightness);
+  final scheme = brightness == Brightness.dark
       ? ColorScheme.dark(
-          primary: MFColors.brand,
-          secondary: MFColors.brandLight,
-          surface: card,
-          onSurface: txt,
-          error: MFColors.red,
+          primary: t.brand,
+          secondary: t.brandLight,
+          surface: t.card,
+          onSurface: t.txt,
+          error: t.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438),
         )
       : ColorScheme.light(
-          primary: MFColors.brand,
-          secondary: MFColors.brandLight,
-          surface: card,
-          onSurface: txt,
-          error: MFColors.red,
+          primary: t.brand,
+          secondary: t.brandLight,
+          surface: t.card,
+          onSurface: t.txt,
+          error: t.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438),
         );
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: bg,
+    scaffoldBackgroundColor: t.bg,
     brightness: brightness,
     fontFamily: 'PingFang SC',
     textTheme: TextTheme(
-      titleLarge: TextStyle(color: txt, fontWeight: FontWeight.w700, fontSize: 20),
-      bodyMedium: TextStyle(color: txt, fontSize: 14),
-      bodySmall: TextStyle(color: txt2, fontSize: 12),
-      labelMedium: TextStyle(color: txt2, fontSize: 12.5, fontWeight: FontWeight.w500),
+      titleLarge: TextStyle(color: t.txt, fontWeight: FontWeight.w700, fontSize: 20),
+      bodyMedium: TextStyle(color: t.txt, fontSize: 14),
+      bodySmall: TextStyle(color: t.txt2, fontSize: 12),
+      labelMedium: TextStyle(color: t.txt2, fontSize: 12.5, fontWeight: FontWeight.w500),
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: bg,
+      backgroundColor: t.bg,
       elevation: 0,
       centerTitle: false,
-      titleTextStyle: TextStyle(color: txt, fontSize: 18, fontWeight: FontWeight.w700),
-      iconTheme: IconThemeData(color: txt),
+      titleTextStyle: TextStyle(color: t.txt, fontSize: 18, fontWeight: FontWeight.w700),
+      iconTheme: IconThemeData(color: t.txt),
     ),
     cardTheme: CardThemeData(
-      color: card,
+      color: t.card,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: line),
+        side: BorderSide(color: t.line),
       ),
     ),
     switchTheme: SwitchThemeData(
-      thumbColor: WidgetStatePropertyAll(Colors.white),
+      thumbColor: const WidgetStatePropertyAll(Colors.white),
       trackColor: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? MFColors.brand : Color(0xFF2A3242),
+        (s) => s.contains(WidgetState.selected) ? t.brand : const Color(0xFF2A3242),
       ),
       trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: card2,
-      hintStyle: TextStyle(color: txt3, fontSize: 14),
+      fillColor: t.card2,
+      hintStyle: TextStyle(color: t.txt3, fontSize: 14),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: line2),
+        borderSide: BorderSide(color: t.line2),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: line2),
+        borderSide: BorderSide(color: t.line2),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: MFColors.brand, width: 1.4),
+        borderSide: BorderSide(color: t.brand, width: 1.4),
       ),
     ),
-    dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
+    dividerTheme: DividerThemeData(color: t.line, thickness: 1, space: 1),
     bottomNavigationBarTheme: BottomNavigationBarThemeData(
-      backgroundColor: bg,
-      selectedItemColor: MFColors.brandLight,
-      unselectedItemColor: txt3,
+      backgroundColor: t.bg,
+      selectedItemColor: t.brandLight,
+      unselectedItemColor: t.txt3,
       type: BottomNavigationBarType.fixed,
     ),
     snackBarTheme: SnackBarThemeData(
-      backgroundColor: card2,
-      contentTextStyle: TextStyle(color: txt, fontSize: 13),
+      backgroundColor: t.card2,
+      contentTextStyle: TextStyle(color: t.txt, fontSize: 13),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
   );
+}
+
+/// 按请求的 brightness 取配色：选中外观的明暗与请求一致则用之，
+/// 否则回退到该明暗的默认外观（保证被展示主题自洽）。
+MFTheme _paletteFor(Brightness brightness) {
+  final key = ThemeController.instance.appearance;
+  final theme = _mfThemes[key] ?? _mfThemes['light']!;
+  if (theme.isDark == (brightness == Brightness.dark)) return theme;
+  return brightness == Brightness.dark
+      ? _mfThemes['darkgray']!
+      : _mfThemes['light']!;
 }
 
 /// 渐变主按钮
@@ -298,6 +333,6 @@ class RedDot extends StatelessWidget {
         width: size,
         height: size,
         decoration:
-            const BoxDecoration(color: MFColors.red, shape: BoxShape.circle),
+            BoxDecoration(color: MFColors.red, shape: BoxShape.circle),
       );
 }
