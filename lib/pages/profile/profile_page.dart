@@ -102,7 +102,7 @@ class _ProfilePageState extends State<ProfilePage> {
               _buildHeader(name, email, balance),
               const SizedBox(height: 16),
               if (_loading && _dashboard == null)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
                 )
@@ -155,7 +155,7 @@ class _ProfilePageState extends State<ProfilePage> {
         Container(
           width: 50, height: 50,
           decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(15)),
-          child: const Icon(Icons.flight_takeoff, color: MFColors.brand, size: 26),
+          child: Icon(Icons.flight_takeoff, color: MFColors.brand, size: 26),
         ),
         const SizedBox(width: 13),
         Expanded(
@@ -175,7 +175,7 @@ class _ProfilePageState extends State<ProfilePage> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text('¥${balance.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
             Text(AppStrings.t('balance'), style: TextStyle(fontSize: 9.5, color: MFColors.txt3)),
           ],
         ),

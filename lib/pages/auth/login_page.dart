@@ -125,7 +125,7 @@ class _LoginPageState extends State<LoginPage> {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
-                      BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 40, offset: const Offset(0, 16)),
+                      BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 40, offset: Offset(0, 16)),
                     ],
                   ),
                   child: ClipRRect(

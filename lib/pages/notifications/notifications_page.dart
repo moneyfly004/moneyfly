@@ -116,12 +116,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
         title: Text(AppStrings.t('notify_center')),
         actions: [
           if (_items.any((n) => !n.isRead))
-            TextButton(onPressed: _markAll, child: Text(AppStrings.t('mark_all_read'), style: const TextStyle(color: MFColors.brandLight))),
+            TextButton(onPressed: _markAll, child: Text(AppStrings.t('mark_all_read'), style: TextStyle(color: MFColors.brandLight))),
         ],
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
+            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
             : _error != null
                 ? Center(
                     child: Column(
@@ -174,7 +174,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   if (!n.isRead) ...[
                                     Container(
                                       width: 7, height: 7,
-                                      decoration: const BoxDecoration(color: MFColors.brandLight, shape: BoxShape.circle),
+                                      decoration: BoxDecoration(color: MFColors.brandLight, shape: BoxShape.circle),
                                     ),
                                     const SizedBox(width: 7),
                                   ],

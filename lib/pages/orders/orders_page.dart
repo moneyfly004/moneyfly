@@ -134,7 +134,7 @@ class _OrdersPageState extends State<OrdersPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
+            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
             : _error != null
                 ? Center(
                     child: Column(

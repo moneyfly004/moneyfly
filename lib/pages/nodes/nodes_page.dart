@@ -80,7 +80,7 @@ class _NodesPageState extends State<NodesPage> {
               ListTile(
                 title: Text(l, style: const TextStyle(fontSize: 13.5)),
                 trailing: _sort == v
-                    ? const Icon(Icons.check, size: 16, color: MFColors.brandLight)
+                    ? Icon(Icons.check, size: 16, color: MFColors.brandLight)
                     : null,
                 onTap: () {
                   Navigator.pop(ctx, v);
@@ -266,8 +266,8 @@ class _NodesPageState extends State<NodesPage> {
                         border: Border.all(color: MFColors.brand.withValues(alpha: .3)),
                       ),
                       child: _refreshing
-                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: MFColors.brandLight))
-                          : Text('🔄 ${AppStrings.t('refresh_sub')}', style: const TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                          ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: MFColors.brandLight))
+                          : Text('🔄 ${AppStrings.t('refresh_sub')}', style: TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ],
@@ -419,7 +419,7 @@ class _NodesPageState extends State<NodesPage> {
                       style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                   if (isCurrent) ...[
                     const SizedBox(height: 2),
-                    Text('✨ ${AppStrings.t('selected')}', style: const TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                    Text('✨ ${AppStrings.t('selected')}', style: TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                   ],
                 ],
               ),

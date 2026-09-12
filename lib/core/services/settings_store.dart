@@ -53,6 +53,8 @@ class SettingsStore {
         'bypassDomains': <String>[],
         'bypassLan': true,
         'theme': 'system',
+        // 主题色 accent key：ocean/emerald/violet/coral/rose/teal
+        'themeColor': 'ocean',
         'language': 'zh',
         'notify': true,
         'crashReport': false,

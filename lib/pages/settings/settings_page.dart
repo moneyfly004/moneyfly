@@ -67,7 +67,7 @@ class _SettingsPageState extends State<SettingsPage> {
 @override
   Widget build(BuildContext context) {
     if (!_loaded) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: MFColors.brand)));
+      return Scaffold(body: Center(child: CircularProgressIndicator(color: MFColors.brand)));
     }
     return Scaffold(
       appBar: AppBar(
@@ -228,6 +228,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ThemeController.instance.setTheme(t); // 立即生效
                   _set('theme', t);
                 })),
+            _themeColorRow(),
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
@@ -356,6 +357,68 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _switch(bool value, ValueChanged<bool> onChanged) {
     return Transform.scale(scale: .82, child: Switch(value: value, onChanged: onChanged));
+  }
+
+  /// 主题色色板：6 个圆形色块，点击即切（立即生效 + 持久化）
+  Widget _themeColorRow() {
+    final current = ThemeController.instance.accent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+      decoration: BoxDecoration(
+          color: MFColors.card,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: MFColors.line)),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+                color: MFColors.card2, borderRadius: BorderRadius.circular(9)),
+            alignment: Alignment.center,
+            child: const Text('🎨', style: TextStyle(fontSize: 12)),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(AppStrings.t('theme_color'),
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w500,
+                    color: MFColors.txt)),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final key in mfAccentKeys)
+                GestureDetector(
+                  onTap: () {
+                    ThemeController.instance.setAccent(key);
+                    _set('themeColor', key);
+                  },
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: mfAccentBrand(key),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: current == key ? Colors.white : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: current == key
+                        ? const Icon(Icons.check, size: 13, color: Colors.white)
+                        : null,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _seg2({required String left, required String right, required bool selectedLeft,
@@ -796,7 +859,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Text(AppStrings.t('zh'), style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
               if (AppStrings.lang == 'zh') ...[
                 const Spacer(),
-                const Icon(Icons.check, size: 16, color: MFColors.brandLight),
+                Icon(Icons.check, size: 16, color: MFColors.brandLight),
               ],
             ]),
           ),
@@ -806,7 +869,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Text(AppStrings.t('en'), style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
               if (AppStrings.lang == 'en') ...[
                 const Spacer(),
-                const Icon(Icons.check, size: 16, color: MFColors.brandLight),
+                Icon(Icons.check, size: 16, color: MFColors.brandLight),
               ],
             ]),
           ),

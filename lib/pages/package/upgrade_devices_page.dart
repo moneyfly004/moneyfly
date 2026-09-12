@@ -215,7 +215,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(
+            ? Center(
                 child: CircularProgressIndicator(color: MFColors.brand))
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
