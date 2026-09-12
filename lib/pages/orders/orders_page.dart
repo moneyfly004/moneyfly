@@ -104,7 +104,7 @@ class _OrdersPageState extends State<OrdersPage> {
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('rethink'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(AppStrings.t('cancel_order'), style: const TextStyle(color: MFColors.red)),
+            child: Text(AppStrings.t('cancel_order'), style: TextStyle(color: MFColors.red)),
           ),
         ],
       ),

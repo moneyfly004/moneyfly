@@ -214,7 +214,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               if (_formError != null) ...[
                 const SizedBox(height: 10),
                 Text('⚠ $_formError',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12, color: MFColors.red, height: 1.5,
                         fontWeight: FontWeight.w600)),
               ],

@@ -82,7 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() => _s = defaults);
               // 默认值同步生效到连接控制器与主题
               ConnectionController.instance.applySettings(defaults);
-              ThemeController.instance.setTheme(defaults['theme']?.toString() ?? 'system');
+              ThemeController.instance.setAppearance(defaults['appearance']?.toString() ?? 'light');
               _toast(AppStrings.t('restored'));
             },
             child: Text(AppStrings.t('restore_default'), style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
@@ -211,24 +211,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     MaterialPageRoute(builder: (_) => const GeoUpdatePage()))),
             // ⑤ 外观
             _section(AppStrings.t('group_appearance')),
-            _row(icon: '🌗', title: AppStrings.t('settings_brightness'),
-                value: switch (_s['theme']?.toString()) {
-                  'light' => AppStrings.t('theme_light'),
-                  'dark' => AppStrings.t('theme_dark'),
-                  _ => AppStrings.t('theme_follow'),
-                },
-                onTap: () => _picker([
-                  AppStrings.t('theme_follow'),
-                  AppStrings.t('theme_dark'),
-                  AppStrings.t('theme_light'),
-                ], (v) {
-                  final t = v == AppStrings.t('theme_dark')
-                      ? 'dark'
-                      : (v == AppStrings.t('theme_light') ? 'light' : 'system');
-                  ThemeController.instance.setTheme(t); // 立即生效
-                  _set('theme', t);
-                })),
-            _themeRow(),
+            _appearanceRow(),
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
@@ -359,9 +342,9 @@ class _SettingsPageState extends State<SettingsPage> {
     return Transform.scale(scale: .82, child: Switch(value: value, onChanged: onChanged));
   }
 
-  /// 主题选择：6 套完整主题（暗色背景 + 品牌色），点击即切（立即生效 + 持久化）
-  Widget _themeRow() {
-    final current = ThemeController.instance.themeStyle;
+  /// 外观选择：6 套完整外观模式（背景 + 卡片 + 品牌整套切换），点击即切（立即生效 + 持久化）
+  Widget _appearanceRow() {
+    final current = ThemeController.instance.appearance;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
@@ -369,54 +352,84 @@ class _SettingsPageState extends State<SettingsPage> {
           color: MFColors.card,
           borderRadius: BorderRadius.circular(15),
           border: Border.all(color: MFColors.line)),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-                color: MFColors.card2, borderRadius: BorderRadius.circular(9)),
-            alignment: Alignment.center,
-            child: const Text('🎨', style: TextStyle(fontSize: 12)),
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                    color: MFColors.card2, borderRadius: BorderRadius.circular(9)),
+                alignment: Alignment.center,
+                child: const Text('🎨', style: TextStyle(fontSize: 12)),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Text(AppStrings.t('settings_theme'),
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w500,
+                        color: MFColors.txt)),
+              ),
+              Text(
+                  AppStrings.t(
+                      mfThemeLabels[current] ?? 'appearance_light'),
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: MFColors.brand,
+                      fontWeight: FontWeight.w600)),
+            ],
           ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Text(AppStrings.t('settings_theme'),
-                style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w500,
-                    color: MFColors.txt)),
-          ),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final key in mfThemeKeys)
                 GestureDetector(
                   onTap: () {
-                    ThemeController.instance.setThemeStyle(key);
-                    _set('themeStyle', key);
+                    ThemeController.instance.setAppearance(key);
+                    _set('appearance', key);
                   },
-                  child: Container(
-                    width: 30,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: mfThemeOf(key).darkCard,
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(
-                        color: current == key
-                            ? Colors.white
-                            : mfThemeOf(key).brand,
-                        width: current == key ? 2 : 1,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: mfThemeOf(key).card,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: current == key
+                                ? MFColors.brand
+                                : mfThemeOf(key).line,
+                            width: current == key ? 2 : 1,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Container(
+                          width: 11,
+                          height: 11,
+                          decoration: BoxDecoration(
+                              color: mfThemeOf(key).brand,
+                              shape: BoxShape.circle),
+                        ),
                       ),
-                    ),
-                    alignment: Alignment.center,
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                          color: mfThemeOf(key).brand, shape: BoxShape.circle),
-                    ),
+                      const SizedBox(height: 4),
+                      Text(
+                          AppStrings.t(mfThemeLabels[key] ?? ''),
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: current == key
+                                  ? MFColors.brand
+                                  : MFColors.txt3,
+                              fontWeight: current == key
+                                  ? FontWeight.w700
+                                  : FontWeight.w500)),
+                    ],
                   ),
                 ),
             ],
@@ -908,7 +921,7 @@ class _SettingsPageState extends State<SettingsPage> {
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(AppStrings.t('confirm'),
-                style: const TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
+                style: TextStyle(color: MFColors.red, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
