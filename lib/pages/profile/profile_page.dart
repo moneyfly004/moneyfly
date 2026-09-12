@@ -333,7 +333,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ? _dashboard!.membership
                         : AppStrings.t('member'))
                     : AppStrings.t('no_plan_yet'),
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: MFColors.txt)),
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
@@ -385,7 +385,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 children: [
                   Text(icon, style: const TextStyle(fontSize: 15)),
                   const SizedBox(width: 12),
-                  Expanded(child: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
+                  Expanded(child: Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: MFColors.txt))),
                   if (badge != null)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

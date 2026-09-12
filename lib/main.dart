@@ -191,13 +191,26 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
 
   @override
   void onWindowClose() async {
-    // 点右上角 X（macOS 红点 / Windows ×）→ 询问：最小化常驻 还是 退出
+    // 点右上角 X（macOS 红点 / Windows ×）→ 按记忆行为：最小化 / 退出 / 每次询问。
     // 注意：本 State 在 MaterialApp 之上，绝不能用自己的 context 弹窗
     // （Navigator.of 向上找不到 Navigator → showDialog 抛异常 → 旧代码无
     // 兜底 → 弹窗从未出现，而窗口又被 preventClose 拦截 = 「点 X 没反应」）。
     // 必须用 rootNavigatorKey.currentContext（MaterialApp 的 Navigator）。
     if (!mounted || _quitting) return;
     AppLog.log('APP', 'window close requested');
+    // 已记住的关闭行为直接执行，不再询问
+    final closeAction = await _loadCloseAction();
+    if (!mounted || _quitting) return;
+    if (closeAction == 'hide') {
+      try {
+        await windowManager.hide();
+      } catch (_) {}
+      return;
+    }
+    if (closeAction == 'quit') {
+      await _quitApp();
+      return;
+    }
     try {
       // 启动极早期(路由未就绪)点 X：等一帧让 Navigator 可用
       if (rootNavigatorKey.currentContext == null) {
@@ -212,31 +225,61 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
         await windowManager.hide();
         return;
       }
+      var remember = false;
       final act = await showDialog<String>(
         context: navCtx,
         barrierDismissible: true,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: MFColors.card2,
-          title: Text(AppStrings.t('close_ask_title'),
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-          content: Text(AppStrings.t('close_ask_body'),
-              style: TextStyle(
-                  fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(AppStrings.t('cancel'))),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'hide'),
-              child: Text(AppStrings.t('minimize_tray_btn'),
-                  style: TextStyle(color: MFColors.txt)),
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            backgroundColor: MFColors.card2,
+            title: Text(AppStrings.t('close_ask_title'),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(AppStrings.t('close_ask_body'),
+                    style: TextStyle(
+                        fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+                CheckboxListTile(
+                  value: remember,
+                  onChanged: (v) => setState(() => remember = v ?? false),
+                  title: Text(AppStrings.t('remember_choice'),
+                      style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'quit'),
-              child: Text(AppStrings.t('quit_app_btn'),
-                  style: TextStyle(color: MFColors.red)),
-            ),
-          ],
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(AppStrings.t('cancel'))),
+              TextButton(
+                onPressed: () {
+                  if (remember) {
+                    unawaited(SettingsStore.instance
+                        .update((s) => s['closeAction'] = 'hide'));
+                  }
+                  Navigator.pop(ctx, 'hide');
+                },
+                child: Text(AppStrings.t('minimize_tray_btn'),
+                    style: TextStyle(color: MFColors.txt)),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (remember) {
+                    unawaited(SettingsStore.instance
+                        .update((s) => s['closeAction'] = 'quit'));
+                  }
+                  Navigator.pop(ctx, 'quit');
+                },
+                child: Text(AppStrings.t('quit_app_btn'),
+                    style: TextStyle(color: MFColors.red)),
+              ),
+            ],
+          ),
         ),
       );
       if (!mounted) return;
@@ -253,6 +296,16 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
       try {
         await windowManager.hide();
       } catch (_) {}
+    }
+  }
+
+  Future<String> _loadCloseAction() async {
+    try {
+      final s = await SettingsStore.instance.load();
+      final v = s['closeAction']?.toString() ?? 'ask';
+      return (v == 'hide' || v == 'quit') ? v : 'ask';
+    } catch (_) {
+      return 'ask';
     }
   }
 

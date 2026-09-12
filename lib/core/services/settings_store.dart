@@ -58,6 +58,8 @@ class SettingsStore {
         'crashReport': false,
         'analytics': false,
         'launchAtStartup': false,
+        // 桌面端关闭窗口行为：ask 每次询问 / hide 最小化到托盘 / quit 退出
+        'closeAction': 'ask',
         // 用户最后手动选择的节点 tag（跨重启恢复固定线路用）
         'lastSelectedTag': '',
         // 内核变体偏好:compatible / standard(桌面 amd64)

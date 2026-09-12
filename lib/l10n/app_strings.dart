@@ -197,6 +197,11 @@ class AppStrings {
     'close_ask_body': '选择关闭方式：\n· 最小化到托盘：继续在后台运行（代理保持连接）\n· 退出：断开连接并结束程序',
     'minimize_tray_btn': '最小化到托盘',
     'quit_app_btn': '退出',
+    'remember_choice': '记住我的选择',
+    'close_action': '关闭窗口行为',
+    'close_action_ask': '每次询问',
+    'close_action_hide': '最小化到托盘',
+    'close_action_quit': '退出程序',
     'log_center_desc': '内核引擎与 App 运行日志',
     'log_clear_confirm': '清空全部运行日志？',
     // 内核管理（mihomo）
@@ -781,6 +786,11 @@ class AppStrings {
     'close_ask_body': 'How do you want to close?\n· Minimize to tray: keep running in background (proxy stays connected)\n· Quit: disconnect and exit',
     'minimize_tray_btn': 'Minimize to tray',
     'quit_app_btn': 'Quit',
+    'remember_choice': 'Remember my choice',
+    'close_action': 'Close window action',
+    'close_action_ask': 'Ask every time',
+    'close_action_hide': 'Minimize to tray',
+    'close_action_quit': 'Quit',
     'log_center_desc': 'Kernel engine & app runtime logs',
     'log_clear_confirm': 'Clear all runtime logs?',
     // Kernel management (mihomo)

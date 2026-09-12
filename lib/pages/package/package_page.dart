@@ -365,7 +365,7 @@ class _PackagePageState extends State<PackagePage> {
                       Flexible(
                         child: Text(p.name,
                             maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MFColors.txt)),
                       ),
                       if (p.isRecommended) ...[
                         const SizedBox(width: 7),

@@ -20,22 +20,20 @@ class MFColors {
     end: Alignment.bottomRight,
   );
 
-  // 背景
-  static Color get bg => _light ? const Color(0xFFF5F7FB) : const Color(0xFF0B0E14);
-  static Color get bg2 => _light ? const Color(0xFFFFFFFF) : const Color(0xFF0E121B);
-  static Color get card => _light ? const Color(0xFFFFFFFF) : const Color(0xFF141926);
-  static Color get card2 => _light ? const Color(0xFFF0F3FA) : const Color(0xFF1A2132);
+  // 背景（暗色用「中灰黑」而非近黑，层次更清晰、文字不发闷）
+  static Color get bg => _light ? const Color(0xFFF5F7FB) : const Color(0xFF15181D);
+  static Color get bg2 => _light ? const Color(0xFFFFFFFF) : const Color(0xFF1A1E24);
+  static Color get card => _light ? const Color(0xFFFFFFFF) : const Color(0xFF1E2229);
+  static Color get card2 => _light ? const Color(0xFFF0F3FA) : const Color(0xFF272C35);
 
   // 线条
-  static Color get line => _light ? const Color(0x141A2B4A) : const Color(0x12FFFFFF);
-  static Color get line2 => _light ? const Color(0x241A2B4A) : const Color(0x1FFFFFFF);
+  static Color get line => _light ? const Color(0x141A2B4A) : const Color(0x14FFFFFF);
+  static Color get line2 => _light ? const Color(0x241A2B4A) : const Color(0x20FFFFFF);
 
   // 文本
-  static Color get txt => _light ? const Color(0xFF1A2233) : const Color(0xFFF5F7FF);
-  static Color get txt2 => _light ? const Color(0xFF4A5568) : const Color(0xFF9AA3B5);
-  // 暗色下 txt3 之前用 0xFF5E6778（近背景深灰蓝），对比度仅 ~2.9:1，文字几乎看不清；
-  // 改为 0xFF8A94A6（中灰，~5:1），浅深两套都清晰可读。
-  static Color get txt3 => _light ? const Color(0xFF8A94A6) : const Color(0xFF8A94A6);
+  static Color get txt => _light ? const Color(0xFF1A2233) : const Color(0xFFF7F8FA);
+  static Color get txt2 => _light ? const Color(0xFF4A5568) : const Color(0xFFB7C0CD);
+  static Color get txt3 => _light ? const Color(0xFF8A94A6) : const Color(0xFF99A3B5);
 
   // 语义
   static const green = Color(0xFF2EE6A8);
@@ -52,14 +50,14 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
   // 颜色必须跟 brightness 参数绑定，不能读 ThemeController.isLight。
   // 否则 MaterialApp 同时构建 light/dark 两套主题时，输入框底色与文字色会错位
   // （白底白字 / 黑底黑字），登录页等输入框不可读。
-  final bg = dark ? const Color(0xFF0B0E14) : const Color(0xFFF5F7FB);
-  final card = dark ? const Color(0xFF141926) : const Color(0xFFFFFFFF);
-  final card2 = dark ? const Color(0xFF1A2132) : const Color(0xFFF0F3FA);
-  final txt = dark ? const Color(0xFFF5F7FF) : const Color(0xFF1A2233);
-  final txt2 = dark ? const Color(0xFF9AA3B5) : const Color(0xFF4A5568);
-  final txt3 = dark ? const Color(0xFF8A94A6) : const Color(0xFF8A94A6);
-  final line = dark ? const Color(0x12FFFFFF) : const Color(0x141A2B4A);
-  final line2 = dark ? const Color(0x1FFFFFFF) : const Color(0x241A2B4A);
+  final bg = dark ? const Color(0xFF15181D) : const Color(0xFFF5F7FB);
+  final card = dark ? const Color(0xFF1E2229) : const Color(0xFFFFFFFF);
+  final card2 = dark ? const Color(0xFF272C35) : const Color(0xFFF0F3FA);
+  final txt = dark ? const Color(0xFFF7F8FA) : const Color(0xFF1A2233);
+  final txt2 = dark ? const Color(0xFFB7C0CD) : const Color(0xFF4A5568);
+  final txt3 = dark ? const Color(0xFF99A3B5) : const Color(0xFF8A94A6);
+  final line = dark ? const Color(0x14FFFFFF) : const Color(0x141A2B4A);
+  final line2 = dark ? const Color(0x20FFFFFF) : const Color(0x241A2B4A);
 
   final scheme = dark
       ? ColorScheme.dark(
