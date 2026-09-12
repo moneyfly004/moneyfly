@@ -183,7 +183,21 @@ class _KernelLogTabState extends State<_KernelLogTab>
 
   Future<void> _setLevel(String lv) async {
     setState(() => _level = lv);
-    await ConnectionController.instance.setKernelLogLevel(lv);
+    final conn = ConnectionController.instance;
+    final wasConnected = conn.status == ConnStatus.connected;
+    final live = await conn.setKernelLogLevel(lv);
+    if (!mounted) return;
+    // 已连接但未能热更（Android：embed 模式禁 PATCH）→ 明确告知需重连，
+    // 否则用户会以为「切了级别却没日志」是内核出问题。
+    if (wasConnected && !live) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(AppStrings.t('log_level_need_reconnect'),
+            style: const TextStyle(fontSize: 13)),
+        backgroundColor: MFColors.card2,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+    }
   }
 
   @override

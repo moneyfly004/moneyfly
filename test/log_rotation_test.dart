@@ -8,12 +8,21 @@ void main() {
       expect(keepSecondHalf('a\nb\nc\nd\n'), 'd\n');
     });
 
-    test('无换行的超长单行原样返回（不丢日志）', () {
-      expect(keepSecondHalf('abcdefghij'), 'abcdefghij');
+    test('无换行的超长单行按中点硬截断（否则 512KB 上限失效、文件无界增长）', () {
+      // 旧契约是「原样返回」，但那等于超长单行永不截断 → 上限失效 +
+      // 每次写入全量读回（O(n²)）。现按中点截断，保留后半段。
+      expect(keepSecondHalf('abcdefghij'), 'fghij');
     });
 
-    test('换行在末尾时不截断（避免截成空文件）', () {
-      expect(keepSecondHalf('abc\n'), 'abc\n');
+    test('换行在末尾时同样截断，但绝不产出空内容', () {
+      final s = keepSecondHalf('abc\n');
+      expect(s, 'c\n');
+      expect(s.isNotEmpty, isTrue);
+    });
+
+    test('超长单行截断后长度必然减半（上限真正生效）', () {
+      final big = 'x' * 100000;
+      expect(keepSecondHalf(big).length, lessThanOrEqualTo(big.length ~/ 2 + 1));
     });
 
     test('emoji（代理对）不会被切成半个字符', () {

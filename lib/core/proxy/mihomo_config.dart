@@ -55,10 +55,21 @@ class MihomoConfigBuilder {
     List<String> dnsNameservers = const [],
     /// 追加到 fake-ip-filter 的域名/通配（如 `*.lan`；仅 fake-ip 生效时写入）
     List<String> fakeIpFilterExtra = const [],
+    /// TUN 是否由内核自己建接口/推路由（桌面 true；Android false —— 路由由
+    /// 原生 VpnService 全量下发，非 root 不改路由表）。由调用方按平台传入，
+    /// 生成器保持纯函数、便于测试。
+    bool tunAutoRoute = false,
   }) {
     final secret = clashApiSecret ?? generateSecret();
     final mode = smartMode ? 'rule' : 'global';
     final isTun = tunMode != 'off';
+    // 端口健壮化：非法（<1024 / >65535 / 0）或两端口冲突时回退默认值。
+    // 内核遇到非法端口只打 error 日志却**继续运行**、Clash API 仍返回 200，
+    // App 因此误判「已连接」并把系统代理指向死端口 → 整机断网且无提示。
+    final ports = _sanitizePorts(localPort, clashApiPort);
+    // TUN 栈白名单：非法值会让内核 fatal 退出（Parse config error: invalid tun stack）
+    final stack =
+        const {'system', 'gvisor', 'mixed'}.contains(tunStack) ? tunStack : 'gvisor';
     // fake-ip 生效条件：显式选择，或 auto 且走 TUN（桌面 auto 保持传统解析）
     final useFakeIp =
         dnsMode == 'fake-ip' || (dnsMode != 'redir-host' && isTun);
@@ -165,15 +176,15 @@ class MihomoConfigBuilder {
     final cfg = <String, dynamic>{
       // ===== 元数据（ProxyCore 读取后剥离，不写入配置文件）=====
       '_tunMode': tunMode,
-      '_localPort': localPort,
-      '_clashApiPort': clashApiPort,
+      '_localPort': ports.localPort,
+      '_clashApiPort': ports.clashApiPort,
       '_clashApiSecret': secret,
 
       // ===== mihomo 基础 =====
       // 本机 mixed 入站（HTTP + SOCKS5 同一端口，系统代理指向它）
-      'mixed-port': localPort,
+      'mixed-port': ports.localPort,
       // Clash API 管理通道（切模式/切节点/测速/流量统计全部走这里）
-      'external-controller': '127.0.0.1:$clashApiPort',
+      'external-controller': '127.0.0.1:${ports.clashApiPort}',
       'secret': secret,
       // 智能 = rule；全局 = global（PATCH /configs 热切换）
       'mode': mode,
@@ -244,19 +255,34 @@ class MihomoConfigBuilder {
     };
 
     // ===== TUN（仅 Android / 显式开启时）=====
-    // file-descriptor 由原生层在启动时注入（VpnService fd），不写死。
-    // auto-route=false：路由与地址由原生 VpnService 全量下发，非 root 无需改表。
+    // Android：file-descriptor 由原生层注入（VpnService fd），路由与地址由
+    // VpnService 全量下发 → 必须 auto-route:false（内核不改路由表，非 root 可用）。
+    // 桌面：没有人注入 fd、也没有人下发路由，auto-route:false 等于内核完全不接管
+    // 路由 → TUN 形同虚设（配 force 模式就是「显示已连接、零流量、零报错」）。
+    // 桌面必须让内核自己建接口 + 推路由（需要管理员/root），故 auto-route:true。
     if (isTun) {
       cfg['tun'] = {
         'enable': true,
-        'stack': tunStack,
-        'auto-route': false,
+        'stack': stack,
+        'auto-route': tunAutoRoute,
         'auto-detect-interface': true,
         'dns-hijack': ['any:53'],
       };
     }
 
     return cfg;
+  }
+
+  /// 端口健壮化：返回合法的 (localPort, clashApiPort)。
+  /// - 越界（<1024 / >65535，含 0 与负数）→ 回退该端口默认值
+  /// - 两者相等（内核会 bind 冲突）→ clashApiPort 让位到另一个默认端口
+  static ({int localPort, int clashApiPort}) _sanitizePorts(
+      int localPort, int clashApiPort) {
+    int fix(int v, int fallback) => (v >= 1024 && v <= 65535) ? v : fallback;
+    final lp = fix(localPort, 2080);
+    var ap = fix(clashApiPort, 9090);
+    if (ap == lp) ap = lp == 9090 ? 9091 : 9090;
+    return (localPort: lp, clashApiPort: ap);
   }
 
   /// 把一条直连名单条目转换为 DIRECT 规则（0 或 1 条）。

@@ -74,8 +74,12 @@ class GeoUpdateService {
       }
       onFile?.call(i + 1, files.length);
     }
-    if (ok == files.length) {
-      // 全部成功 → 记录更新时间（供设置页展示，GeoAssets 依据它强制覆盖内核目录）
+    // 只要有文件更新成功就记录时间（旧实现要求 ok == files.length）。
+    // GeoAssets 依据这个时间戳决定是否把「手动副本」强制覆盖到内核目录；
+    // 若部分成功（如 country.mmdb 失败）就不记，则已下载成功的新
+    // geosite.dat 永远不会同步到内核目录 —— 用户看到「更新失败」，磁盘上
+    // 却躺着一个永不生效的新副本。
+    if (ok > 0) {
       await GeoAssets.markUpdatedAt(DateTime.now());
     }
     return (ok: ok, errors: errors);

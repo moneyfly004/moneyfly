@@ -7,6 +7,7 @@ import 'package:yaml/yaml.dart';
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
+import 'settings_store.dart';
 import 'subscription_cache.dart';
 
 /// 订阅服务：拉取订阅信息 → 获取 Clash YAML → 解析节点列表
@@ -34,6 +35,10 @@ class SubscriptionService {
   /// 清缓存/登出代次：拉取在途期间登出 → 结果作废，禁止把旧账号数据写回
   /// 内存或磁盘缓存（防止登出竞态让旧缓存"复活"到下一个账号）
   int _epoch = 0;
+
+  /// 拉取请求序号（见 [_pullAndCache]）：只允许最后一次发出的请求写缓存，
+  /// 防止「准入状态变化前发出的旧请求」晚到后把老配置写回去。
+  int _reqSeq = 0;
 
   /// 登出/切号时清空节点缓存（内存 + 磁盘），避免旧账号节点残留到新账号
   void clearCache() {
@@ -139,15 +144,24 @@ class SubscriptionService {
       msg.toLowerCase().contains('removed') ||
       msg.toLowerCase().contains('kicked');
 
-  /// 拉取订阅原文 → 后台解析 → 校验 epoch 后覆盖内存与磁盘缓存
+  /// 拉取订阅原文 → 后台解析 → 校验 epoch/请求序号后覆盖内存与磁盘缓存
   Future<List<ProxyNode>> _pullAndCache(
       SubscriptionInfo info, int epoch) async {
+    // 请求序号：同一账号下可能并发拉取（手动刷新 + 定时刷新 + 回前台 + 购买后
+    // 刷新）。没有序号时「谁最后返回谁说了算」——一个在准入状态变化前发出的旧
+    // 请求，可能在「到期/禁用后已返回占位节点」的新请求之后落地，把老配置写回去，
+    // 使过期用户重新拿到可用线路。序号让**过期的在途结果一律作废**。
+    final seq = ++_reqSeq;
     final raw = await _fetchRawWithCacheFallback(info.subscribeUrl);
     // 大订阅解析放到后台 isolate，避免阻塞 UI 线程
     final nodes = await compute(_parseInIsolate, raw);
-    // 拉取期间发生登出/清缓存（epoch 变化）→ 结果作废：不写内存、不写磁盘，
-    // 防止旧账号数据在登出后回写"复活"
-    if (epoch != _epoch) return nodes;
+    // 拉取期间发生登出/清缓存（epoch 变化）或已有更新的请求发出 → 结果作废：
+    // **返回空而不是旧节点**。旧实现返回 nodes，会让「已过期/已禁用账号的
+    // 在途旧请求」把可用线路重新注入连接器，绕过准入闸门。
+    if (epoch != _epoch || seq != _reqSeq) return const [];
+    // 注意：这里**不因「解析结果为空」而跳过覆盖**。订阅是准入闸门的执行者：
+    // 到期/被禁用/未开通套餐时后端返回占位（虚假）节点，必须覆盖掉本地老配置，
+    // 否则老用户能继续用缓存里的可用线路。每次成功拉取都要覆盖内存与磁盘缓存。
     _cache = nodes;
     _cacheTime = DateTime.now();
     // 串行写完磁盘缓存再返回：保证「登出删除磁盘缓存」发生在成功写入之后，
@@ -182,11 +196,24 @@ class SubscriptionService {
   /// 这里只负责取回原文。
   Future<String> _fetchRawWithCacheFallback(String subscribeUrl) async {
     try {
-      return await ApiClient.instance.fetchText(subscribeUrl);
+      return await ApiClient.instance
+          .fetchText(subscribeUrl, ua: await _subscriptionUa());
     } catch (e) {
       final cached = await SubscriptionCache.instance.readLatest();
       if (cached == null || cached.subscribeUrl != subscribeUrl) rethrow;
       return cached.raw;
+    }
+  }
+
+  /// 订阅自定义 UA（设置为空时返回 null → 用默认 MoneyFly/<版本>）。
+  /// 部分机场按 UA 返回不同客户端格式，用户需要能自救。
+  static Future<String?> _subscriptionUa() async {
+    try {
+      final s = await SettingsStore.instance.load();
+      final ua = (s['subscribeUserAgent']?.toString() ?? '').trim();
+      return ua.isEmpty ? null : ua;
+    } catch (_) {
+      return null;
     }
   }
 

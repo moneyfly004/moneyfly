@@ -38,10 +38,21 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     logLevel: args['logLevel']?.toString() ?? 'warning',
     dnsMode: args['dnsMode']?.toString() ?? 'auto',
     tunStack: args['tunStack']?.toString() ?? 'gvisor',
+    // 桌面：内核自己建 TUN 接口 + 推路由（无人注入 fd）；Android：路由由
+    // VpnService 全量下发，必须 auto-route:false（见 MihomoConfigBuilder）
+    tunAutoRoute: args['tunAutoRoute'] == true,
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
     dnsNameservers: (args['dnsNameservers'] as List?)?.cast<String>() ?? const [],
     fakeIpFilterExtra: (args['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
   );
+}
+
+/// 容错解析端口设置：历史遗留/手工改过的配置可能把端口存成字符串，
+/// 直接用 `as num?` 会抛 TypeError（该处不在 try 内，会让连接整体失败）。
+int _asPort(dynamic v, int fallback) {
+  if (v is num) return v.toInt();
+  final p = int.tryParse(v?.toString().trim() ?? '');
+  return p ?? fallback;
 }
 
 /// 连接状态
@@ -156,7 +167,7 @@ class ConnectionController extends ChangeNotifier {
   ConnErrorKind errorKind = ConnErrorKind.none;
 
   /// 测速探测地址（设置页可改；内核 delay 测试用，默认谷歌 204）
-  static const defaultTestUrl = 'http://www.gstatic.com/generate_204';
+  static const defaultTestUrl = 'https://www.gstatic.com/generate_204';
   String testUrl = defaultTestUrl;
   bool smartMode = true;
 
@@ -323,6 +334,22 @@ class ConnectionController extends ChangeNotifier {
   int _epoch = 0;
   bool _autoConnectTried = false;
 
+  /// 自动重连次数上限（来自设置 `reconnectTimes`，1~10，默认 3）。
+  /// 旧实现硬编码 3，用户改了设置也不生效。
+  int _maxReconnect = 3;
+
+  /// 「连接稳定存活」后才把 [_reconnectCount] 清零的延时器。
+  /// 旧实现一连上就清零，导致「能启动但几秒后必崩」的内核（端口/锁冲突、
+  /// TUN 失败、被 OOM 或安全软件杀掉）陷入 connect→崩→reconnect 的无限循环，
+  /// 每轮都带系统代理 apply/restore 与通知，既费电又制造「关了又自己连上」。
+  Timer? _stableResetTimer;
+  static const _stableResetAfter = Duration(seconds: 60);
+
+  /// 短时间内异常退出的时间戳（熔断用）：10 分钟内反复崩溃 → 放弃自动重连
+  final List<DateTime> _unexpectedExitAt = [];
+  static const _exitWindow = Duration(minutes: 10);
+  static const _exitBurstLimit = 5;
+
   /// 各平台内核工作目录（geo 数据与 config 同目录，mihomo 按默认文件名加载）：
   /// - 桌面：CLI workDir（系统临时目录 moneyfly_core）
   /// - Android/iOS：filesDir/work（MoneyFlyVpnService 同一内核目录）
@@ -457,6 +484,13 @@ class ConnectionController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    // 已在连接/重连中时忽略新的连接请求（重连自身的入口除外）：
+    // 否则两次 connect() 会并发推进到内核启动（epoch 只能事后作废，拦不住双开），
+    // 造成双开内核、_proc 被覆盖、失去跟踪的孤儿占死端口。
+    if (!fromReconnect &&
+        (status == ConnStatus.connecting || status == ConnStatus.reconnecting)) {
+      return;
+    }
     if (nodes.isEmpty) {
       error = AppStrings.t('no_available_nodes');
       errorKind = ConnErrorKind.none;
@@ -495,9 +529,9 @@ class ConnectionController extends ChangeNotifier {
     final settings = await SettingsStore.instance.load();
     final dns = settings['dns']?.toString() ?? '223.5.5.5';
     // 本机代理监听端口（设置页可改，默认 2080）：mixed 入站 + 系统代理共同指向
-    final localPort = (settings['localPort'] as num?)?.toInt() ?? 2080;
+    final localPort = _asPort(settings['localPort'], 2080);
     // Clash API 端口（设置页可改，默认 9090）：内核管理通道（切节点/测速/流量）
-    final clashApiPort = (settings['clashApiPort'] as num?)?.toInt() ?? 9090;
+    final clashApiPort = _asPort(settings['clashApiPort'], 9090);
     // 测速探测地址（设置页可改，默认 gstatic 204）
     final u = settings['testUrl']?.toString();
     if (u != null && u.trim().isNotEmpty) testUrl = u.trim();
@@ -514,6 +548,9 @@ class ConnectionController extends ChangeNotifier {
     final tunMode = effectiveTunMode;
     final bypassLan = settings['bypassLan'] != false;
     final intervalMin = (settings['testIntervalMin'] as num?)?.toInt() ?? 30;
+    // 自动重连次数上限：读设置（旧实现硬编码 3，用户改了不生效）
+    _maxReconnect =
+        ((settings['reconnectTimes'] as num?)?.toInt() ?? 3).clamp(1, 10);
     if (epoch != _epoch) return;
 
     status = ConnStatus.connecting;
@@ -570,6 +607,7 @@ class ConnectionController extends ChangeNotifier {
         'logLevel': settings['kernelLogLevel']?.toString() ?? 'warning',
         'dnsMode': settings['dnsMode']?.toString() ?? 'auto',
         'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
+        'tunAutoRoute': !(Platform.isAndroid || Platform.isIOS),
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
         'dnsNameservers': (settings['dnsNameservers'] as List?)?.cast<String>() ?? const [],
         'fakeIpFilterExtra': (settings['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
@@ -583,8 +621,11 @@ class ConnectionController extends ChangeNotifier {
         return;
       }
       status = ConnStatus.connected;
-      _reconnectCount = 0;
       connectedAt = DateTime.now();
+      // 不立刻清零重连计数：只有稳定存活够久才算「真的连上了」，才允许把
+      // 计数归零（见 _stableResetTimer 说明）
+      _stableResetTimer?.cancel();
+      _stableResetTimer = Timer(_stableResetAfter, () => _reconnectCount = 0);
       sessionUpMB = 0;
       sessionDownMB = 0;
       AppLog.conn('connected via ${current?.tag} (${current?.type})');
@@ -616,8 +657,12 @@ class ConnectionController extends ChangeNotifier {
       AppLog.error('connect failed: $e');
       final TypedConnError? typedErr = e is TypedConnError ? e : null;
       errorKind = typedErr?.kind ?? ConnErrorKind.unknown;
+      // StateError('内核已在运行') 是内部并发守卫触发的英文串（Bad state: ...），
+      // 不该直接展示给用户；转成可读文案。
       var errMsg = typedErr?.message ??
-          (e is UnsupportedError ? _core.lastError ?? e.message : e.toString());
+          (e is UnsupportedError
+              ? _core.lastError ?? e.message
+              : (e is StateError ? AppStrings.t('kernel_busy') : e.toString()));
       // TUN 模式需要管理员权限（macOS/Windows），给出明确提示
       // （仅对未分类错误做文本映射；类型化错误已带明确语义，不再改写。
       //  Android 的错误都是类型化/平台语义的，不走这里的桌面管理员文案）
@@ -637,8 +682,9 @@ class ConnectionController extends ChangeNotifier {
       // 启停（ProxyCoreCli.start/stop），且失败路径的异步 restore 可能与
       // 下一次重连成功后的 apply 交错，出现「已连接但系统代理被误关」；
       // 系统代理异常时由连接期的保活巡检自动恢复（见 SystemProxyManager）。
-      // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（最多 3 次）
-      if (fromReconnect && autoReconnect && _reconnectCount < 3) {
+      // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（上限取自
+      // 设置 reconnectTimes）
+      if (fromReconnect && autoReconnect && _reconnectCount < _maxReconnect) {
         _scheduleReconnect();
       }
     }
@@ -680,10 +726,10 @@ class ConnectionController extends ChangeNotifier {
         nextIdx++;
         final ms = await _core.testNodeDelay(result[idx].tag, url: testUrl);
         result[idx].latencyMs = ms;
-        result[idx].online = ms >= 0;
+        result[idx].online = mfLatencyUsable(ms);
         done++;
         onProgress?.call(done, result.length);
-        onEach?.call(result[idx].tag, ms, ms >= 0);
+        onEach?.call(result[idx].tag, ms, mfLatencyUsable(ms));
       }
     }
 
@@ -851,6 +897,7 @@ class ConnectionController extends ChangeNotifier {
     _epoch++;
     AppLog.conn('disconnect requested');
     _reconnectTimer?.cancel();
+    _stableResetTimer?.cancel();
     _bgTestTimer?.cancel();
     _releaseWakeLock();
     status = ConnStatus.disconnecting;
@@ -870,6 +917,7 @@ class ConnectionController extends ChangeNotifier {
   Future<void> resetForLogout() async {
     _epoch++;
     _reconnectTimer?.cancel();
+    _stableResetTimer?.cancel();
     _bgTestTimer?.cancel();
     _clearState();
     // 登出/切号：清掉持久化的节点选择，避免旧账号的固定线路残留到新账号
@@ -974,20 +1022,24 @@ class ConnectionController extends ChangeNotifier {
   }
 
   /// 热更内核日志级别（「内核日志」实时页用）：连接时即时生效并持久化，
-  /// 下次连接按该级别启动。
-  Future<void> setKernelLogLevel(String level) async {
+  /// 下次连接按该级别启动。返回是否**即时生效**（false = 只保存了设置，
+  /// 需重连后生效 → 调用方应提示用户，避免「改了没反应」被当成故障）。
+  Future<bool> setKernelLogLevel(String level) async {
+    var liveApplied = false;
     if (!Platform.isAndroid) {
       // 桌面内核可热更 log-level；Android embed 模式禁 PATCH(405)，
       // 仅保存设置，下次连接按该级别启动
       try {
         if (status == ConnStatus.connected && _core.isRunning) {
           await _core.setKernelLogLevel(level);
+          liveApplied = true;
         }
       } catch (_) {}
     }
     try {
       await SettingsStore.instance.update((s) => s['kernelLogLevel'] = level);
     } catch (_) {}
+    return liveApplied;
   }
 
   /// 网络环境变化（WiFi↔蜂窝切换）：已连接且内核在跑时，不重启内核，
@@ -1005,9 +1057,18 @@ class ConnectionController extends ChangeNotifier {
     if (status != ConnStatus.connected && status != ConnStatus.reconnecting) {
       return; // 用户主动断开/未连接时不重连
     }
-    if (!autoReconnect || _reconnectCount >= 3) {
+    // 熔断：短时间内反复异常退出（内核被 OOM/安全软件反复杀、端口/缓存锁
+    // 持续冲突）→ 停止自动重连。否则「启动成功但几秒后必崩」的内核会无限
+    // connect→崩→reconnect 循环。
+    final now = DateTime.now();
+    _unexpectedExitAt.removeWhere((t) => now.difference(t) > _exitWindow);
+    _unexpectedExitAt.add(now);
+    final burst = _unexpectedExitAt.length > _exitBurstLimit;
+    if (!autoReconnect || burst || _reconnectCount >= _maxReconnect) {
       status = ConnStatus.disconnected;
-      error = autoReconnect ? AppStrings.t('reconnect_exhausted') : AppStrings.t('disconnected_hint');
+      error = _withKernelReason(autoReconnect && !burst
+          ? AppStrings.t('reconnect_exhausted')
+          : AppStrings.t('disconnected_hint'));
       errorKind = ConnErrorKind.none;
       unawaited(SystemProxyManager.restore());
       LocalNotify.instance.showReconnectFailed();
@@ -1015,6 +1076,18 @@ class ConnectionController extends ChangeNotifier {
       return;
     }
     _scheduleReconnect();
+  }
+
+  /// 把内核侧错误摘要（含 `code=-9` 这类退出码）拼到用户可见的错误文案上。
+  /// 旧实现只显示「重连 N 次仍失败」这类通用文案，退出码与 stderr 只写进
+  /// app_log.txt，用户排查内核被杀必须自己进「日志中心」翻。
+  String _withKernelReason(String base) {
+    final raw = _core.lastError;
+    if (raw == null || raw.trim().isEmpty) return base;
+    final first = raw.trim().split('\n').first.trim();
+    if (first.isEmpty) return base;
+    final brief = first.length > 120 ? '${first.substring(0, 120)}…' : first;
+    return '$base：$brief';
   }
 
   /// 调度下一次重连（onDisconnectedUnexpectedly 与重连失败共用，

@@ -23,6 +23,9 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  // 注销/关机时通知 Dart 侧做退出清理（系统代理 / 内核）
+  void NotifySystemShutdown() noexcept;
+
   // The project to run.
   flutter::DartProject project_;
 

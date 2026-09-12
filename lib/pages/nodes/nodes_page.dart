@@ -7,6 +7,7 @@ import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/account_service.dart';
 import '../../core/models/models.dart';
+import '../../core/services/speed_tester.dart';
 import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../main.dart';
@@ -109,7 +110,7 @@ class _NodesPageState extends State<NodesPage> {
         final fresh = conn.nodes[idx].clone()
           ..latencyMs = ms
           // UDP 协议裸 TCP 测不了，保持在线；真实延迟连接后内核实测
-          ..online = n.isUdpOnly ? true : ms >= 0;
+          ..online = n.isUdpOnly ? true : mfLatencyUsable(ms);
         final list = List<ProxyNode>.of(conn.nodes);
         list[idx] = fresh;
         await conn.loadNodes(list);

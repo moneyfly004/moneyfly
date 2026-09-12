@@ -215,6 +215,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
+            _row(icon: '🪪', title: AppStrings.t('settings_subscribe_ua'),
+                desc: AppStrings.t('settings_subscribe_ua_desc'),
+                value: ((_s['subscribeUserAgent']?.toString() ?? '').trim().isEmpty)
+                    ? AppStrings.t('settings_subscribe_ua_default')
+                    : _s['subscribeUserAgent'].toString(),
+                onTap: _pickSubscribeUa),
             // ⑥ 账户
             _section(AppStrings.t('group_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
@@ -616,6 +622,43 @@ class _SettingsPageState extends State<SettingsPage> {
     await _set('testUrl', u);
   }
 
+  /// 订阅自定义 User-Agent：部分机场按 UA 返回不同客户端格式，留一个自救入口。
+  /// 留空 = 使用默认 `MoneyFly/<版本>`。
+  Future<void> _pickSubscribeUa() async {
+    final cur = _s['subscribeUserAgent']?.toString() ?? '';
+    final ctrl = TextEditingController(text: cur);
+    final v = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_subscribe_ua'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: MFColors.txt),
+          decoration: mfInput(
+            hint: 'clash-verge/v2.0.0',
+            helper: AppStrings.t('settings_subscribe_ua_desc'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppStrings.t('cancel_text')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: Text(AppStrings.t('save'),
+                style: TextStyle(color: MFColors.brandLight)),
+          ),
+        ],
+      ),
+    );
+    if (v == null) return; // 取消
+    await _set('subscribeUserAgent', v); // 空串 = 回默认 UA
+  }
+
   /// 测速地址行展示：取 host，避免超长 URL 挤爆行
   String _testUrlHost() {
     final u = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
@@ -859,7 +902,19 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (v != null) {
       final mode = v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto');
-      unawaited(_set('tunMode', mode));
+      await _set('tunMode', mode);
+      // TUN 是**建连期参数**：内核只在启动时读它。旧实现只落盘、不重连也不提示，
+      // 用户切到 TUN 后当前连接其实还是系统代理（或反之），界面却毫无反馈。
+      final conn = ConnectionController.instance;
+      if (conn.status == ConnStatus.connected) {
+        _toast(AppStrings.t('setting_reconnect_applied'));
+        unawaited(() async {
+          await conn.disconnect();
+          await conn.connect();
+        }());
+      } else {
+        _toast(AppStrings.t('setting_saved_next_connect'));
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -37,7 +38,14 @@ class ApiClient {
         h.next(o);
       },
       onResponse: (r, h) {
-        final body = r.data is String ? (r.data as String) : (r.data?.toString() ?? '');
+        final data = r.data;
+        // 二进制响应（订阅原文按 bytes 拉取以支持 gzip 解压）不做 toString：
+        // 否则整份内容会变成 "[1, 2, 3, ...]" 巨串写进 http.log，既无意义又费内存
+        final body = data is String
+            ? data
+            : (data is List<int>
+                ? '<binary ${data.length}B>'
+                : (data?.toString() ?? ''));
         // 敏感接口（登录/刷新/改密）响应体含 token，同样脱敏，避免凭据明文落盘
         final masked = _isSensitivePath(r.requestOptions.path) ? '[REDACTED]' : body;
         _logHttp('<<< ${r.statusCode} ${_maskUri(r.requestOptions.uri)}\n'
@@ -59,7 +67,13 @@ class ApiClient {
           // UA 每次请求强制覆盖：Dio 构造时会把 UA 快照进 BaseOptions，
           // 若 UpdateService 在单例创建后才更新 userAgent，直接赋值静态量
           // 不会生效；这里在发请求前统一刷新（与 Authorization 同机制）。
-          options.headers['User-Agent'] = userAgent;
+          // 例外：调用方通过 extra['_ua'] 传入的自定义 UA（按订阅配置）优先，
+          // 否则会被这里无条件抹掉。
+          final overrideUa = options.extra['_ua']?.toString();
+          options.headers['User-Agent'] =
+              (overrideUa != null && overrideUa.isNotEmpty)
+                  ? overrideUa
+                  : userAgent;
           // 注入设备详情头（型号/品牌/OS/类型），后端据此补充 UA 解析不全的设备信息
           for (final e in UserAgent.deviceHeaders.entries) {
             options.headers[e.key] = e.value;
@@ -324,10 +338,49 @@ class ApiClient {
 
   /// 拉取订阅原文（非 JSON）
   /// 订阅 URL 已带 type=clash 参数 → 后端按参数返回 Clash YAML；
-  /// UA 用 MoneyFly/<版本>（后端原生识别 moneyfly 客户端）
-  Future<String> fetchText(String url) async {
-    final r = await _dio.getUri(Uri.parse(url));
-    return r.data?.toString() ?? '';
+  /// UA 默认用 MoneyFly/<版本>（后端原生识别 moneyfly 客户端），可用 [ua] 覆盖。
+  ///
+  /// 三个健壮性要点：
+  /// 1. **显式覆盖 `Accept: */*`**：全局默认 `application/json` 会诱导网关/后端
+  ///    返回 JSON 或错误页而不是 Clash YAML；
+  /// 2. **按响应魔数解压**：机场把 .gz/.zip 直接当正文返回（只给 Content-Type、
+  ///    没有 `Content-Encoding`）时 dart:io 不会透明解压，会被 utf8 解成乱码 →
+  ///    解析出 0 节点；
+  /// 3. **按订阅自定义 UA**：部分机场按 UA 返回不同格式，用户需要能自救。
+  Future<String> fetchText(String url, {String? ua}) async {
+    final r = await _dio.getUri<List<int>>(
+      Uri.parse(url),
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: {'Accept': '*/*'},
+        extra: {if (ua != null && ua.trim().isNotEmpty) '_ua': ua.trim()},
+      ),
+    );
+    final bytes = r.data ?? const <int>[];
+    return utf8.decode(_maybeDecompress(bytes), allowMalformed: true);
+  }
+
+  /// 按魔数解压订阅正文；无压缩特征时原样返回。
+  /// zip 不引入额外依赖，直接给可读错误（比喂乱码去解析 0 节点强）。
+  static List<int> _maybeDecompress(List<int> bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      try {
+        return gzip.decode(bytes);
+      } catch (_) {}
+    }
+    if (bytes.length >= 2 && bytes[0] == 0x78) {
+      try {
+        return zlib.decode(bytes);
+      } catch (_) {}
+    }
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4b &&
+        bytes[2] == 0x03 &&
+        bytes[3] == 0x04) {
+      throw ApiException('订阅返回的是 zip 压缩包，请在服务端改为直接返回 Clash 配置');
+    }
+    return bytes;
   }
 
   // ---------- 错误归一化 ----------

@@ -34,7 +34,23 @@ class SubscriptionScheduler {
   Timer? _timer;
   bool _started = false;
   bool _busy = false;
-  DateTime _lastSuccess = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 上次**尝试**时间。退避判据必须用「已尝试」而不是「已成功」：
+  /// 若以成功时间为准，持续失败时它永不更新 → 每次回前台（≥10 分钟）都会
+  /// 重走完整拉取链路（refresh + fetchInfo + 订阅原文），频繁切前后台就是请求放大。
+  DateTime _lastAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 连续失败次数（成功清零）→ 指数退避
+  int _failStreak = 0;
+  static const _backoffMax = Duration(minutes: 60);
+
+  /// 当前生效的最小重试间隔：10 → 20 → 40 → 60 分钟封顶
+  Duration get _minGap {
+    if (_failStreak <= 0) return resumeMinGap;
+    final minutes = resumeMinGap.inMinutes * (1 << _failStreak.clamp(0, 3));
+    return Duration(
+        minutes: minutes.clamp(resumeMinGap.inMinutes, _backoffMax.inMinutes));
+  }
 
   bool get started => _started;
 
@@ -56,21 +72,27 @@ class SubscriptionScheduler {
     _started = false;
     _timer?.cancel();
     _timer = null;
+    _failStreak = 0;
   }
 
-  /// 应用回前台：距上次成功刷新 ≥10 分钟则立即静默刷新一次
+  /// 应用回前台：距上次**尝试** ≥ 当前退避间隔则立即静默刷新一次
   Future<void> onAppResumed() async {
     if (!_started) return;
-    if (DateTime.now().difference(_lastSuccess) < resumeMinGap) return;
+    if (DateTime.now().difference(_lastAttempt) < _minGap) return;
     await _tick();
   }
 
   Future<void> _tick() async {
     if (_busy) return;
     _busy = true;
+    _lastAttempt = DateTime.now();
     try {
       final ok = await _refreshOnce();
-      if (ok) _lastSuccess = DateTime.now();
+      if (ok) {
+        _failStreak = 0;
+      } else {
+        _failStreak++;
+      }
     } finally {
       _busy = false;
     }
@@ -104,7 +126,9 @@ class SubscriptionScheduler {
           await SubscriptionService.instance.fetchNodes(force: true);
       // 3) 安全合并：不打断正在使用的连接
       await ConnectionController.instance.applySubscriptionNodes(nodes);
-      return nodes.isNotEmpty;
+      // 拉取成功即算成功 —— 即使节点为空（后端下发占位节点/无可线路，例如
+      // 到期或禁用），那也是一次**成功的**响应，不该触发失败退避。
+      return true;
     } catch (e) {
       // 设备被踢下线：后端对该设备的订阅请求返回 403 → 主动断开当前连接，
       // 让被删设备尽快下线（下次手动刷新/回前台也会再次收到提示）
