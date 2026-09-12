@@ -2,42 +2,72 @@ import 'package:flutter/material.dart';
 
 import 'theme_controller.dart';
 
-/// 主题色（accent）定义：一套品牌色 = 主色 + 亮色 + 深色，驱动按钮/高亮/渐变。
-class MFAccent {
-  const MFAccent(this.brand, this.brandLight, this.brandDeep);
+/// 完整主题：一套暗色背景（bg/card/card2）+ 品牌色（brand/brandLight/brandDeep）。
+/// 浅色模式统一用浅色背景，仅品牌色随主题变化。
+class MFTheme {
+  const MFTheme({
+    required this.darkBg,
+    required this.darkBg2,
+    required this.darkCard,
+    required this.darkCard2,
+    required this.brand,
+    required this.brandLight,
+    required this.brandDeep,
+  });
+  final Color darkBg;
+  final Color darkBg2;
+  final Color darkCard;
+  final Color darkCard2;
   final Color brand;
   final Color brandLight;
   final Color brandDeep;
 }
 
-/// 6 套可选主题色（key → 配色）
-const Map<String, MFAccent> _mfAccents = {
-  'ocean': MFAccent(Color(0xFF455FE9), Color(0xFF6C7BFF), Color(0xFF7A5CFF)),
-  'emerald': MFAccent(Color(0xFF10B981), Color(0xFF34D399), Color(0xFF059669)),
-  'violet': MFAccent(Color(0xFF8B5CF6), Color(0xFFA78BFA), Color(0xFF6D28D9)),
-  'coral': MFAccent(Color(0xFFF97316), Color(0xFFFB923C), Color(0xFFC2410C)),
-  'rose': MFAccent(Color(0xFFEC4899), Color(0xFFF472B6), Color(0xFFBE185D)),
-  'teal': MFAccent(Color(0xFF14B8A6), Color(0xFF2DD4BF), Color(0xFF0F766E)),
+/// 6 套完整主题（key → 配色）
+const Map<String, MFTheme> _mfThemes = {
+  'ocean': MFTheme(
+      darkBg: Color(0xFF0E1420), darkBg2: Color(0xFF121826),
+      darkCard: Color(0xFF182032), darkCard2: Color(0xFF222C40),
+      brand: Color(0xFF455FE9), brandLight: Color(0xFF6C7BFF), brandDeep: Color(0xFF7A5CFF)),
+  'midnight': MFTheme(
+      darkBg: Color(0xFF0A0B0E), darkBg2: Color(0xFF101216),
+      darkCard: Color(0xFF15171C), darkCard2: Color(0xFF1F2229),
+      brand: Color(0xFF6C7BFF), brandLight: Color(0xFF8B9BFF), brandDeep: Color(0xFF5A67D8)),
+  'graphite': MFTheme(
+      darkBg: Color(0xFF16181D), darkBg2: Color(0xFF1B1E24),
+      darkCard: Color(0xFF20242B), darkCard2: Color(0xFF2A2F37),
+      brand: Color(0xFF94A3B8), brandLight: Color(0xFFA8B3C2), brandDeep: Color(0xFF7C8798)),
+  'emerald': MFTheme(
+      darkBg: Color(0xFF0D1A15), darkBg2: Color(0xFF112019),
+      darkCard: Color(0xFF172720), darkCard2: Color(0xFF22342B),
+      brand: Color(0xFF10B981), brandLight: Color(0xFF34D399), brandDeep: Color(0xFF059669)),
+  'violet': MFTheme(
+      darkBg: Color(0xFF151022), darkBg2: Color(0xFF1A1428),
+      darkCard: Color(0xFF1F1730), darkCard2: Color(0xFF2B2240),
+      brand: Color(0xFF8B5CF6), brandLight: Color(0xFFA78BFA), brandDeep: Color(0xFF6D28D9)),
+  'warm': MFTheme(
+      darkBg: Color(0xFF1A140D), darkBg2: Color(0xFF201811),
+      darkCard: Color(0xFF261D13), darkCard2: Color(0xFF332819),
+      brand: Color(0xFFF97316), brandLight: Color(0xFFFB923C), brandDeep: Color(0xFFC2410C)),
 };
 
-/// 全部主题色 key（设置页色板遍历顺序）
-const List<String> mfAccentKeys = [
-  'ocean', 'emerald', 'violet', 'coral', 'rose', 'teal',
+/// 全部主题 key（设置页遍历顺序）
+const List<String> mfThemeKeys = [
+  'ocean', 'midnight', 'graphite', 'emerald', 'violet', 'warm',
 ];
 
-/// 主题色 key → 展示名 i18n key
-const Map<String, String> mfAccentLabels = {
+/// 主题 key → 展示名 i18n key
+const Map<String, String> mfThemeLabels = {
   'ocean': 'theme_ocean',
+  'midnight': 'theme_midnight',
+  'graphite': 'theme_graphite',
   'emerald': 'theme_emerald',
   'violet': 'theme_violet',
-  'coral': 'theme_coral',
-  'rose': 'theme_rose',
-  'teal': 'theme_teal',
+  'warm': 'theme_warm',
 };
 
-/// 取某主题色的主色（设置页色板用）
-Color mfAccentBrand(String key) =>
-    _mfAccents[key]?.brand ?? _mfAccents['ocean']!.brand;
+/// 取某主题（设置页色卡预览用）
+MFTheme mfThemeOf(String key) => _mfThemes[key] ?? _mfThemes['ocean']!;
 
 /// MoneyFly 设计令牌（与 design/ 设计稿一致）
 /// 颜色为动态 getter：随 ThemeController.isLight 在暗色/浅色间切换，
@@ -47,24 +77,24 @@ class MFColors {
 
   static bool get _light => ThemeController.instance.isLight;
 
-  static MFAccent get _accent =>
-      _mfAccents[ThemeController.instance.accent] ?? _mfAccents['ocean']!;
+  static MFTheme get _theme =>
+      _mfThemes[ThemeController.instance.themeStyle] ?? _mfThemes['ocean']!;
 
-  // 品牌（随所选主题色动态变化）
-  static Color get brand => _accent.brand;
-  static Color get brandLight => _accent.brandLight;
-  static Color get brandDeep => _accent.brandDeep;
+  // 品牌（随所选主题动态变化）
+  static Color get brand => _theme.brand;
+  static Color get brandLight => _theme.brandLight;
+  static Color get brandDeep => _theme.brandDeep;
   static LinearGradient get brandGradient => LinearGradient(
         colors: [brand, brandLight, brandDeep],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       );
 
-  // 背景（暗色用「中灰黑」而非近黑，层次更清晰、文字不发闷）
-  static Color get bg => _light ? const Color(0xFFF5F7FB) : const Color(0xFF15181D);
-  static Color get bg2 => _light ? const Color(0xFFFFFFFF) : const Color(0xFF1A1E24);
-  static Color get card => _light ? const Color(0xFFFFFFFF) : const Color(0xFF1E2229);
-  static Color get card2 => _light ? const Color(0xFFF0F3FA) : const Color(0xFF272C35);
+  // 背景（暗色随主题；浅色统一浅色）
+  static Color get bg => _light ? const Color(0xFFF5F7FB) : _theme.darkBg;
+  static Color get bg2 => _light ? const Color(0xFFFFFFFF) : _theme.darkBg2;
+  static Color get card => _light ? const Color(0xFFFFFFFF) : _theme.darkCard;
+  static Color get card2 => _light ? const Color(0xFFF0F3FA) : _theme.darkCard2;
 
   // 线条
   static Color get line => _light ? const Color(0x141A2B4A) : const Color(0x14FFFFFF);
@@ -90,9 +120,10 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
   // 颜色必须跟 brightness 参数绑定，不能读 ThemeController.isLight。
   // 否则 MaterialApp 同时构建 light/dark 两套主题时，输入框底色与文字色会错位
   // （白底白字 / 黑底黑字），登录页等输入框不可读。
-  final bg = dark ? const Color(0xFF15181D) : const Color(0xFFF5F7FB);
-  final card = dark ? const Color(0xFF1E2229) : const Color(0xFFFFFFFF);
-  final card2 = dark ? const Color(0xFF272C35) : const Color(0xFFF0F3FA);
+  final mfTheme = _mfThemes[ThemeController.instance.themeStyle] ?? _mfThemes['ocean']!;
+  final bg = dark ? mfTheme.darkBg : const Color(0xFFF5F7FB);
+  final card = dark ? mfTheme.darkCard : const Color(0xFFFFFFFF);
+  final card2 = dark ? mfTheme.darkCard2 : const Color(0xFFF0F3FA);
   final txt = dark ? const Color(0xFFF7F8FA) : const Color(0xFF1A2233);
   final txt2 = dark ? const Color(0xFFB7C0CD) : const Color(0xFF4A5568);
   final txt3 = dark ? const Color(0xFF99A3B5) : const Color(0xFF8A94A6);

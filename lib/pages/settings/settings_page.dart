@@ -211,7 +211,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     MaterialPageRoute(builder: (_) => const GeoUpdatePage()))),
             // ⑤ 外观
             _section(AppStrings.t('group_appearance')),
-            _row(icon: '🎨', title: AppStrings.t('settings_theme'),
+            _row(icon: '🌗', title: AppStrings.t('settings_brightness'),
                 value: switch (_s['theme']?.toString()) {
                   'light' => AppStrings.t('theme_light'),
                   'dark' => AppStrings.t('theme_dark'),
@@ -228,7 +228,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ThemeController.instance.setTheme(t); // 立即生效
                   _set('theme', t);
                 })),
-            _themeColorRow(),
+            _themeRow(),
             _row(icon: '🌏', title: AppStrings.t('settings_language'),
                 value: AppStrings.lang == 'en' ? 'English' : '简体中文',
                 onTap: _pickLanguage),
@@ -359,9 +359,9 @@ class _SettingsPageState extends State<SettingsPage> {
     return Transform.scale(scale: .82, child: Switch(value: value, onChanged: onChanged));
   }
 
-  /// 主题色色板：6 个圆形色块，点击即切（立即生效 + 持久化）
-  Widget _themeColorRow() {
-    final current = ThemeController.instance.accent;
+  /// 主题选择：6 套完整主题（暗色背景 + 品牌色），点击即切（立即生效 + 持久化）
+  Widget _themeRow() {
+    final current = ThemeController.instance.themeStyle;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
@@ -381,7 +381,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(width: 11),
           Expanded(
-            child: Text(AppStrings.t('theme_color'),
+            child: Text(AppStrings.t('settings_theme'),
                 style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w500,
@@ -391,27 +391,32 @@ class _SettingsPageState extends State<SettingsPage> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final key in mfAccentKeys)
+              for (final key in mfThemeKeys)
                 GestureDetector(
                   onTap: () {
-                    ThemeController.instance.setAccent(key);
-                    _set('themeColor', key);
+                    ThemeController.instance.setThemeStyle(key);
+                    _set('themeStyle', key);
                   },
                   child: Container(
-                    width: 24,
-                    height: 24,
+                    width: 30,
+                    height: 26,
                     decoration: BoxDecoration(
-                      color: mfAccentBrand(key),
-                      shape: BoxShape.circle,
+                      color: mfThemeOf(key).darkCard,
+                      borderRadius: BorderRadius.circular(7),
                       border: Border.all(
-                        color: current == key ? Colors.white : Colors.transparent,
-                        width: 2,
+                        color: current == key
+                            ? Colors.white
+                            : mfThemeOf(key).brand,
+                        width: current == key ? 2 : 1,
                       ),
                     ),
                     alignment: Alignment.center,
-                    child: current == key
-                        ? const Icon(Icons.check, size: 13, color: Colors.white)
-                        : null,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                          color: mfThemeOf(key).brand, shape: BoxShape.circle),
+                    ),
                   ),
                 ),
             ],
