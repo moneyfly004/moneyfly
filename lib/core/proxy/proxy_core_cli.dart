@@ -160,19 +160,23 @@ class ProxyCoreCli extends ProxyCore {
         ]);
         return;
       }
-      final r = await Process.run('ps', ['-axo', 'pid,command'],
+      final r = await Process.run('ps', ['-axo', 'pid,ppid,command'],
           environment: {'PATH': Platform.environment['PATH'] ?? ''});
       if (r.exitCode != 0) return;
+      final self = pid; // 当前 App 进程
       for (final line in (r.stdout as String).split('\n')) {
         if (!line.contains('mihomo') || !line.contains('moneyfly_core')) {
           continue;
         }
-        final m = RegExp(r'^\s*(\d+)').firstMatch(line);
+        final m = RegExp(r'^\s*(\d+)\s+(\d+)').firstMatch(line);
         if (m == null) continue;
-        final pid = int.tryParse(m.group(1)!);
-        if (pid == null || pid <= 1) continue;
-        AppLog.kernel('kill stale mihomo pid=$pid: ${line.trim()}');
-        await Process.run('kill', ['-9', '$pid']);
+        final pidToKill = int.tryParse(m.group(1)!);
+        final ppid = int.tryParse(m.group(2)!);
+        if (pidToKill == null || pidToKill <= 1) continue;
+        // 跳过本 App 直接启动的内核子进程（非僵尸），避免误杀当前连接
+        if (ppid == self) continue;
+        AppLog.kernel('kill stale mihomo pid=$pidToKill: ${line.trim()}');
+        await Process.run('kill', ['-9', '$pidToKill']);
       }
     } catch (_) {}
   }
