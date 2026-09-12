@@ -101,7 +101,7 @@ class _DevicesPageState extends State<DevicesPage> {
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: Text(AppStrings.t('save'),
-                style: const TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -136,7 +136,7 @@ class _DevicesPageState extends State<DevicesPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(child: CircularProgressIndicator(color: MFColors.brand))
+            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
             : ListView(
                 padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                 children: [

@@ -223,7 +223,7 @@ class _AccessPageState extends State<AccessPage> {
             ),
             Expanded(
               child: _loading
-                  ? const Center(
+                  ? Center(
                       child: CircularProgressIndicator(color: MFColors.brand))
                   : _filtered.isEmpty
                       ? Center(

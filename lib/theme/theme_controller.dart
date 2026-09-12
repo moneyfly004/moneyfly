@@ -18,6 +18,17 @@ class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
   bool isLight = false;
   ThemeMode mode = ThemeMode.dark;
 
+  /// 主题色（accent）key：ocean/emerald/violet/coral/rose/teal
+  String accent = 'ocean';
+
+  /// 切换主题色并持久化（下次启动恢复）
+  void setAccent(String key) {
+    if (key == accent) return;
+    accent = key;
+    notifyListeners();
+    SettingsStore.instance.update((s) => s['themeColor'] = key).catchError((_) {});
+  }
+
   /// 当前系统是否为浅色外观
   bool get _systemIsLight =>
       WidgetsBinding.instance.platformDispatcher.platformBrightness ==
@@ -56,6 +67,7 @@ class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final s = await SettingsStore.instance.load();
       setTheme(s['theme']?.toString() ?? 'system');
+      accent = s['themeColor']?.toString() ?? 'ocean';
     } catch (_) {}
   }
 }

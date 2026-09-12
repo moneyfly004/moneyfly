@@ -552,7 +552,7 @@ class _HomePageState extends State<HomePage>
       AccountStatus.subscriptionDisabled =>
         (MFColors.red, const Color(0x2EFF5A5F)),
       AccountStatus.noSubscription => (MFColors.amber, const Color(0x33FFB020)),
-      _ => (MFColors.brand, const Color(0x2E455FE9)),
+      _ => (MFColors.brand, Color(0x2E455FE9)),
     };
     final emoji = switch (status) {
       AccountStatus.expired => '⏰',
@@ -828,9 +828,9 @@ class _HomePageState extends State<HomePage>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(AppStrings.t('node_switch'),
-                              style: const TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
+                              style: TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
                           const SizedBox(width: 2),
-                          const Icon(Icons.chevron_right, size: 15, color: MFColors.brandLight),
+                          Icon(Icons.chevron_right, size: 15, color: MFColors.brandLight),
                         ],
                       ),
                     ),
@@ -865,10 +865,10 @@ class _HomePageState extends State<HomePage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.refresh, size: 13, color: MFColors.brandLight),
+                          Icon(Icons.refresh, size: 13, color: MFColors.brandLight),
                           const SizedBox(width: 4),
                           Text(AppStrings.t('retry_btn'),
-                              style: const TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
+                              style: TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
                         ],
                       ),
                     ),
@@ -1309,7 +1309,7 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
                         ),
                         if (isCurrent) ...[
                           const SizedBox(width: 8),
-                          const Icon(Icons.check_circle, size: 16, color: MFColors.brandLight),
+                          Icon(Icons.check_circle, size: 16, color: MFColors.brandLight),
                         ],
                       ],
                     ),

@@ -455,7 +455,7 @@ class _AppLogTabState extends State<_AppLogTab>
         Divider(height: 1, color: MFColors.line),
         Expanded(
           child: _loading
-              ? const Center(
+              ? Center(
                   child: CircularProgressIndicator(color: MFColors.brand))
               : _lines.isEmpty
                   ? Center(

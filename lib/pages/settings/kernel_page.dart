@@ -125,7 +125,7 @@ class _KernelPageState extends State<KernelPage> {
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
               child: Text(AppStrings.t('kernel_apply_now'),
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: MFColors.brandLight, fontWeight: FontWeight.w600)),
             ),
           ],
@@ -186,7 +186,7 @@ class _KernelPageState extends State<KernelPage> {
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(AppStrings.t('confirm'),
-                style: const TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
+                style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

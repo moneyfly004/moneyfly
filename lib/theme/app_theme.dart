@@ -2,6 +2,43 @@ import 'package:flutter/material.dart';
 
 import 'theme_controller.dart';
 
+/// 主题色（accent）定义：一套品牌色 = 主色 + 亮色 + 深色，驱动按钮/高亮/渐变。
+class MFAccent {
+  const MFAccent(this.brand, this.brandLight, this.brandDeep);
+  final Color brand;
+  final Color brandLight;
+  final Color brandDeep;
+}
+
+/// 6 套可选主题色（key → 配色）
+const Map<String, MFAccent> _mfAccents = {
+  'ocean': MFAccent(Color(0xFF455FE9), Color(0xFF6C7BFF), Color(0xFF7A5CFF)),
+  'emerald': MFAccent(Color(0xFF10B981), Color(0xFF34D399), Color(0xFF059669)),
+  'violet': MFAccent(Color(0xFF8B5CF6), Color(0xFFA78BFA), Color(0xFF6D28D9)),
+  'coral': MFAccent(Color(0xFFF97316), Color(0xFFFB923C), Color(0xFFC2410C)),
+  'rose': MFAccent(Color(0xFFEC4899), Color(0xFFF472B6), Color(0xFFBE185D)),
+  'teal': MFAccent(Color(0xFF14B8A6), Color(0xFF2DD4BF), Color(0xFF0F766E)),
+};
+
+/// 全部主题色 key（设置页色板遍历顺序）
+const List<String> mfAccentKeys = [
+  'ocean', 'emerald', 'violet', 'coral', 'rose', 'teal',
+];
+
+/// 主题色 key → 展示名 i18n key
+const Map<String, String> mfAccentLabels = {
+  'ocean': 'theme_ocean',
+  'emerald': 'theme_emerald',
+  'violet': 'theme_violet',
+  'coral': 'theme_coral',
+  'rose': 'theme_rose',
+  'teal': 'theme_teal',
+};
+
+/// 取某主题色的主色（设置页色板用）
+Color mfAccentBrand(String key) =>
+    _mfAccents[key]?.brand ?? _mfAccents['ocean']!.brand;
+
 /// MoneyFly 设计令牌（与 design/ 设计稿一致）
 /// 颜色为动态 getter：随 ThemeController.isLight 在暗色/浅色间切换，
 /// 页面里 `MFColors.xxx` 的写法不用改，切主题自动生效。
@@ -10,15 +47,18 @@ class MFColors {
 
   static bool get _light => ThemeController.instance.isLight;
 
-  // 品牌（深浅色共用）
-  static const brand = Color(0xFF455FE9);
-  static const brandLight = Color(0xFF6C7BFF);
-  static const brandDeep = Color(0xFF7A5CFF);
-  static const brandGradient = LinearGradient(
-    colors: [brand, brandLight, brandDeep],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+  static MFAccent get _accent =>
+      _mfAccents[ThemeController.instance.accent] ?? _mfAccents['ocean']!;
+
+  // 品牌（随所选主题色动态变化）
+  static Color get brand => _accent.brand;
+  static Color get brandLight => _accent.brandLight;
+  static Color get brandDeep => _accent.brandDeep;
+  static LinearGradient get brandGradient => LinearGradient(
+        colors: [brand, brandLight, brandDeep],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      );
 
   // 背景（暗色用「中灰黑」而非近黑，层次更清晰、文字不发闷）
   static Color get bg => _light ? const Color(0xFFF5F7FB) : const Color(0xFF15181D);
@@ -104,7 +144,7 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStatePropertyAll(Colors.white),
       trackColor: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? MFColors.brand : const Color(0xFF2A3242),
+        (s) => s.contains(WidgetState.selected) ? MFColors.brand : Color(0xFF2A3242),
       ),
       trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
     ),
@@ -123,7 +163,7 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: MFColors.brand, width: 1.4),
+        borderSide: BorderSide(color: MFColors.brand, width: 1.4),
       ),
     ),
     dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
@@ -169,7 +209,7 @@ class MFPrimaryButton extends StatelessWidget {
           gradient: MFColors.brandGradient,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
-            BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 24, offset: const Offset(0, 10)),
+            BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 24, offset: Offset(0, 10)),
           ],
         ),
         child: Material(
