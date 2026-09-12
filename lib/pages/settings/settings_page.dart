@@ -104,7 +104,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 )),
             _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
                 trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v))),
-            if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+            if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) ...[
               _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
                   trailing: _switch(_s['launchAtStartup'] == true, (v) async {
                     await _set('launchAtStartup', v);
@@ -114,6 +114,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       unawaited(launchAtStartup.disable());
                     }
                   })),
+              _row(icon: '🚪', title: AppStrings.t('close_action'),
+                  value: _closeActionLabel(),
+                  onTap: _pickCloseAction),
+            ],
             _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
                 trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
             _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),
@@ -911,6 +915,26 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     ));
+  }
+
+  String _closeActionLabel() {
+    return switch (_s['closeAction']?.toString()) {
+      'hide' => AppStrings.t('close_action_hide'),
+      'quit' => AppStrings.t('close_action_quit'),
+      _ => AppStrings.t('close_action_ask'),
+    };
+  }
+
+  Future<void> _pickCloseAction() async {
+    final labels = <String, String>{
+      AppStrings.t('close_action_ask'): 'ask',
+      AppStrings.t('close_action_hide'): 'hide',
+      AppStrings.t('close_action_quit'): 'quit',
+    };
+    await _picker(labels.keys.toList(), (label) {
+      final v = labels[label];
+      if (v != null) unawaited(_set('closeAction', v));
+    });
   }
 
   Future<void> _picker(List<String> options, ValueChanged<String> onSelected) async {
