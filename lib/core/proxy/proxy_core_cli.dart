@@ -57,6 +57,11 @@ class ProxyCoreCli extends ProxyCore {
   ));
 
   Process? _proc;
+
+  /// 启动流程进行中标志。`start()` 从第一行到 `Process.start` 之间有 5 个 await，
+  /// 期间 `_proc` 仍是 null —— 只检查 `_proc` 会让并发 `start()` 双双通过守卫
+  /// （双开内核 → `_proc` 被覆盖 → 失去跟踪的那个成为清不掉的孤儿）。
+  bool _starting = false;
   bool _intentionalStop = false;
   String? _lastError;
   String? _configPath;
@@ -151,19 +156,27 @@ class ProxyCoreCli extends ProxyCore {
   /// bind 失败("address already in use")+ "[CacheFile] can't open cache
   /// file: timeout"，表现为「退出后重开连不上」。
   /// 只匹配命令行含 moneyfly_core 的 mihomo，不会误杀其它 Clash 类软件。
-  static Future<void> killStaleKernels() async {
+  /// [livePid] 指定要豁免的进程（通常传当前跟踪的内核 pid）；不传则清理
+  /// 所有匹配的残留内核 —— App 启动/退出路径都传空（那两处本就没有在跑的内核）。
+  static Future<void> killStaleKernels({int? livePid}) async {
     try {
+      // 只豁免「当前正在跟踪的那个内核」，而不是「所有 ppid==本 App 的子进程」。
+      // 旧实现豁免了后者，而启停竞态留下的孤儿内核 PPID 恰好就是本 App →
+      // 只要 App 不退出就永远清不掉，它会一直占着 2080/9090 与 cache.db 锁，
+      // 导致之后每次连接都 bind 失败。
+      final live = livePid;
       if (Platform.isWindows) {
+        final exclude =
+            live != null ? " -and \$_.ProcessId -ne $live" : '';
         await Process.run('powershell', [
           '-NoProfile', '-Command',
-          "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'mihomo' -and \$_.CommandLine -match 'moneyfly_core' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }",
+          "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'mihomo' -and \$_.CommandLine -match 'moneyfly_core'$exclude } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }",
         ]);
         return;
       }
       final r = await Process.run('ps', ['-axo', 'pid,ppid,command'],
           environment: {'PATH': Platform.environment['PATH'] ?? ''});
       if (r.exitCode != 0) return;
-      final self = pid; // 当前 App 进程
       for (final line in (r.stdout as String).split('\n')) {
         if (!line.contains('mihomo') || !line.contains('moneyfly_core')) {
           continue;
@@ -171,10 +184,8 @@ class ProxyCoreCli extends ProxyCore {
         final m = RegExp(r'^\s*(\d+)\s+(\d+)').firstMatch(line);
         if (m == null) continue;
         final pidToKill = int.tryParse(m.group(1)!);
-        final ppid = int.tryParse(m.group(2)!);
         if (pidToKill == null || pidToKill <= 1) continue;
-        // 跳过本 App 直接启动的内核子进程（非僵尸），避免误杀当前连接
-        if (ppid == self) continue;
+        if (live != null && pidToKill == live) continue;
         AppLog.kernel('kill stale mihomo pid=$pidToKill: ${line.trim()}');
         await Process.run('kill', ['-9', '$pidToKill']);
       }
@@ -183,7 +194,18 @@ class ProxyCoreCli extends ProxyCore {
 
   @override
   Future<void> start(Map<String, dynamic> config) async {
-    if (_proc != null) throw StateError('内核已在运行');
+    // 守卫覆盖**整个**启动过程（见 _starting 说明），否则并发启动会双开内核
+    if (_proc != null || _starting) throw StateError('内核已在运行');
+    _starting = true;
+    try {
+      await _startKernel(config);
+    } finally {
+      _starting = false;
+    }
+  }
+
+  /// 实际启动流程（由 [start] 在 `_starting` 互斥保护下调用）
+  Future<void> _startKernel(Map<String, dynamic> config) async {
     _intentionalStop = false;
     _lastError = null;
     _logTail.clear();
@@ -239,8 +261,9 @@ class ProxyCoreCli extends ProxyCore {
     _proc!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLog);
     unawaited(_watchProcess());
 
-    // 等内核就绪（Clash API 可访问）
+    // 等内核就绪（Clash API 可访问 + 本地 mixed 端口真的在监听）
     final sw = Stopwatch()..start();
+    var apiReadyButPortDead = false;
     while (sw.elapsed < _readyTimeout) {
       if (_proc == null) {
         // 进程启动后立即退出（_watchProcess 已记录退出码与尾部日志）：
@@ -253,6 +276,24 @@ class ProxyCoreCli extends ProxyCore {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
         if (r.statusCode == 200) {
+          // API 200 **不代表内核在干活**：mixed-port 非法（越界）或被占用时，
+          // 内核只打 error 日志却继续运行、Clash API 照样返回 200。若不复查
+          // 本地监听端口，App 会把系统代理指向死端口 → 整机断网且零提示。
+          // （TUN force 模式没有 mixed 入站，跳过探活。）
+          if (!_tunForceMode && !await _portListening(_localPort)) {
+            apiReadyButPortDead = true;
+            await Future.delayed(const Duration(milliseconds: 200));
+            continue;
+          }
+          // TUN-only(force) 模式没有 mixed 入站，端口探活失效 → 改看内核日志：
+          // 非管理员/被安全软件拦截时 mihomo 只打 `Start TUN listening error`
+          // 却继续运行、Clash API 照样 200，不检查就会「显示已连接、零流量、零报错」。
+          if (_tunForceMode && _tunFailedInLog) {
+            await stop();
+            throw UnsupportedError('TUN 未能启动（通常是缺少管理员/root 权限或'
+                '被安全软件拦截）。请以管理员身份运行，或改用「仅系统代理」模式。'
+                '日志：${_tail()}');
+          }
           // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
           if (manageSystemProxy && !_tunForceMode) {
             await SystemProxyManager.apply(port: _localPort);
@@ -267,7 +308,31 @@ class ProxyCoreCli extends ProxyCore {
       await Future.delayed(const Duration(milliseconds: 100));
     }
     await stop();
-    throw UnsupportedError('内核启动超时（${_readyTimeout.inSeconds}s）。日志：${_tail()}$_winKernelHint');
+    throw UnsupportedError(apiReadyButPortDead
+        ? '内核已启动但本地端口 $_localPort 未在监听（端口被占用或非法），'
+            '已停止以避免误判为「已连接」。请在设置中更换端口。日志：${_tail()}'
+        : '内核启动超时（${_readyTimeout.inSeconds}s）。日志：${_tail()}$_winKernelHint');
+  }
+
+  /// 内核日志里是否出现「TUN 启动失败」。非管理员/被拦截时 mihomo 只打
+  /// error 日志、进程不退出、Clash API 仍返回 200 → 不检查就是假连接。
+  bool get _tunFailedInLog => _logTail.any((l) {
+        final s = l.toLowerCase();
+        return s.contains('tun') && (s.contains('error') || s.contains('failed'));
+      });
+
+  /// 本地端口探活：内核是否真的在 [port] 上监听。
+  /// 比 Clash API 的 200 更接近「系统代理指向它能上网」这一实际语义。
+  static Future<bool> _portListening(int port) async {
+    if (port < 1 || port > 65535) return false;
+    try {
+      final s = await Socket.connect(InternetAddress.loopbackIPv4, port,
+          timeout: const Duration(milliseconds: 800));
+      s.destroy();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Windows 附加引导：内核进程启动即退出时给出排障方向。
@@ -382,7 +447,7 @@ class ProxyCoreCli extends ProxyCore {
         '/proxies/${Uri.encodeComponent(tag)}/delay',
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': url ?? 'http://www.gstatic.com/generate_204',
+          'url': url ?? 'https://www.gstatic.com/generate_204',
         },
         options: Options(
             validateStatus: (s) => true,

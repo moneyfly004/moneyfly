@@ -272,7 +272,7 @@ class ProxyCoreAndroid extends ProxyCore {
         '/proxies/${Uri.encodeComponent(tag)}/delay',
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': url ?? 'http://www.gstatic.com/generate_204',
+          'url': url ?? 'https://www.gstatic.com/generate_204',
         },
         options: Options(
             validateStatus: (s) => true,

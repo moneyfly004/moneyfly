@@ -36,7 +36,7 @@ class SettingsStore {
         // Clash API 管理端口（切节点/测速/流量统计），默认 9090
         'clashApiPort': 9090,
         // 测速探测地址（内核 delay 测试；网络环境特殊时可改）
-        'testUrl': 'http://www.gstatic.com/generate_204',
+        'testUrl': 'https://www.gstatic.com/generate_204',
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',
@@ -54,6 +54,8 @@ class SettingsStore {
         'bypassLan': true,
         // 外观模式：light / warm / gray / darkgray / darkblue / black
         'appearance': 'light',
+        // 订阅自定义 User-Agent（空 = 用默认 MoneyFly/<版本>）
+        'subscribeUserAgent': '',
         'language': 'zh',
         'notify': true,
         'crashReport': false,
@@ -74,10 +76,31 @@ class SettingsStore {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        return {..._defaults(), ...Map<String, dynamic>.from(decoded)};
+        return _migrateLegacyDns(
+            {..._defaults(), ...Map<String, dynamic>.from(decoded)});
       }
     } catch (_) {}
     return _defaults();
+  }
+
+  /// 兼容遗留单值键 `dns`：多 DNS 列表功能上线后，`dns` 只在
+  /// `dnsNameservers` 为空时才生效，而默认值恒为非空列表 → 老用户自定义过的
+  /// `dns`（如 1.1.1.1）会被静默压掉、设置页也不展示。
+  /// 读取时做一次等价映射：列表仍等于默认值时，用 `dns` 替换首项。
+  static Map<String, dynamic> _migrateLegacyDns(Map<String, dynamic> s) {
+    const defaultDns = '223.5.5.5';
+    const defaultList = ['223.5.5.5', '119.29.29.29'];
+    final dns = (s['dns']?.toString() ?? '').trim();
+    if (dns.isEmpty || dns == defaultDns) return s;
+    final list = (s['dnsNameservers'] as List?)
+        ?.map((e) => e.toString())
+        .toList(growable: false);
+    if (list == null || list.length != defaultList.length) return s;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] != defaultList[i]) return s; // 用户已自行改过列表 → 不干预
+    }
+    s['dnsNameservers'] = <String>[dns, ...defaultList.skip(1)];
+    return s;
   }
 
   /// 直接整体保存(整份快照,一般仅「恢复默认」用)；入队保证落盘顺序

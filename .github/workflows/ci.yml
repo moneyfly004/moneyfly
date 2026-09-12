@@ -8,6 +8,7 @@ on:
 
 env:
   FLUTTER_VERSION: '3.44.4'
+  MIHOMO_VERSION: '1.19.30'
 
 jobs:
   ci:
@@ -39,7 +40,24 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           ls -lh assets/rules/
 
+      # 关键：把内核放到 test/gen_mihomo_test.dart 会查找的路径
+      # （mihomo-bin/mihomo）。否则「真实内核 -t 校验」用例永远 skip，
+      # 生成配置的正确性就没有回归防线（端口/CIDR/stack 之类的错误只能等
+      # 用户侧内核启动失败才暴露）。
+      - name: 下载 mihomo 内核（让真实内核 -t 用例真正执行）
+        run: |
+          mkdir -p mihomo-bin
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 \
+            -o /tmp/mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v${{ env.MIHOMO_VERSION }}/mihomo-linux-amd64-compatible-v${{ env.MIHOMO_VERSION }}.gz"
+          gunzip -f /tmp/mihomo.gz
+          mv /tmp/mihomo mihomo-bin/mihomo
+          chmod +x mihomo-bin/mihomo
+          ./mihomo-bin/mihomo -v
+
       - name: 校验
         run: |
           flutter analyze
           flutter test
+        env:
+          MONEYFLY_MIHOMO: ${{ github.workspace }}/mihomo-bin/mihomo

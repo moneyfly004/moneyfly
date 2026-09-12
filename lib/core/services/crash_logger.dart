@@ -44,8 +44,12 @@ class CrashLogger {
   /// 崩溃日志目录保留的最大文件数，防止无限堆积
   static const _maxCrashFiles = 20;
 
+  /// 待写缓冲上限：崩溃风暴 + 目录不可用时，_pending 会无界增长（内存）。
+  static const _maxPending = 100;
+
   static void _log(String content) {
     if (!_enabled || kIsWeb) return;
+    if (_pending.length >= _maxPending) _pending.removeAt(0); // 丢最旧，保住上限
     _pending.add('${DateTime.now().toIso8601String()}\n$content\n\n');
     _flushing ??= _drain();
   }
@@ -70,6 +74,10 @@ class CrashLogger {
       // 日志失败不产生新的崩溃
     }
     if (_pending.isNotEmpty) {
+      // 失败重排必须**带延迟**：旧实现在第一步 getApplicationDocumentsDirectory()
+      // 就抛错时，会立刻重新入队 _drain → 无退避空转（崩溃循环 + 目录不可用
+      // 时 CPU 打满、_pending 持续增长）。延迟后再试，且由 _flushing 去重。
+      await Future.delayed(const Duration(seconds: 5));
       _flushing = _drain();
     } else {
       _flushing = null;

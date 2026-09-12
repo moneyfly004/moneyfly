@@ -29,6 +29,10 @@ class AuthService {
     final refresh = data['refresh_token']?.toString() ?? '';
     if (access.isEmpty) throw Exception('登录失败：未返回令牌');
     await ApiClient.saveTokens(access, refresh);
+    // 清掉上一个会话的订阅缓存：进程被强杀/崩溃（未走 logout）后换号登录时，
+    // 冷启动的 loadCachedNodes() 只校验版本、不校验账号，会把**上一个账号**
+    // 的节点先塞进连接器。订阅是准入闸门的执行者，绝不能串号。
+    SubscriptionService.instance.clearCache();
     // 立即判定到期/超限/禁用（禁止账号后端在登录接口即拦截，不会走到这里）
     try {
       await AccountService.instance.refresh(force: true);

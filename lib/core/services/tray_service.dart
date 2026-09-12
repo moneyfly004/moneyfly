@@ -141,18 +141,22 @@ class TrayService with TrayListener {
     }
     switch (key) {
       case 'toggle':
-        // 状态守卫(与首页 _toggleConnect 一致):断开/连接中/重连等瞬态
-        // 期间不允许启停交错 —— 否则旧内核 stop 的 /shutdown 可能误关
-        // 刚就绪的新内核
+        // 状态守卫(与首页 _toggleConnect 一致):断开中不允许再启停交错 ——
+        // 否则旧内核 stop 的 /shutdown 可能误关刚就绪的新内核。
+        // 但「连接中/重连中」从托盘点按应当**取消**（等同首页的「取消连接」）：
+        // 旧实现在这些状态静默 return，用户从托盘根本停不下来，观感就是
+        // 「明明点了关，它又自己连上了」。
         final s = ctrl.status;
-        if (s == ConnStatus.disconnecting ||
-            s == ConnStatus.connecting ||
-            s == ConnStatus.testing ||
-            s == ConnStatus.reconnecting ||
-            ctrl.switchingMode) {
+        if (s == ConnStatus.disconnecting || ctrl.switchingMode) {
           return;
         }
-        if (ctrl.status == ConnStatus.connected) {
+        if (s == ConnStatus.connecting ||
+            s == ConnStatus.testing ||
+            s == ConnStatus.reconnecting) {
+          unawaitedSafe(ctrl.disconnect());
+          return;
+        }
+        if (s == ConnStatus.connected) {
           unawaitedSafe(ctrl.disconnect());
         } else {
           unawaitedSafe(ctrl.connect());

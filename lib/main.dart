@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/api/api_client.dart';
 import 'core/proxy/proxy_core.dart';
+import 'core/proxy/proxy_core_cli.dart';
 import 'core/services/account_service.dart';
 import 'core/services/app_data_cleaner.dart';
 import 'core/services/auth_service.dart';
@@ -99,6 +101,24 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
       !Platform.environment.containsKey('FLUTTER_TEST') &&
       (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
+  /// 桌面：系统注销/关机的生命周期通道。
+  /// Windows runner 在 WM_QUERYENDSESSION/WM_ENDSESSION、macOS runner 在
+  /// applicationShouldTerminate 时通过它通知，给最后一次清理机会。
+  static const _lifecycleChannel = MethodChannel('top.moneyfly/lifecycle');
+
+  /// 注销/关机前的最后清理：只做最必要的两件事，且带短超时 —— 系统不会等太久。
+  /// 用 `restore()`（本进程内 `_applied` 为 true，能精确还原用户原代理），
+  /// 与启动巡检的 `clearResidual()` 不同：后者是给「已经死掉的进程」兜底的。
+  Future<void> _cleanupBeforeSystemExit() async {
+    try {
+      await SystemProxyManager.restore().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    try {
+      await ProxyCoreCli.killStaleKernels()
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
@@ -112,6 +132,16 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
         },
         quit: _quitApp,
       );
+      // 系统注销/关机钩子：不做的话关机时系统代理会留在 127.0.0.1:<port>
+      // 指向已经死掉的端口 → 重启后整机断网，用户只能靠重新打开本 App
+      // 触发启动巡检才恢复。
+      _lifecycleChannel.setMethodCallHandler((call) async {
+        if (call.method == 'systemShutdown') {
+          await _cleanupBeforeSystemExit();
+          return true;
+        }
+        return null;
+      });
     }
     // 登录态变化 → 启停「定时更新订阅」（登录后每 30 分钟静默拉订阅覆盖旧配置，
     // 登出/会话失效即停）
@@ -132,22 +162,36 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     CrashLogger.init();
     // 本地通知初始化（到期提醒 / 连接异常）
     LocalNotify.instance.init();
-    // 启动巡检(桌面):上次异常退出可能残留系统代理指向死端口 → 还原
+    // 启动巡检(桌面):上次异常退出（强杀/注销/关机）可能残留系统代理指向死端口
+    // → 直接枚举系统当前状态清掉（不能走 restore()：新进程里 _applied/_original
+    // 恒为空，restore 会直接 return 什么都不做，导致整机断网却无法自愈）
     if (Platform.isMacOS || Platform.isWindows) {
       unawaited(() async {
         try {
           final s = await SettingsStore.instance.load();
           final port =
               (s['localPort'] as num?)?.toInt() ?? SystemProxyManager.defaultPort;
-          if (await SystemProxyManager.pointsToLocal(port)) {
-            await SystemProxyManager.restore();
-            AppLog.log('APP', 'startup: restored stale system proxy (port $port)');
-          }
+          await SystemProxyManager.clearResidual(port: port);
+        } catch (_) {}
+        // 同时清扫上次残留的内核进程：占着 2080/9090 与 cache.db 锁会让
+        // 之后每次连接都 bind 失败（表现为「退出后重开连不上」）
+        try {
+          await ProxyCoreCli.killStaleKernels();
         } catch (_) {}
       }());
     }
     // 网络变化监听（WiFi↔蜂窝切换自动重连）
     NetworkMonitor.instance.start();
+    // 桌面：接管 SIGTERM/SIGINT（注销、kill、终端 Ctrl+C）→ 也走正常退出清理。
+    // 否则进程被直接结束，系统代理会残留指向死端口（下次启动虽有巡检兜底，
+    // 但用户在那之前是完全断网的状态）。
+    if (Platform.isMacOS || Platform.isLinux) {
+      for (final sig in [ProcessSignal.sigterm, ProcessSignal.sigint]) {
+        try {
+          sig.watch().listen((_) => unawaited(_quitApp()));
+        } catch (_) {}
+      }
+    }
     // 会话失效（refresh 失败）→ 清空路由栈强制回登录页
     // （push 在栈上的设置/订单等页面会残留盖住登录页，需先 pop 到根）
     ApiClient.instance.onSessionExpired(() {
@@ -181,6 +225,14 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
         await c.disconnect();
       }
     } catch (_) {}
+    // 兜底清扫内核子进程：disconnect 在「状态已是 disconnected」时会被跳过
+    // （例如内核崩溃后自动重连耗尽），此时内核可能仍在跑 → 残留占端口/缓存锁，
+    // 也会让系统代理指向一个已死进程。这里无条件再扫一遍。
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      try {
+        await ProxyCoreCli.killStaleKernels();
+      } catch (_) {}
+    }
     try {
       await windowManager.setPreventClose(false);
       await windowManager.close();

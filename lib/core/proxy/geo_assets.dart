@@ -161,22 +161,33 @@ class GeoAssets {
           continue;
         }
         try {
-          await target.writeAsBytes(data, flush: true);
+          // 原子替换：先写 .tmp 再 rename。直接覆盖最终文件名时，断电/被强杀
+          // 会留下截断的 geosite.dat / country.mmdb；而跳过判定只看
+          // `length() > 0`，这个坏文件会被之后每次启动「幂等跳过」，
+          // materialize 反而返回 true → 不再降级 GEOSITE/GEOIP 规则 → 内核读到
+          // 坏 geo 数据、智能分流静默失效（配置里 geo-auto-update:false，
+          // 内核也不会自救）。
+          final tmp = File('${target.path}.tmp');
+          await tmp.writeAsBytes(data, flush: true);
+          await tmp.rename(target.path);
         } catch (e) {
           AppLog.error('GeoAssets 写入 $file 失败: $e');
           ok = false;
         }
       }
-      // 记录同步状态
-      try {
-        await File('${dir.path}/.geo_app_ver')
-            .writeAsString(UpdateInfo.currentVersion);
-      } catch (_) {}
-      if (manualAt != null) {
+      // 只有**全部成功**才记录版本/时间戳（旧实现在 ok==false 时也无条件写
+      // .geo_app_ver，等于把一次失败「盖章」成已同步）。
+      if (ok) {
         try {
-          await File('${dir.path}/.geo_synced')
-              .writeAsString(manualAt.toIso8601String());
+          await File('${dir.path}/.geo_app_ver')
+              .writeAsString(UpdateInfo.currentVersion);
         } catch (_) {}
+        if (manualAt != null) {
+          try {
+            await File('${dir.path}/.geo_synced')
+                .writeAsString(manualAt.toIso8601String());
+          } catch (_) {}
+        }
       }
       return ok;
     } catch (e) {

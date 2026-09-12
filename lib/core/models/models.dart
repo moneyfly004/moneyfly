@@ -136,10 +136,13 @@ class SubscriptionInfo {
   }
 
   /// 订阅真正生效（启用 + 状态 active + 未过期 + 有订阅地址）
+  /// status 比较不区分大小写：后端若把 `active` 写成 `Active`/`ACTIVE`，
+  /// 旧实现会判为「未生效」→ 走 _dropAllCaches() 清空订阅缓存，用户表现为
+  /// 「订阅突然全没了」。
   bool get hasSubscription =>
       subscribeUrl.isNotEmpty &&
       isActive &&
-      (status.isEmpty || status == 'active') &&
+      (status.isEmpty || status.toLowerCase() == 'active') &&
       !isExpired;
 }
 

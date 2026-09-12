@@ -245,8 +245,12 @@ class MoneyFlyVpnService : VpnService() {
         try {
             when (mode) {
                 "selected" -> {
-                    // 仅勾选应用走代理；本应用始终放行（控制通道/登录 API）
-                    (apps + packageName).forEach { builder.addAllowedApplication(it) }
+                    // 仅勾选应用走代理；**本应用自身必须排除**（直连控制通道/登录 API）。
+                    // 注意 addAllowedApplication 的语义是「该应用流量进入隧道」——
+                    // 把 packageName 加进去会让进程内内核（gomobile 库、同 uid、
+                    // 无 socket protect 回调）拨号到代理服务器的流量再次被 TUN
+                    // 捕获 → 再匹配 MATCH,select → 自代理循环（整条链路无流量）。
+                    (apps - packageName).forEach { builder.addAllowedApplication(it) }
                 }
                 "denied" -> {
                     // 排除勾选应用；本应用自身也排除（直连控制通道）

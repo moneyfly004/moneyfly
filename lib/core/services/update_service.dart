@@ -90,18 +90,17 @@ class UpdateService {
       final version = tag.startsWith('v') ? tag.substring(1) : tag;
       if (version.isEmpty) return null;
 
-      // 按平台匹配资产
+      // 按平台匹配资产（同时取回被选中资产的体积，保证展示与实际下载一致）
       final assets = (data['assets'] as List? ?? const [])
           .whereType<Map>()
           .toList();
-      final url = await _pickAssetUrl(assets);
-      final sizeText = _sizeText(assets);
-      if (url == null) return null;
+      final picked = await _pickAsset(assets);
+      if (picked == null) return null;
 
       _cacheInfo = UpdateInfo(
         latestVersion: version,
-        downloadUrl: url,
-        sizeText: sizeText,
+        downloadUrl: picked.url,
+        sizeText: _sizeText(picked.size),
       );
       _cacheAt = DateTime.now();
       hasUpdate.value = _cacheInfo!.isNewer;
@@ -112,36 +111,49 @@ class UpdateService {
   }
 
   /// 选择本平台安装包资产(macOS 按真实架构选 arm64/x64 dmg,避免 Intel 拿到 arm64)
-  static Future<String?> _pickAssetUrl(List<Map> assets) async {
-    final names = assets
-        .map((a) => (a['name']?.toString() ?? '', a['browser_download_url']?.toString() ?? ''))
+  static Future<({String url, int size})?> _pickAsset(List<Map> assets) async {
+    final entries = assets
+        .map((a) => (
+              name: a['name']?.toString() ?? '',
+              url: a['browser_download_url']?.toString() ?? '',
+              size: (a['size'] as num?)?.toInt() ?? 0,
+            ))
         .toList();
-    String prefix;
     if (kIsWeb) return null;
+    // 本平台的**可接受前缀集合**：兜底也只在集合内挑，避免把 Android APK
+    // 或另一架构的包发给当前平台（旧兜底是「名字含 MoneyFly- 就用」）。
+    final List<String> prefixes;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         // 主流机型 arm64-v8a(个别老 32 位机型请手动装对应 APK)
-        prefix = 'MoneyFly-android-arm64-v8a-';
+        prefixes = const ['MoneyFly-android-arm64-v8a-'];
         break;
       case TargetPlatform.iOS:
         return null;
       case TargetPlatform.macOS:
-        prefix = await _isMacIntel()
-            ? 'MoneyFly-macos-x64-'
-            : 'MoneyFly-macos-arm64-';
+        prefixes = await _isMacIntel()
+            ? const ['MoneyFly-macos-x64-']
+            : const ['MoneyFly-macos-arm64-'];
         break;
       case TargetPlatform.windows:
-        prefix = 'MoneyFly-setup-';
+        prefixes = const ['MoneyFly-setup-'];
         break;
       default:
-        prefix = '';
+        return null; // 未知平台：宁可不提示更新，也不给错包
     }
-    for (final (n, u) in names) {
-      if (n.startsWith(prefix) && u.isNotEmpty) return u;
+    for (final p in prefixes) {
+      for (final e in entries) {
+        if (e.name.startsWith(p) && e.url.isNotEmpty) {
+          return (url: e.url, size: e.size);
+        }
+      }
     }
-    // 兜底：任意本平台资产
-    for (final (n, u) in names) {
-      if (u.isNotEmpty && n.contains('MoneyFly-')) return u;
+    // 宽松兜底仍限定在同平台前缀内（例如版本号命名变化导致前缀不完全匹配）
+    final platTag = prefixes.first.replaceAll(RegExp(r'(x64|arm64|arm64-v8a|ia32)-$'), '');
+    for (final e in entries) {
+      if (e.url.isNotEmpty && e.name.startsWith(platTag)) {
+        return (url: e.url, size: e.size);
+      }
     }
     return null;
   }
@@ -156,15 +168,10 @@ class UpdateService {
     }
   }
 
-  static String? _sizeText(List<Map> assets) {
-    for (final a in assets) {
-      final size = (a['size'] as num?)?.toInt() ?? 0;
-      if (size > 0) {
-        if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GB';
-        if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(0)} MB';
-        return '${(size / 1024).toStringAsFixed(0)} KB';
-      }
-    }
-    return null;
+  static String? _sizeText(int size) {
+    if (size <= 0) return null;
+    if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GB';
+    if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(0)} MB';
+    return '${(size / 1024).toStringAsFixed(0)} KB';
   }
 }

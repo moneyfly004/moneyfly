@@ -2,6 +2,14 @@ import 'dart:io';
 
 import '../models/models.dart';
 
+/// 延迟结果是否可信（本地 TCP 测速与内核 delay 共用同一口径）。
+///
+/// 只判 `ms >= 0` 不够：
+/// - `ms == 0` 通常来自被劫持/污染的探测（明文 204 被中间设备直接应答），
+///   却会被当成「极快」排到最优；
+/// - 接近/超过探测超时的值（>= 5000ms）实际等同失败，不应参与自动选优。
+bool mfLatencyUsable(int ms) => ms > 0 && ms <= 5000;
+
 /// 本地测速：并发 TCP 连接计时（3 次取中位数）
 /// 纯 Dart（仅 dart:io + models），可独立运行与单元测试
 class SpeedTester {
@@ -56,7 +64,7 @@ class SpeedTester {
         final ms = udp ? -1 : await testOne(n);
         n.latencyMs = ms;
         // UDP 协议裸 TCP 测不了，保持「在线但延迟未知」，等连接后内核实测
-        n.online = udp ? true : ms >= 0;
+        n.online = udp ? true : mfLatencyUsable(ms);
         done++;
         onProgress?.call(done, result.length);
         onEach?.call(n.tag, ms, n.online);

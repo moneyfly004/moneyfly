@@ -1,5 +1,9 @@
 #include "flutter_window.h"
 
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+
+#include <memory>
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -65,7 +69,25 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    // 系统注销 / 关机：给 Dart 侧最后一次清理机会（恢复系统代理 + 停内核）。
+    // 不接管的话，系统代理会留在 127.0.0.1:<port> 指向已经死掉的端口 →
+    // 重启后整机断网，用户只能重新打开本 App 靠启动巡检恢复。
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION:
+      NotifySystemShutdown();
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+void FlutterWindow::NotifySystemShutdown() noexcept {
+  if (!flutter_controller_ || !flutter_controller_->engine()) {
+    return;
+  }
+  // 只通知、不等待：Dart 侧收到后做有时限的清理（见 _cleanupBeforeSystemExit）。
+  flutter::MethodChannel<flutter::EncodableValue> channel(
+      flutter_controller_->engine()->messenger(), "top.moneyfly/lifecycle",
+      &flutter::StandardMethodCodec::GetInstance());
+  channel.InvokeMethod("systemShutdown", std::make_unique<flutter::EncodableValue>());
 }

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../services/app_log.dart';
+import '../services/settings_store.dart';
 
 /// 系统代理管理器（macOS / Windows / Android）
 ///
@@ -82,6 +83,96 @@ class SystemProxyManager {
     }
   }
 
+  /// 启动巡检：清理「上次异常退出（强杀 / 注销 / 关机）残留」的系统代理。
+  ///
+  /// 与 [restore] 的本质区别：**不依赖进程内的 `_applied` / `_original`**。
+  /// 新进程里两者恒为空，用它们做判断会导致「检测到残留却修不回来」——
+  /// 旧实现就是如此：main.dart 先 pointsToLocal 再 restore()，而
+  /// `_restoreNow` 首行 `if (!_applied) return;` 在新进程直接返回、什么都没做，
+  /// 日志却打印「已恢复」。而残留的后果是整机断网（浏览器指向已死端口）。
+  ///
+  /// 这里改为**直接枚举系统当前状态**：凡指向本机残留端口的一律关掉。
+  /// 返回是否真的做了清理（供日志如实记录）。
+  static Future<bool> clearResidual({required int port}) async {
+    if (!_isMacOS && !_isWindows) return false;
+    var fixed = false;
+    try {
+      fixed = _isWindows
+          ? await _clearResidualWindows(port)
+          : await _clearResidualMacOS(port);
+    } catch (e) {
+      AppLog.error('SystemProxyManager.clearResidual 失败: $e');
+    }
+    if (fixed) {
+      // 残留已清 → 同步内存态，避免后续 keepalive 再把它拉起来
+      _applied = false;
+      _captured = false;
+      _original.clear();
+      AppLog.log('APP', 'startup: cleared residual system proxy (port $port)');
+    }
+    return fixed;
+  }
+
+  /// Windows 残留清扫：ProxyEnable=1 且 ProxyServer 指向本机端口 → 关掉并清值。
+  ///
+  /// 不尝试「还原用户原值」：原值存在已死亡的进程内存里，无法得知；
+  /// 而把 ProxyEnable 置 0 + 删除我们写入的 ProxyServer/ProxyOverride
+  /// 等于回到系统默认（不使用代理），是唯一可确定安全的修复。
+  static Future<bool> _clearResidualWindows(int port) async {
+    final enable = await Process.run(
+        'reg', ['query', _winReg, '/v', 'ProxyEnable'], runInShell: true);
+    if (enable.exitCode != 0 || !(enable.stdout as String).contains('0x1')) {
+      return false;
+    }
+    final server = await Process.run(
+        'reg', ['query', _winReg, '/v', 'ProxyServer'], runInShell: true);
+    if (server.exitCode != 0) return false;
+    final line = (server.stdout as String)
+        .split('\n')
+        .firstWhere((l) => l.contains('ProxyServer'), orElse: () => '');
+    if (!line.contains('127.0.0.1:$port')) return false;
+    await Future.wait([
+      Process.run('reg',
+          ['add', _winReg, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0',
+              '/f'],
+          runInShell: true),
+      Process.run('reg', ['delete', _winReg, '/v', 'ProxyServer', '/f'],
+          runInShell: true),
+      Process.run('reg', ['delete', _winReg, '/v', 'ProxyOverride', '/f'],
+          runInShell: true),
+    ]);
+    await _notifyWinInetChanged();
+    return true;
+  }
+
+  /// macOS 残留清扫：枚举**全部**网络服务（不能只查 `_original.keys`——
+  /// 新进程里它是空的），凡 web/secureweb/socks 里存在「Enabled 且指向
+  /// 127.0.0.1:port」的就关掉。读操作并行、写操作串行（networksetup 写走
+  /// 系统配置数据库全局锁，并发会丢写）。
+  static Future<bool> _clearResidualMacOS(int port) async {
+    final services = await _macServices();
+    if (services.isEmpty) return false;
+    const kinds = ['web', 'secureweb', 'socksfirewall'];
+    final hits = <({String svc, String kind})>[];
+    await Future.wait([
+      for (final svc in services)
+        for (final kind in kinds)
+          Process.run('networksetup', ['-get${kind}proxy', svc]).then((r) {
+            if (r.exitCode != 0) return;
+            if (_isSelfResidual((r.stdout as String).trim(), port)) {
+              hits.add((svc: svc, kind: kind));
+            }
+          }).catchError((_) {}),
+    ]);
+    if (hits.isEmpty) return false;
+    for (final h in hits) {
+      await Process.run(
+          'networksetup', ['-set${h.kind}proxystate', h.svc, 'off']);
+      AppLog.log('APP', 'clear residual: ${h.svc}/${h.kind} -> off');
+    }
+    return true;
+  }
+
   static Future<void> ensureApplied({int port = defaultPort}) async {
     await _withLock(() async {
       if (!_applied || _port != port) {
@@ -105,17 +196,62 @@ class SystemProxyManager {
   static Future<void> _applyNow(int port, {bool reassert = false}) async {
     if (!reassert && _applied && _port == port) return;
     _port = port;
+    // 绕过列表随设置动态构造（回环 + 内网 + 用户直连名单），
+    // 传入各平台的写入实现
+    final bypass = await _bypassFromSettings();
     try {
       if (_isMacOS) {
-        await _applyMacOS(port);
+        await _applyMacOS(port, bypass);
       } else if (_isWindows) {
-        await _applyWindows(port);
+        await _applyWindows(port, bypass);
         await _notifyWinInetChanged();
       }
       // Android：TUN 接管流量，无需系统代理
       _applied = true;
     } catch (e) {
       AppLog.error('SystemProxyManager.apply 失败: $e');
+    }
+  }
+
+  /// 平台无关的「绕过列表」构造：本机回环 + （可选）内网段 + 用户直连名单。
+  ///
+  /// 旧实现 Windows 只写一个 `<local>`、macOS **完全不设** bypass domains，
+  /// 于是 localhost / 局域网 / 本地控制端口都可能被塞进代理（内核没起来时
+  /// 连本机服务都访问不了）。
+  static List<String> _buildBypass(List<String> userDomains, bool bypassLan) {
+    final out = <String>['127.0.0.1', 'localhost', '::1'];
+    if (bypassLan) {
+      out.addAll(const [
+        '10.*', '172.16.*', '172.17.*', '172.18.*', '172.19.*', '172.20.*',
+        '172.21.*', '172.22.*', '172.23.*', '172.24.*', '172.25.*', '172.26.*',
+        '172.27.*', '172.28.*', '172.29.*', '172.30.*', '172.31.*',
+        '192.168.*', '*.local',
+      ]);
+    }
+    for (final raw in userDomains) {
+      var v = raw.trim();
+      if (v.isEmpty) continue;
+      // bypassDomains 里带内核规则前缀，系统代理不认识，剥掉再用
+      if (v.startsWith('IP-CIDR:')) {
+        v = v.substring('IP-CIDR:'.length).trim();
+      } else if (v.startsWith('DOMAIN:')) {
+        v = v.substring('DOMAIN:'.length).trim();
+      }
+      if (v.isNotEmpty && !out.contains(v)) out.add(v);
+    }
+    return out;
+  }
+
+  static Future<List<String>> _bypassFromSettings() async {
+    try {
+      final s = await SettingsStore.instance.load();
+      return _buildBypass(
+        (s['bypassDomains'] as List?)?.map((e) => e.toString()).toList() ??
+            const [],
+        s['bypassLan'] != false,
+      );
+    } catch (_) {
+      return _buildBypass(const [], true);
     }
   }
 
@@ -256,7 +392,7 @@ class SystemProxyManager {
   /// 用户机器上常有大量残留虚拟网卡（其他 VPN 软件遗留），串行 networksetup
   /// 会让连接卡 2~3s；并行后降到 ~0.3s。每个 networksetup 调用相互独立，
   /// 并行无副作用。
-  static Future<void> _applyMacOS(int port) async {
+  static Future<void> _applyMacOS(int port, List<String> bypass) async {
     // 1) 首次：筛活跃服务 + 捕获原状态（仅一次）。之后的服务集合固定为
     //    _original.keys —— reassert/restore/探测三者共用，保证一致。
     if (!_captured) {
@@ -269,6 +405,15 @@ class SystemProxyManager {
               if (_isSelfResidual(state, port)) state = 'Enabled: No';
               (_original[svc] ??= <String, String>{})[kind] = state;
             }),
+        // 同时捕获 bypass domains 原值（restore 时还原）。旧实现从不设置
+        // 该值，也就没捕获 —— 结果是 localhost / 内网 / 本地控制端口
+        // 全部被塞进代理，内核未起来时连本机服务都访问不了。
+        for (final svc in active)
+          Process.run('networksetup', ['-getproxybypassdomains', svc])
+              .then((r) {
+            (_original[svc] ??= <String, String>{})['bypass'] =
+                (r.stdout as String).trim();
+          }).catchError((_) {}),
       ]);
       _captured = true;
     }
@@ -282,6 +427,10 @@ class SystemProxyManager {
         await Process.run(
             'networksetup', ['-set${kind}proxy', svc, '127.0.0.1', '$port']);
       }
+      if (bypass.isNotEmpty) {
+        await Process.run(
+            'networksetup', ['-setproxybypassdomains', svc, ...bypass]);
+      }
     }
   }
 
@@ -294,8 +443,27 @@ class SystemProxyManager {
       for (final kind in ['web', 'secureweb', 'socksfirewall']) {
         await _restoreMacOneEntry(svc, kind);
       }
+      await _restoreMacBypass(svc);
     }
     _original.clear();
+  }
+
+  /// 还原 bypass domains：原值为空（本来就没设）时用 `Empty` 清空
+  static Future<void> _restoreMacBypass(String svc) async {
+    final orig = _original[svc] as Map<String, String>?;
+    final prev = (orig?['bypass'] ?? '').trim();
+    final empty = prev.isEmpty || prev.contains("aren't any bypass domains");
+    await Process.run('networksetup', [
+      '-setproxybypassdomains',
+      svc,
+      if (empty)
+        'Empty'
+      else
+        ...prev
+            .split('\n')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty),
+    ]);
   }
 
   /// 恢复单条 macOS 代理（service × kind）到原始状态
@@ -326,7 +494,7 @@ class SystemProxyManager {
   static const _winReg =
       r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings';
 
-  static Future<void> _applyWindows(int port) async {
+  static Future<void> _applyWindows(int port, List<String> bypass) async {
     // 保存原值（仅首次捕获；保活 reassert 时不再覆盖，避免把「我们自己写入的
     // 值」或「被系统关到一半的值」误存为原始配置）。两次 query 并行。
     if (!_captured) {
@@ -360,6 +528,9 @@ class SystemProxyManager {
     }
 
     // 写不同注册表值互不冲突，可并行（注册表有细粒度锁，无 macOS 那种全局写锁）
+    // ProxyOverride 用 Windows 规定的 **分号** 分隔（不是逗号），并包含
+    // <local>（无点号主机名）+ 回环 + 内网 + 用户直连名单。
+    final override = ['<local>', ...bypass].join(';');
     await Future.wait([
       Process.run('reg',
           ['add', _winReg, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '1',
@@ -371,7 +542,7 @@ class SystemProxyManager {
           runInShell: true),
       Process.run('reg',
           ['add', _winReg, '/v', 'ProxyOverride', '/t', 'REG_SZ', '/d',
-              '<local>', '/f'],
+              override, '/f'],
           runInShell: true),
     ]);
   }
@@ -401,19 +572,31 @@ class SystemProxyManager {
   static Future<void> _restoreWinValueOrDelete(String name) async {
     final raw = _original[name] as String?;
     if (raw != null && raw.contains(name)) {
-      final line = raw
-          .split('\n')
-          .firstWhere((l) => l.contains(name), orElse: () => '');
-      final parts = line.trim().split(RegExp(r'\s+'));
-      if (parts.length >= 3) {
+      final value = _extractRegValue(raw, name);
+      if (value != null) {
         await Process.run('reg', ['add', _winReg, '/v', name, '/t', 'REG_SZ',
-            '/d', parts.last, '/f'], runInShell: true);
+            '/d', value, '/f'], runInShell: true);
         return;
       }
     }
     // 原本无此值 → 删除（忽略「值不存在」的报错）
     await Process.run('reg', ['delete', _winReg, '/v', name, '/f'],
         runInShell: true);
+  }
+
+  /// 从 `reg query` 输出里提取值文本。
+  /// 注意不能按空白 split 取末段：ProxyOverride 的值本身可能含空格
+  /// （用户手填过 `localhost; 127.0.0.1`），旧实现会把值截断成尾部一小截，
+  /// 还原后用户的绕过列表就被破坏。
+  static String? _extractRegValue(String raw, String name) {
+    for (final line in raw.split('\n')) {
+      final i = line.indexOf(name);
+      if (i < 0) continue;
+      final rest = line.substring(i + name.length);
+      final m = RegExp(r'\s+REG_[A-Z_]+\s+(.*)$').firstMatch(rest);
+      if (m != null) return m.group(1)!.trim();
+    }
+    return null;
   }
 
   /// 让浏览器/系统立即感知代理注册表变化（仅 Windows；reg.exe 写注册表
