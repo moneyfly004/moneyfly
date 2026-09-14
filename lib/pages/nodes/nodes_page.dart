@@ -120,6 +120,20 @@ class _NodesPageState extends State<NodesPage> {
     }
   }
 
+  /// 当前搜索/筛选命中的节点（与列表展示口径完全一致）。
+  /// 测速按这个子集进行：用户筛完再点测速，只测他正在看的节点。
+  List<ProxyNode> _filterNodes(List<ProxyNode> all) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return List<ProxyNode>.of(all);
+    return all
+        .where((n) =>
+            n.tag.toLowerCase().contains(q) ||
+            n.type.toLowerCase().contains(q) ||
+            (n.countryCode?.toLowerCase().contains(q) ?? false) ||
+            n.regionName.toLowerCase().contains(q))
+        .toList();
+  }
+
   Future<void> _runSpeedTest() async {
     if (_testing) return; // 防并发
     final conn = context.read<ConnectionController>();
@@ -127,41 +141,64 @@ class _NodesPageState extends State<NodesPage> {
       _toast(AppStrings.t('no_nodes'));
       return;
     }
+    // 有搜索/筛选时**只测筛选出的节点**：筛出 5 个就测 5 个，
+    // 不再把上千个没在看的节点一起测一遍（白等且无意义）。
+    final targets = _filterNodes(conn.nodes);
+    if (targets.isEmpty) {
+      _toast(AppStrings.t('no_match_nodes'));
+      return;
+    }
+    final filtered = targets.length != conn.nodes.length;
     setState(() {
       _testing = true;
       _testDone = 0;
-      _testTotal = conn.nodes.length;
+      _testTotal = targets.length;
     });
     try {
-      // 实时测速：retestAll 逐节点回填延迟到 conn.nodes（就地更新）。
-      // 进度回调驱动本页 setState 重建 → 每次重建都按最新延迟重新分组/排序，
-      // 用户看到延迟数字一个个填上、节点在组内实时上浮。
-      // 节流：千节点时每完成一个就 setState 会触发上千次整页重建（含分组/
-      // 排序/拍平）→ 每 ≥120ms 或进度 ≥5% 才刷新一次。
-      var lastTick = DateTime.now();
-      var lastPct = -1.0;
+      // 实时测速：逐节点回填延迟到 conn.nodes（就地更新）。进度回调驱动本页
+      // setState 重建 → 按最新延迟重新分组/排序，用户看到延迟一个个填上、
+      // 节点在组内实时上浮（节流见 _onTestProgress）。
+      if (filtered) {
+        await conn.retestSubset(
+          [for (final n in targets) n.tag],
+          switchToBest: conn.autoTest,
+          onProgress: _onTestProgress,
+        );
+        if (mounted) {
+          _toast(AppStrings.t('speed_done_filtered', {'n': '${targets.length}'}));
+        }
+        return;
+      }
       await conn.retestAll(
         switchToBest: conn.autoTest,
-        onProgress: (done, total) {
-          final pct = total <= 0 ? 1.0 : done / total;
-          final now = DateTime.now();
-          if (pct >= 1.0 ||
-              pct - lastPct >= 0.05 ||
-              now.difference(lastTick).inMilliseconds >= 120) {
-            lastTick = now;
-            lastPct = pct;
-            if (mounted) {
-              setState(() {
-                _testDone = done;
-                _testTotal = total;
-              });
-            }
-          }
-        },
+        onProgress: _onTestProgress,
       );
       if (mounted) _toast(AppStrings.t('speed_done'));
     } finally {
       if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  /// 测速进度节流：千节点时每完成一个就 setState 会触发上千次整页重建
+  /// （含分组/排序/拍平）→ 每 ≥120ms 或进度 ≥5% 才刷新一次。
+  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+  double _lastPct = -1;
+
+  void _onTestProgress(int done, int total) {
+    final pct = total <= 0 ? 1.0 : done / total;
+    final now = DateTime.now();
+    if (pct < 1.0 &&
+        pct - _lastPct < 0.05 &&
+        now.difference(_lastTick).inMilliseconds < 120) {
+      return;
+    }
+    _lastTick = now;
+    _lastPct = pct;
+    if (mounted) {
+      setState(() {
+        _testDone = done;
+        _testTotal = total;
+      });
     }
   }
 
@@ -182,12 +219,7 @@ class _NodesPageState extends State<NodesPage> {
     context.select((ConnectionController c) => (n: c.nodes.length, t: c.current?.tag));
     final conn = context.read<ConnectionController>();
     final q = _query.toLowerCase();
-    final filtered = conn.nodes
-        .where((n) => n.tag.toLowerCase().contains(q) ||
-                      n.type.toLowerCase().contains(q) ||
-                      (n.countryCode?.toLowerCase().contains(q) ?? false) ||
-                      n.regionName.toLowerCase().contains(q))
-        .toList();
+    final filtered = _filterNodes(conn.nodes);
     final groups = <String, List<ProxyNode>>{};
     for (final n in filtered) {
       final key = n.countryCode ?? 'XX';
