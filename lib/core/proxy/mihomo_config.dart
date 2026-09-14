@@ -14,6 +14,9 @@ import '../models/models.dart';
 /// - 模式/节点热切换全部走 Clash API（external-controller），
 ///   切节点时 select 组管智能模式、GLOBAL 组管全局模式。
 class MihomoConfigBuilder {
+  /// UDP + TLS（QUIC/自定义 TLS）协议：证书校验放宽的适用类型
+  static const _udpTlsTypes = {'hysteria', 'hysteria2', 'tuic'};
+
   MihomoConfigBuilder._();
 
   static String generateSecret() {
@@ -55,6 +58,10 @@ class MihomoConfigBuilder {
     List<String> dnsNameservers = const [],
     /// 追加到 fake-ip-filter 的域名/通配（如 `*.lan`；仅 fake-ip 生效时写入）
     List<String> fakeIpFilterExtra = const [],
+    /// UDP+TLS 协议（hysteria/hysteria2/tuic）是否放宽证书校验（默认 true）。
+    /// 这些协议的链接普遍使用伪装 SNI + 不匹配证书，开启校验必然握手失败；
+    /// 见下方写入 `skip-cert-verify` 处的实测说明。
+    bool udpSkipCertVerify = true,
     /// TUN 是否由内核自己建接口/推路由（桌面 true；Android false —— 路由由
     /// 原生 VpnService 全量下发，非 root 不改路由表）。由调用方按平台传入，
     /// 生成器保持纯函数、便于测试。
@@ -126,6 +133,21 @@ class MihomoConfigBuilder {
       }
       if (n.flow != null && n.flow!.isNotEmpty && m['flow'] == null) {
         m['flow'] = n.flow;
+      }
+      // UDP + TLS 协议（hysteria / hysteria2 / tuic）的证书校验放宽。
+      //
+      // 实测（mihomo v1.19.30 + 本地内核实测某机场 17 个 hy2 节点）：
+      // 链接里写 `insecure=0`（要求校验证书）时 **17/17 全部握手失败**，
+      // 同一批节点改成不校验则 16/17 成功。原因是这类节点用「伪装 SNI」
+      // （如 sni=api.push.apple.com），服务端证书根本不可能匹配该域名 ——
+      // 只要校验就必然失败，而面板导出的链接又几乎都留着 insecure=0。
+      // 结果是：节点能解析、能被内核加载，但一测速/一连接就失败，
+      // 用户看到的是「这些节点测不了速」。
+      //
+      // 这里对这三种协议默认放宽（可在设置里关掉）；链接显式要求不校验时
+      // 同样成立，节点自己写了 skip-cert-verify 则尊重订阅原值。
+      if (udpSkipCertVerify && _udpTlsTypes.contains(n.type)) {
+        m.putIfAbsent('skip-cert-verify', () => true);
       }
       proxies.add(m);
     }
