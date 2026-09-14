@@ -464,7 +464,10 @@ jobs:
           codesign --force -s - \
             --entitlements ios/Runner/Runner.entitlements \
             Payload/Runner.app
-          (cd Payload && zip -qry "../dist/MoneyFly-ios-$V.ipa" Runner.app)
+          # 必须在 Payload 的**父目录**打包，让压缩包根目录就是 Payload/
+          # （IPA 规范要求 Payload/<app>；cd 进 Payload 再 zip 出来的包根是
+          #  Runner.app，不是合法 IPA，安装器/校验会直接拒绝）
+          zip -qry "dist/MoneyFly-ios-$V.ipa" Payload
           (cd dist && shasum -a 256 "MoneyFly-ios-$V.ipa" > SHA256SUMS-ios.txt && ls -lh)
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
@@ -472,11 +475,16 @@ jobs:
         run: |
           set -e
           IPA=$(ls dist/MoneyFly-ios-*.ipa)
+          # 1) IPA 规范：压缩包顶层必须是 Payload/
+          unzip -l "$IPA" | awk '{print $4}' | grep -q "^Payload/Runner.app/$" \
+            || { echo "error: IPA 顶层目录不是 Payload/（不是合法 IPA）"; unzip -l "$IPA" | head; exit 1; }
+          # 2) 扩展可执行文件在包里
           unzip -l "$IPA" | grep -q "Payload/Runner.app/PlugIns/PacketTunnel.appex/PacketTunnel" \
             || { echo "error: IPA 里没有扩展可执行文件"; exit 1; }
           unzip -l "$IPA" | grep -q "PacketTunnel.appex/geosite.dat" \
             || echo "warning: 扩展内缺少 geosite.dat（分流规则会降级）"
-          codesign -d --entitlements - Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
+          # 新版 macOS 要求 `--entitlements :-`（旧的 `-` 已弃用/输出不同）
+          codesign -d --entitlements :- Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
             | grep -q "packet-tunnel-provider" \
             || { echo "error: 扩展未携带 packet-tunnel-provider entitlement（装上后隧道不可用）"; exit 1; }
           echo "✓ IPA 结构校验通过：$IPA"
