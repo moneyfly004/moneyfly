@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/models.dart';
 
 /// 延迟结果是否可信（本地 TCP 测速与内核 delay 共用同一口径）。
@@ -21,10 +23,18 @@ class SpeedTester {
   static const _probeCount = 3;
   static const _maxConcurrent = 12;
 
+  /// 单元测试注入点：非空时替代真实 TCP 探测，让「测速范围」这类逻辑
+  /// 能在无网络、跨平台条件下确定性验证（真实探测在 Windows CI 上会因
+  /// 防火墙静默丢包而跑到 5s 超时，测试会误判成「没测」）。生产恒为 null。
+  @visibleForTesting
+  static Future<int> Function(ProxyNode node)? debugProbeOverride;
+
   /// 测单个节点延迟（ms），失败返回 -1。
   /// UDP-only 协议（hysteria/hysteria2/tuic/wireguard）无 TCP 监听，
   /// 裸 TCP 探测必然失败，直接返回 -1（调用方不应据此判离线，见 testAll）。
   Future<int> testOne(ProxyNode node) async {
+    final override = debugProbeOverride;
+    if (override != null) return override(node);
     if (node.isUdpOnly) return -1;
     final samples = <int>[];
     for (var i = 0; i < _probeCount; i++) {
