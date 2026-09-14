@@ -450,7 +450,16 @@ jobs:
         run: |
           # 用生成脚本重建一遍并与提交内容比对：不一致说明图标被改回默认模板
           # 或未随画稿更新（脚本内含与 Android 的像素一致性自检）
-          python3 -m pip install --quiet pillow
+          # Pillow 在 macOS runner 上受 PEP 668 保护，装不上就跳过本步校验
+          # （绝不能因为「装不上依赖」把构建判失败 —— 已踩过一次）
+          if ! python3 -c "import PIL" 2>/dev/null; then
+            python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null \
+              || python3 -m pip install --quiet --user pillow 2>/dev/null || true
+          fi
+          if ! python3 -c "import PIL" 2>/dev/null; then
+            echo "warning: 无 Pillow，跳过仓库级图标像素校验（IPA 内仍有尺寸断言）"
+            exit 0
+          fi
           python3 tool/gen_ios_icons.py
           # 与提交版本做**像素**比对（不比字节：Pillow/zlib 版本差异会改变
           # PNG 编码字节，但不是问题；像素不同才是真问题——例如被改回默认模板）
