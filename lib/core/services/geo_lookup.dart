@@ -33,6 +33,21 @@ class GeoLookupService {
   DateTime _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _cacheTtl = Duration(minutes: 10);
 
+  /// 最近一次定位失败时各源的错误摘要（供上层区分「节点不可用」与「目标侧问题」）
+  String lastFailureDetail = '';
+
+  /// 把异常压成一句可读的中文原因（日志/UI 展示用，避免整段 DioException 堆栈）
+  static String _brief(Object e) {
+    final s = e.toString();
+    if (s.contains('HandshakeException')) return 'TLS 握手被中断';
+    if (s.contains('Connection terminated')) return '连接被中断';
+    if (s.contains('timeout') || s.contains('Timeout')) return '超时';
+    if (s.contains('Connection refused')) return '连接被拒绝';
+    if (s.contains('SocketException')) return '网络不可达';
+    final i = s.indexOf('Error: ');
+    return i >= 0 ? s.substring(i + 7, (i + 67).clamp(0, s.length)) : s;
+  }
+
   /// 走隧道查询真实出口国家码；失败返回 null（不阻塞连接流程）。
   /// [force] 切换节点/国家、重新连接后出口 IP 已变，须强制重查绕过 TTL 缓存
   /// —— 否则 10 分钟内一直返回旧国家，表现为「切了国家真实出口不变」。
@@ -50,11 +65,12 @@ class GeoLookupService {
       port = (s['localPort'] as num?)?.toInt() ?? defaultPort;
     } catch (_) {}
     Dio? dio;
+    final errors = <String>[];
     try {
       dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 6),
-        headers: {'Accept': 'application/json'},
+        receiveTimeout: const Duration(seconds: 5),
+        headers: {'Accept': 'application/json', 'User-Agent': 'MoneyFly'},
       ));
       // 显式走本地混合代理（App 自身请求默认不走系统代理）
       dio.httpClientAdapter = IOHttpClientAdapter(
@@ -70,45 +86,70 @@ class GeoLookupService {
       // ip-api.com 免费额度是按「来源 IP」限 45 次/分钟，而这里的查询走隧道、
       // 来源是出口节点 IP —— 同节点全部用户共享配额，上量后必然 429 全挂。
       // Cloudflare 无此问题，故为主源；ip-api / ipinfo 降为备用。
-      try {
-        final r0 = await dio.get<String>(
-          'https://www.cloudflare.com/cdn-cgi/trace',
-          options: Options(responseType: ResponseType.plain),
-        );
-        final body = r0.data ?? '';
-        final m = RegExp(r'^loc=([A-Za-z]{2})$', multiLine: true).firstMatch(body);
-        final loc = m?.group(1)?.toUpperCase();
-        // Cloudflare 定位不到时返回 loc=XX，视为无效落到备用源
-        if (loc != null && loc != 'XX') {
-          _cachedCode = loc;
-          _cachedAt = DateTime.now();
-          return _cachedCode;
+      for (var i = 0; i < 2; i++) {
+        try {
+          final r0 = await dio.get<String>(
+            'https://www.cloudflare.com/cdn-cgi/trace',
+            options: Options(responseType: ResponseType.plain),
+          );
+          final body = r0.data ?? '';
+          final m =
+              RegExp(r'^loc=([A-Za-z]{2})$', multiLine: true).firstMatch(body);
+          final loc = m?.group(1)?.toUpperCase();
+          // Cloudflare 定位不到时返回 loc=XX，视为无效落到备用源
+          if (loc != null && loc != 'XX') {
+            _cachedCode = loc;
+            _cachedAt = DateTime.now();
+            lastFailureDetail = '';
+            return _cachedCode;
+          }
+          errors.add('cloudflare: 无有效 loc');
+          break;
+        } catch (e) {
+          errors.add('cloudflare: ${_brief(e)}');
+          // 隧道刚建立时首个外呼常因链路未就绪失败，短重试一次再换源
+          if (i == 0) await Future.delayed(const Duration(milliseconds: 800));
         }
-      } catch (_) {}
-      // 备 1：ip-api.com（免费无需 key，按出口 IP 限 45/min）
+      }
+      // 备 1：ip-api.com（免费无需 key，按出口 IP 限 45/min；http 免握手，最省）
       try {
         final r = await dio.get('http://ip-api.com/json?fields=countryCode,country');
         final d = r.data;
         if (d is Map && d['status'] == 'success' && d['countryCode'] != null) {
           _cachedCode = d['countryCode'].toString().toUpperCase();
           _cachedAt = DateTime.now();
+          lastFailureDetail = '';
           return _cachedCode;
         }
-      } catch (_) {}
-      // 备 2：ipinfo.io
-      final r2 = await dio.get('https://ipinfo.io/json');
-      final d2 = r2.data;
-      if (d2 is Map && d2['country'] != null) {
-        _cachedCode = d2['country'].toString().toUpperCase();
-        _cachedAt = DateTime.now();
-        return _cachedCode;
+        errors.add('ip-api: 返回异常');
+      } catch (e) {
+        errors.add('ip-api: ${_brief(e)}');
+      }
+      // 备 2：ipinfo.io（同样必须逐源捕获 —— 原先它没包 try/catch，
+      // 其 TLS 异常会一路冒到外层，被记成一句含糊的「lookupViaProxy 失败」，
+      // 掩盖了「三个源都挂了」这个真正的事实）
+      try {
+        final r2 = await dio.get('https://ipinfo.io/json');
+        final d2 = r2.data;
+        if (d2 is Map && d2['country'] != null) {
+          _cachedCode = d2['country'].toString().toUpperCase();
+          _cachedAt = DateTime.now();
+          lastFailureDetail = '';
+          return _cachedCode;
+        }
+        errors.add('ipinfo: 返回异常');
+      } catch (e) {
+        errors.add('ipinfo: ${_brief(e)}');
       }
     } catch (e) {
-      // 定位失败不影响连接，但记录便于排查「真实出口一直检测失败」
-      AppLog.error('lookupViaProxy 失败: $e');
+      errors.add('其它: ${_brief(e)}');
     } finally {
       dio?.close(force: true);
     }
+    // 三个源全部失败：**不在此处打 ERROR**（出口定位是辅助功能，失败不等于连接
+    // 失败；由调用方结合节点测速结果判定，避免日志里出现误导性的红色错误）
+    lastFailureDetail = errors.join(' | ');
+    AppLog.log('GEO', '出口定位失败（$lastFailureDetail）');
     return null;
   }
 }
