@@ -487,30 +487,39 @@ jobs:
           codesign -d --entitlements :- Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
             | grep -q "packet-tunnel-provider" \
             || { echo "error: 扩展未携带 packet-tunnel-provider entitlement（装上后隧道不可用）"; exit 1; }
-          # 应用图标：必须不是 Flutter 默认图标（白底），且无 alpha 通道。
-          # 纯解析 PNG 头（IHDR）判定，零依赖：
-          #   bytes 16-19/20-23 = 宽/高；byte 25 = color type（2=truecolor 无 alpha，6=带 alpha）
+          # 应用图标校验：断言尺寸正确且**无 alpha**。
+          # 关键：包内图标是 Apple 优化的 PNG —— 8 字节签名后紧跟 CgBI 块，
+          # IHDR 从偏移 24 开始（标准 PNG 是 8）。按标准偏移读会得到垃圾值
+          # （曾因此读出 1342185478x750286694 并「假通过」）。
           python3 - <<'PYEOF'
-          import struct, subprocess, sys, zipfile
-          ipa = [p for p in __import__('glob').glob('dist/MoneyFly-ios-*.ipa')][0]
+          import glob, struct, sys, zipfile
+          ipa = glob.glob('dist/MoneyFly-ios-*.ipa')[0]
           z = zipfile.ZipFile(ipa)
           names = sorted(n for n in z.namelist() if 'AppIcon' in n and n.endswith('.png'))
           if not names:
               sys.exit('error: IPA 内未找到 AppIcon（图标未打包）')
+          expect = {'AppIcon60x60@2x.png': (120, 120), 'AppIcon76x76@2x~ipad.png': (152, 152)}
           bad = []
           for n in names:
-              head = z.open(n).read(26)
+              head = z.open(n).read(64)
               if head[:8] != b'\x89PNG\r\n\x1a\n':
                   bad.append(f'{n}: 不是 PNG'); continue
-              w, h = struct.unpack('>II', head[16:24])
-              ctype = head[25]
-              corner = None
+              off = 24 if head[12:16] == b'CgBI' else 8
+              if head[off + 4:off + 8] != b'IHDR':
+                  bad.append(f'{n}: 未找到 IHDR'); continue
+              w, h = struct.unpack('>II', head[off + 8:off + 16])
+              ctype = head[off + 17]  # IHDR: w(4) h(4) bitdepth(1) colortype(1)
+              print(f'  {n.split("/")[-1]}: {w}x{h} colorType={ctype} '
+                    f'({"CgBI" if off == 24 else "PNG"})')
               if ctype == 6:
-                  bad.append(f'{n}: color type=6（带 alpha，iOS 不接受）')
-              print(f'  {n.split("/")[-1]}: {w}x{h} color type={ctype}')
+                  bad.append(f'{n}: colorType=6（带 alpha，iOS 不接受）')
+              short = n.split('/')[-1]
+              if short in expect and (w, h) != expect[short]:
+                  bad.append(f'{n}: 尺寸 {w}x{h} 与预期 {expect[short]} 不符')
           if bad:
               sys.exit('error: 图标校验失败 -> ' + '; '.join(bad))
-          print('✓ 图标校验通过（无 alpha）')
+          print('✓ 应用图标校验通过（尺寸正确、无 alpha）')
+          PYEOF
           PYEOF
           echo "✓ IPA 结构校验通过：$IPA"
       - uses: actions/upload-artifact@v4
