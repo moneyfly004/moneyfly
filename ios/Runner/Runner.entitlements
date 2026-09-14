@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App 侧也要声明 Network Extension 能力，否则无法提交/启动 VPN 配置 -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<!-- 与扩展共享 App Group：App 写 config.yaml，扩展读 -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.top.moneyfly.app</string>
+	</array>
+</dict>
+</plist>

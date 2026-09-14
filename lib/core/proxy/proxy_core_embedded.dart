@@ -39,12 +39,20 @@ WatchdogAction decideWatchdog({
   return WatchdogAction.declareDead;
 }
 
-/// Android 内核：VpnService(原生 Kotlin) + libmihomo(gomobile 库，mihomo 官方源码 CI 编译)。
+/// 嵌入式内核（Android + iOS 共用）：内核以 gomobile 静态库跑在「系统提供的
+/// 隧道」里，由原生侧拿到 tun fd 后调 libmihomo.Start(homeDir, yaml, fd)。
 ///
-/// Flutter 侧把 mihomo YAML 配置与 TUN 开关经 MethodChannel 交给原生；
-/// 原生负责：VpnService 授权 → 建立 TUN(拿到 fd) → libmihomo.Start(homeDir, yaml, fd)。
-/// 切模式/切节点/测速/流量统计走 Clash API(127.0.0.1:9090)，与桌面端一致。
-class ProxyCoreAndroid extends ProxyCore {
+/// - Android：VpnService（原生 Kotlin）建立 TUN，内核在 **App 进程内**；
+/// - iOS：NetworkExtension PacketTunnel 扩展建立 TUN，内核在 **扩展进程内**
+///   （iOS 沙箱不允许 App 自建 utun，必须由扩展持有 packet-tunnel-provider
+///   entitlement）。App 与扩展的通信走 App Group 共享配置 + 系统 VPN 管理器。
+///
+/// 两端原生侧的 MethodChannel 契约**同名同参**
+/// （startVpn / stopVpn / isVpnRunning / kernelVersion / fetchKernelLogs /
+/// lastStartError），因此 Dart 侧可以共用本实现；
+/// 切模式/切节点/测速/流量统计统一走内核的 Clash API(127.0.0.1:9090)，
+/// 与桌面端完全一致。
+class ProxyCoreEmbedded extends ProxyCore {
   static const _channel = MethodChannel('top.moneyfly/vpn_core');
 
   final Dio _api = Dio(BaseOptions(
