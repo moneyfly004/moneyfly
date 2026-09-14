@@ -7,6 +7,25 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // ---- 单实例：同一会话内只允许一个进程 ----
+  // 必须在创建任何窗口之前拦截：否则重复双击会产生多个窗口/多个托盘/多个内核，
+  // 各自管理系统代理与内核，互相冲突（状态被别的进程覆盖）。
+  // 已有一个实例 → 唤醒它的窗口（可能最小化到托盘），本进程立即退出。
+  {
+    HANDLE mutex =
+        ::CreateMutexW(nullptr, FALSE, L"Local\\MoneyFly_SingleInstance");
+    if (mutex != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
+      HWND hwnd = ::FindWindowW(nullptr, L"MoneyFly");
+      if (hwnd != nullptr) {
+        ::ShowWindow(hwnd, SW_RESTORE);
+        ::SetForegroundWindow(hwnd);
+      }
+      return 0;
+    }
+    // mutex 句柄有意不关闭：进程存活期间持有命名互斥量，退出时系统自动释放，
+    // 崩溃/被杀也不会残留「假锁」。
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
