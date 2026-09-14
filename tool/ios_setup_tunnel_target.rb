@@ -24,9 +24,21 @@ project = Xcodeproj::Project.open(PROJECT)
 runner = project.targets.find { |t| t.name == 'Runner' }
 abort '✗ 未找到 Runner target' unless runner
 
-# ---- 幂等：移除已存在的扩展 target ----
+# ---- 幂等：移除已存在的扩展 target（含各 target 上指向它的依赖与嵌入引用）----
+# 注意顺序：必须先把「别处对它的引用」清干净再删 target，否则残留的
+# PBXTargetDependency.target 变成 nil，后续 add_dependency 会抛
+# `undefined method 'uuid' for nil`（脚本就不再可重复执行）。
 project.targets.select { |t| t.name == TARGET_NAME }.each do |old|
-  old.build_configurations.each { |c| c.remove_from_project }
+  project.targets.each do |other|
+    other.dependencies.select { |d| d.target.nil? || d.target == old }.each(&:remove_from_project)
+    other.build_phases.each do |phase|
+      next unless phase.respond_to?(:files)
+      phase.files.select do |bf|
+        ref = bf.file_ref
+        ref && (ref.path.to_s.end_with?("#{TARGET_NAME}.appex") || ref == old.product_reference)
+      end.each(&:remove_from_project)
+    end
+  end
   old.product_reference&.remove_from_project
   old.remove_from_project
   puts "· 移除旧的 #{TARGET_NAME} target"
@@ -119,6 +131,21 @@ embed.files.find { |f| f.file_ref == target.product_reference }
 # ---- Runner 签名 entitlements ----
 runner.build_configurations.each do |config|
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
+end
+
+# ---- 确保 Runner 侧新增的 Swift 文件进了编译源 ----
+# flutter create 生成的 target 只引用模板自带文件；后加的 VpnCorePlugin.swift
+# 必须显式加入编译源，否则 AppDelegate 里注册它时编译报
+# "Cannot find 'VpnCorePlugin' in scope"（只在编 Runner 时才暴露，
+# 单编扩展 target 不会发现）。
+runner_group = project.main_group.find_subpath('Runner', true)
+Dir.glob('ios/Runner/*.swift').map { |f| File.basename(f) }.sort.each do |name|
+  ref = runner_group.files.find { |f| f.path == name || f.display_name == name } ||
+        runner_group.new_file(name)
+  next if runner.source_build_phase.files_references.include?(ref)
+
+  runner.source_build_phase.add_file_reference(ref)
+  puts "· 已把 Runner/#{name} 加入编译源"
 end
 
 # Runner 需要知道扩展的 bundle id（App 侧用它筛选 VPN 配置）
