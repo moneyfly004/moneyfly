@@ -12,6 +12,7 @@ import 'package:moneyfly/core/models/models.dart';
 import 'package:moneyfly/core/proxy/proxy_core.dart';
 import 'package:moneyfly/core/proxy/proxy_core_cli.dart';
 import 'package:moneyfly/core/services/account_service.dart';
+import 'package:moneyfly/core/services/speed_tester.dart';
 import 'package:moneyfly/core/services/subscription_service.dart';
 import 'package:moneyfly/l10n/app_strings.dart';
 import 'package:moneyfly/pages/nodes/nodes_page.dart';
@@ -35,17 +36,27 @@ ProxyNode _node(String tag, String server, String country) => ProxyNode(
       tag: tag,
       type: 'vless',
       server: server,
-      port: 9, // 本机关闭端口：TCP 探测立即失败，测试快且结果确定为 -1
+      port: 9, // 真实探测被桩替代；端口仅占位
       countryCode: country,
       latencyMs: sentinel,
     )..online = true;
 
 void main() {
+  // 被测速的节点 tag（注入桩记录，替代真实 TCP 探测：Windows CI 上连接被
+  // 防火墙静默丢弃会跑到 5s 超时，真实探测的用例既慢又不确定）
+  late List<String> probed;
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     ProxyCoreCli.manageSystemProxy = false;
+    probed = <String>[];
+    SpeedTester.debugProbeOverride = (node) async {
+      probed.add(node.tag);
+      return 7;
+    };
   });
   tearDown(() {
+    SpeedTester.debugProbeOverride = null;
     ApiClient.debugDio = null;
     ApiClient.resetInstance();
     AccountService.instance.reset();
@@ -80,15 +91,17 @@ void main() {
     expect(btn, findsOneWidget);
     await tester.tap(btn);
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 1500)));
+        () => Future<void>.delayed(const Duration(milliseconds: 300)));
     await tester.pump();
 
     final jp = conn.nodes.where((n) => n.tag.startsWith('日本')).toList();
     final us = conn.nodes.where((n) => n.tag.startsWith('美国')).toList();
 
-    // 筛选出的节点确实被测了（本机 9 端口关闭 → 判失败，不再是哨兵值）
-    expect(jp.every((n) => n.latencyMs == -1 || n.latencyMs != sentinel), true,
-        reason: '筛选出的日本节点应被真实测速');
+    // 筛选出的节点确实被测了，且**只测了它们**
+    expect(probed.toSet(), {'日本-01', '日本-02'},
+        reason: '筛选后只应测筛选出的节点');
+    expect(jp.every((n) => n.latencyMs == 7), true,
+        reason: '筛选出的日本节点应被写入新延迟');
     // 未筛选的节点必须原封不动（旧实现会把它们一起测掉 → 变成 -1）
     expect(us.map((n) => n.latencyMs).toList(), everyElement(sentinel),
         reason: '未出现在筛选结果里的节点不该被测速');
@@ -116,11 +129,12 @@ void main() {
     final btn = find.textContaining('⚡');
     await tester.tap(btn);
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 1500)));
+        () => Future<void>.delayed(const Duration(milliseconds: 300)));
     await tester.pump();
 
-    expect(conn.nodes.every((n) => n.latencyMs != sentinel), true,
+    expect(probed.toSet(), {'香港-01', '香港-02'},
         reason: '无筛选时应测全部节点');
+    expect(conn.nodes.every((n) => n.latencyMs == 7), true);
     // 兜底：本地化文案存在（避免 {n} 占位符漏配导致显示异常）
     expect(AppStrings.t('speed_done_filtered', {'n': '2'}), contains('2'));
   });
