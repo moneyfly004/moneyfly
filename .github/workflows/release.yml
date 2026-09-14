@@ -446,6 +446,32 @@ jobs:
         run: |
           grep -q "PacketTunnel" ios/Runner.xcodeproj/project.pbxproj \
             || { echo "error: 缺少 PacketTunnel 扩展 target（先运行 ruby tool/ios_setup_tunnel_target.rb）"; exit 1; }
+      - name: 校验 iOS 图标（仓库级，确保是品牌画稿而非 Flutter 默认模板）
+        run: |
+          # 用生成脚本重建一遍并与提交内容比对：不一致说明图标被改回默认模板
+          # 或未随画稿更新（脚本内含与 Android 的像素一致性自检）
+          python3 -m pip install --quiet pillow
+          python3 tool/gen_ios_icons.py
+          # 与提交版本做**像素**比对（不比字节：Pillow/zlib 版本差异会改变
+          # PNG 编码字节，但不是问题；像素不同才是真问题——例如被改回默认模板）
+          python3 - <<'PYCHECK'
+          import glob, io, os, subprocess, sys
+          from PIL import Image
+          bad = []
+          for f in sorted(glob.glob('ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png')):
+              old = subprocess.run(['git', 'show', f'HEAD:{f}'],
+                                   capture_output=True).stdout
+              if not old:
+                  continue
+              a = Image.open(io.BytesIO(old)).convert('RGB')
+              b = Image.open(f).convert('RGB')
+              if a.size != b.size or a.tobytes() != b.tobytes():
+                  bad.append(os.path.basename(f))
+          if bad:
+              sys.exit('error: iOS 图标与品牌画稿像素不一致: ' + ', '.join(bad))
+          print('✓ iOS 图标与提交版本像素一致（品牌画稿，非默认模板）')
+          PYCHECK
+
       - name: 构建 iOS release（不签名）
         run: flutter build ios --release --no-codesign
       - name: 组装 IPA（含扩展 + 内嵌 entitlements）
@@ -487,7 +513,7 @@ jobs:
           codesign -d --entitlements :- Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
             | grep -q "packet-tunnel-provider" \
             || { echo "error: 扩展未携带 packet-tunnel-provider entitlement（装上后隧道不可用）"; exit 1; }
-          # 应用图标校验：断言尺寸正确且**无 alpha**。
+          # 应用图标校验：断言图标存在、尺寸正确、PNG/CgBI 可解析。
           # 关键：包内图标是 Apple 优化的 PNG —— 8 字节签名后紧跟 CgBI 块，
           # IHDR 从偏移 24 开始（标准 PNG 是 8）。按标准偏移读会得到垃圾值
           # （曾因此读出 1342185478x750286694 并「假通过」）。
@@ -511,8 +537,11 @@ jobs:
               ctype = head[off + 17]  # IHDR: w(4) h(4) bitdepth(1) colortype(1)
               print(f'  {n.split("/")[-1]}: {w}x{h} colorType={ctype} '
                     f'({"CgBI" if off == 24 else "PNG"})')
-              if ctype == 6:
-                  bad.append(f'{n}: colorType=6（带 alpha，iOS 不接受）')
+              # 注意：**不**断言 colorType —— Xcode 的 actool 会把应用图标统一
+              # 编译成 CgBI RGBA（colorType=6）。「图标不能带 alpha」是针对源图
+              # 内容（像素须不透明），不是编译产物的通道数；按通道数断言会把
+              # 正常构建判失败（真发生过）。
+              _ = ctype
               short = n.split('/')[-1]
               if short in expect and (w, h) != expect[short]:
                   bad.append(f'{n}: 尺寸 {w}x{h} 与预期 {expect[short]} 不符')
