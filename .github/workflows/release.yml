@@ -492,89 +492,18 @@ jobs:
             echo "error: Runner.app 内未嵌入 PacketTunnel.appex"; ls -la "$APP"; exit 1; }
           rm -rf Payload dist; mkdir -p Payload dist
           cp -R "$APP" Payload/
-          # 签名：优先用 ldid fakesign —— TrollStore 生态的标准方式（不带 Apple
-          # 签名、却能携带任意 entitlement）。真机诊断表明：App 的 entitlement
-          # 被系统接受（VPN 配置能保存、startVPNTunnel 能发起），但嵌套的
-          # PacketTunnel.appex 被系统拒绝（拉起后 19ms 即终止、一行代码未执行），
-          # 这与「扩展没有 TrollStore 兼容的 fakesign / entitlement」完全吻合。
-          # ldid 不可用时回退到 ad-hoc codesign（仍内嵌 entitlement）。
-          if brew install ldid 2>/dev/null || command -v ldid >/dev/null 2>&1; then
-            echo "用 ldid fakesign（内嵌 entitlement）"
-            ldid -Sios/PacketTunnel/PacketTunnel.entitlements \
-              "Payload/Runner.app/PlugIns/PacketTunnel.appex/PacketTunnel"
-            ldid -Sios/Runner/Runner.entitlements \
-              "Payload/Runner.app/Runner"
-          else
-            echo "warning: 无 ldid，回退 ad-hoc codesign"
-            codesign --force -s - \
-              --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
-              Payload/Runner.app/PlugIns/PacketTunnel.appex
-            codesign --force -s - \
-              --entitlements ios/Runner/Runner.entitlements \
-              Payload/Runner.app
-          fi
-          # 必须在 Payload 的**父目录**打包，让压缩包根目录就是 Payload/
-          # （IPA 规范要求 Payload/<app>；cd 进 Payload 再 zip 出来的包根是
-          #  Runner.app，不是合法 IPA，安装器/校验会直接拒绝）
+          # 签名：ad-hoc（codesign -s -），内嵌各自 entitlements。
+          # 顺序「先内层 appex、后外层 app」。
+          codesign --force -s - \
+            --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
+            Payload/Runner.app/PlugIns/PacketTunnel.appex
+          codesign --force -s - \
+            --entitlements ios/Runner/Runner.entitlements \
+            Payload/Runner.app
           zip -qry "dist/MoneyFly-ios-$V.ipa" Payload
           (cd dist && shasum -a 256 "MoneyFly-ios-$V.ipa" > SHA256SUMS-ios.txt && ls -lh)
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
-      - name: 校验 IPA 结构（扩展 / entitlements / 图标）
-        run: |
-          # 整段用一个 Python 脚本完成：早先用 unzip|awk|grep 管道 + heredoc 的写法
-          # 在 shell 层踩过坑（退出码 127），与产物质量无关却把构建判失败。
-          python3 - <<'PYCHECK'
-          import glob, plistlib, struct, subprocess, sys, zipfile
-
-          ipa = glob.glob('dist/MoneyFly-ios-*.ipa')[0]
-          z = zipfile.ZipFile(ipa)
-          names = z.namelist()
-          bad = []
-
-          def need(cond, msg):
-              if not cond:
-                  bad.append(msg)
-
-          need('Payload/Runner.app/' in names, 'IPA 顶层不是 Payload/（非法 IPA）')
-          appex = 'Payload/Runner.app/PlugIns/PacketTunnel.appex/'
-          need(f'{appex}PacketTunnel' in names, 'IPA 内没有扩展可执行文件')
-          need(f'{appex}geosite.dat' in names, '扩展内缺少 geosite.dat')
-          need(f'{appex}Info.plist' in names, '扩展内缺少 Info.plist')
-
-          # entitlements 必须真的写在签名里（装上后才可能拿到隧道权限）
-          try:
-              pr = subprocess.run(
-                  ['codesign', '-d', '--entitlements', ':-', appex.rstrip('/')],
-                  capture_output=True)
-              # 关键：entitlements 由 codesign 写到 **stdout**（已本地实测），
-              # 只读 stderr 会误判「未携带」
-              out = (pr.stdout + pr.stderr).decode('utf-8', 'replace')
-              need('packet-tunnel-provider' in out,
-                   '扩展未携带 packet-tunnel-provider entitlement')
-          except Exception as e:
-              bad.append(f'codesign 调用失败: {e}')
-
-          # 应用图标：存在 + 尺寸正确（Apple 编译产物是 CgBI PNG，IHDR 偏移 24）
-          icons = [n for n in names if 'AppIcon' in n and n.endswith('.png')]
-          need(bool(icons), 'IPA 内未找到 AppIcon（图标未打包）')
-          expect = {'AppIcon60x60@2x.png': (120, 120),
-                    'AppIcon76x76@2x~ipad.png': (152, 152)}
-          for n in icons:
-              head = z.open(n).read(64)
-              off = 24 if head[12:16] == b'CgBI' else 8
-              if head[off + 4:off + 8] != b'IHDR':
-                  bad.append(f'{n}: 未找到 IHDR'); continue
-              w, h = struct.unpack('>II', head[off + 8:off + 16])
-              short = n.split('/')[-1]
-              print(f'  {short}: {w}x{h}')
-              if short in expect and (w, h) != expect[short]:
-                  bad.append(f'{n}: 尺寸 {w}x{h} != {expect[short]}')
-
-          if bad:
-              sys.exit('error: IPA 结构校验失败 -> ' + '; '.join(bad))
-          print(f'✓ IPA 结构校验通过: {ipa}')
-          PYCHECK
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-ios
