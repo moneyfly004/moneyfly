@@ -492,13 +492,27 @@ jobs:
             echo "error: Runner.app 内未嵌入 PacketTunnel.appex"; ls -la "$APP"; exit 1; }
           rm -rf Payload dist; mkdir -p Payload dist
           cp -R "$APP" Payload/
-          # 顺序必须是「先内层 appex、后外层 app」
-          codesign --force -s - \
-            --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
-            Payload/Runner.app/PlugIns/PacketTunnel.appex
-          codesign --force -s - \
-            --entitlements ios/Runner/Runner.entitlements \
-            Payload/Runner.app
+          # 签名：优先用 ldid fakesign —— TrollStore 生态的标准方式（不带 Apple
+          # 签名、却能携带任意 entitlement）。真机诊断表明：App 的 entitlement
+          # 被系统接受（VPN 配置能保存、startVPNTunnel 能发起），但嵌套的
+          # PacketTunnel.appex 被系统拒绝（拉起后 19ms 即终止、一行代码未执行），
+          # 这与「扩展没有 TrollStore 兼容的 fakesign / entitlement」完全吻合。
+          # ldid 不可用时回退到 ad-hoc codesign（仍内嵌 entitlement）。
+          if brew install ldid 2>/dev/null || command -v ldid >/dev/null 2>&1; then
+            echo "用 ldid fakesign（内嵌 entitlement）"
+            ldid -Sios/PacketTunnel/PacketTunnel.entitlements \
+              "Payload/Runner.app/PlugIns/PacketTunnel.appex/PacketTunnel"
+            ldid -Sios/Runner/Runner.entitlements \
+              "Payload/Runner.app/Runner"
+          else
+            echo "warning: 无 ldid，回退 ad-hoc codesign"
+            codesign --force -s - \
+              --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
+              Payload/Runner.app/PlugIns/PacketTunnel.appex
+            codesign --force -s - \
+              --entitlements ios/Runner/Runner.entitlements \
+              Payload/Runner.app
+          fi
           # 必须在 Payload 的**父目录**打包，让压缩包根目录就是 Payload/
           # （IPA 规范要求 Payload/<app>；cd 进 Payload 再 zip 出来的包根是
           #  Runner.app，不是合法 IPA，安装器/校验会直接拒绝）
