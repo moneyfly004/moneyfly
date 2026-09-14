@@ -226,6 +226,41 @@ class SubscriptionService {
   /// isolate 入口（compute 要求顶层/静态函数）
   static List<ProxyNode> _parseInIsolate(String raw) => parseClashYaml(raw);
 
+  /// base64 里需要忽略的「噪声字符」：空白（换行 / CR / 制表 / 空格）、
+  /// 零宽空格与 BOM。订阅面板导出时经常折行、末尾带 `\n`。
+  static final RegExp _b64Noise = RegExp(r'[\s\u200b\ufeff]+');
+
+  /// 宽松 base64 解码（返回 null 表示确实解不出来）。
+  ///
+  /// Dart 的 `base64.normalize` 遇到**任何**非 base64 字符会直接抛
+  /// `FormatException`（它只负责把 URL-safe 字母表归一化，不剥离空白）。
+  /// 而机场订阅几乎都是「一整行 base64 + 结尾换行」，长串还会按 76 字符
+  /// 折行。旧实现拿**未清洗**的原文调用 normalize，异常又被 `catch (_) {}`
+  /// 吞掉 → text 退回 base64 原文 → 逐行 `_parseLink` 全部落空 →
+  /// **整份订阅静默解析成 0 个节点**（用户看到「没有节点 / 测不了速」，
+  /// 日志里却没有任何报错）。
+  ///
+  /// 这里先清洗空白、归一化 URL-safe 字母表、补齐缺失的 `=` 填充，
+  /// 兼容「无填充」「折行」「带 BOM」等真实面板产物。
+  static String? _b64DecodeLoose(String raw) {
+    var s = raw.replaceAll(_b64Noise, '');
+    if (s.isEmpty) return null;
+    s = s.replaceAll('-', '+').replaceAll('_', '/');
+    final rem = s.length % 4;
+    if (rem == 1) return null; // 长度不可能合法，别浪费时间
+    if (rem > 0) s = s.padRight(s.length + (4 - rem), '=');
+    try {
+      return utf8.decode(base64.decode(s));
+    } catch (_) {
+      try {
+        // 少量面板会混入非法字节（如 GBK 注释），别因此丢掉全部节点
+        return utf8.decode(base64.decode(s), allowMalformed: true);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
   /// 解析 Clash YAML 中的 proxies
   static List<ProxyNode> parseClashYaml(String raw) {
     if (raw.trim().isEmpty) return [];
@@ -240,8 +275,24 @@ class SubscriptionService {
       // 不抛异常而是返回一个 String 标量 —— 以前直接 return []，最常见的
       // 两种 v2ray 订阅形态(base64 串、链接列表)会被静默丢成空列表。
       // 这里交给 base64/链接解析兜底，解析不到自然返回空。
-      return parseBase64Nodes(raw);
+      final nodes = parseBase64Nodes(raw);
+      if (nodes.isNotEmpty) return nodes;
+      // 还有面板把**整份 Clash YAML** base64 后再下发，这里补一层解码。
+      final decoded = _b64DecodeLoose(raw);
+      if (decoded != null && decoded.contains('proxies:')) {
+        try {
+          final inner = loadYaml(decoded);
+          if (inner is Map && inner['proxies'] is List) {
+            return _nodesFromYamlMap(inner);
+          }
+        } catch (_) {}
+      }
+      return nodes;
     }
+    return _nodesFromYamlMap(doc);
+  }
+
+  static List<ProxyNode> _nodesFromYamlMap(Map<dynamic, dynamic> doc) {
     final proxies = doc['proxies'];
     if (proxies is! List) return [];
     return proxies
@@ -252,14 +303,13 @@ class SubscriptionService {
         .toList();
   }
 
-  /// 兼容 base64/明文链接列表：vmess / vless / trojan / ss / socks5 /
-  /// hysteria2 / tuic / anytls 等，统一转成 mihomo 认识的 Clash map。
+  /// 兼容 base64 / 明文链接列表：vmess / vless / trojan / ss / socks5 /
+  /// hysteria2（含 `hy2://` 简写）/ tuic / anytls 等，统一转成 mihomo 认识的
+  /// Clash map。
   static List<ProxyNode> parseBase64Nodes(String raw) {
     String text = raw;
-    try {
-      final decoded = utf8.decode(base64.decode(base64.normalize(raw)));
-      if (decoded.contains('://')) text = decoded;
-    } catch (_) {}
+    final decoded = _b64DecodeLoose(raw);
+    if (decoded != null && decoded.contains('://')) text = decoded;
     final nodes = <ProxyNode>[];
     for (final line in text.split('\n')) {
       final s = line.trim();
@@ -277,7 +327,12 @@ class SubscriptionService {
     if (s.startsWith('ss://')) return _parseSs(s);
     if (s.startsWith('ssr://')) return _parseSsr(s);
     if (s.startsWith('socks://') || s.startsWith('socks5://')) return _parseSocks(s);
-    if (s.startsWith('hysteria2://')) return _parseHysteria2(s);
+    // `hy2://` 是 sing-box / v2rayN 生态通用的 hysteria2 简写，参数与
+    // hysteria2:// 完全一致。旧实现只认长写法 → 整份订阅里所有 hy2 节点被
+    // 静默丢弃（本次 zefly 订阅 69 节点中 17 个 hy2 全丢）。
+    if (s.startsWith('hysteria2://') || s.startsWith('hy2://')) {
+      return _parseHysteria2(s);
+    }
     if (s.startsWith('hysteria://')) return _parseHysteria(s);
     if (s.startsWith('tuic://')) return _parseTuic(s);
     if (s.startsWith('anytls://')) return _parseAnyTls(s);
@@ -319,11 +374,7 @@ class SubscriptionService {
   /// base64url 解码（SSR 各字段用 base64url、无 padding）；非 base64 原样返回
   static String _b64UrlDecode(String s) {
     if (s.isEmpty) return '';
-    try {
-      return utf8.decode(base64.decode(base64.normalize(s)));
-    } catch (_) {
-      return s;
-    }
+    return _b64DecodeLoose(s) ?? s;
   }
 
   static String? _uriTag(String uri) {
@@ -334,7 +385,11 @@ class SubscriptionService {
   /// 解析 `scheme://cred@host:port?query#tag`（不含 ss/socks 的 base64 userinfo 特例）
   static ({String cred, String host, int port, Map<String, String> q})?
       _parseUserinfoUri(String scheme, String uri) {
-    final without = uri.substring('$scheme://'.length);
+    // 按 URI 自己声明的协议长度切前缀，**不能**按传入的 scheme 长度切：
+    // `hy2://` 与 `hysteria2://` 指向同一个解析器，用后者长度(12)去切前者的
+    // 链接(6)会多切 6 个字符 —— UUID 密码被静默截成半截，节点永远连不上。
+    final sep = uri.indexOf('://');
+    final without = uri.substring(sep >= 0 ? sep + 3 : '$scheme://'.length);
     final hash = without.indexOf('#');
     final body = hash >= 0 ? without.substring(0, hash) : without;
     final at = body.indexOf('@');
@@ -352,7 +407,8 @@ class SubscriptionService {
   static ProxyNode? _parseVmess(String uri) {
     try {
       final b64 = uri.substring('vmess://'.length).split('#').first;
-      final decoded = utf8.decode(base64.decode(base64.normalize(b64)));
+      final decoded = _b64DecodeLoose(b64);
+      if (decoded == null) return null;
       final m = jsonDecode(decoded) as Map<String, dynamic>;
       final tag = _uriTag(uri) ?? m['ps']?.toString() ?? 'vmess';
       final server = m['add']?.toString() ?? '';
@@ -532,7 +588,7 @@ class SubscriptionService {
       var body = hash >= 0 ? withoutScheme.substring(0, hash) : withoutScheme;
       // legacy：整串 base64，无明文 @ → 先整体解出 method:password@host:port
       if (!body.contains('@')) {
-        body = utf8.decode(base64.decode(base64.normalize(body)));
+        body = _b64DecodeLoose(body) ?? body;
       }
       final at = body.indexOf('@');
       if (at < 0) return null;
@@ -542,7 +598,7 @@ class SubscriptionService {
       // SIP002 的 userinfo 是 base64(method:password)；legacy 已是明文
       var cred = credPart;
       if (!cred.contains(':')) {
-        cred = utf8.decode(base64.decode(base64.normalize(cred)));
+        cred = _b64DecodeLoose(cred) ?? cred;
       }
       final sep = cred.indexOf(':');
       final method = sep > 0 ? cred.substring(0, sep) : cred;
@@ -585,9 +641,7 @@ class SubscriptionService {
         var cred = body.substring(0, at);
         if (cred.isNotEmpty) {
           if (!cred.contains(':')) {
-            try {
-              cred = utf8.decode(base64.decode(base64.normalize(cred)));
-            } catch (_) {}
+            cred = _b64DecodeLoose(cred) ?? cred;
           }
           final sep = cred.indexOf(':');
           username = sep > 0 ? cred.substring(0, sep) : cred;
