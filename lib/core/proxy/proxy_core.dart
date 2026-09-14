@@ -267,6 +267,25 @@ class ConnectionController extends ChangeNotifier {
     }
     if (epoch == _geoEpoch && status == ConnStatus.connected) {
       realCountryFailed = true;
+      // 三次都失败 → 用「内核测速当前节点」做交叉判据，把原因说清楚：
+      //  - 节点测速也失败 → 基本可判定当前节点不可用（客户反馈里满屏 TLS 握手
+      //    被中断，多半就是这种情况：出口定位三个源全挂 + 节点本身连不出）
+      //  - 节点测速正常 → 节点可用，属目标站点/链路侧问题，不该误报成连接故障
+      var nodeOk = false;
+      if (current != null) {
+        try {
+          final ms = await _core.testNodeDelay(current!.tag, url: testUrl);
+          nodeOk = mfLatencyUsable(ms);
+        } catch (_) {}
+      }
+      final detail = GeoLookupService.instance.lastFailureDetail;
+      if (nodeOk) {
+        AppLog.log('GEO',
+            '出口定位失败但节点测速正常（${current?.tag}）：$detail');
+      } else {
+        AppLog.error(
+            '节点疑似不可用：出口定位与节点测速均失败（${current?.tag}）：$detail');
+      }
       notifyListeners();
     }
   }
