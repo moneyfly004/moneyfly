@@ -506,60 +506,58 @@ jobs:
           (cd dist && shasum -a 256 "MoneyFly-ios-$V.ipa" > SHA256SUMS-ios.txt && ls -lh)
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
-      - name: 校验 IPA 结构（扩展 + entitlements 必须真的在包里）
+      - name: 校验 IPA 结构（扩展 / entitlements / 图标）
         run: |
-          set -e
-          IPA=$(ls dist/MoneyFly-ios-*.ipa)
-          # 1) IPA 规范：压缩包顶层必须是 Payload/
-          unzip -l "$IPA" | awk '{print $4}' | grep -q "^Payload/Runner.app/$" \
-            || { echo "error: IPA 顶层目录不是 Payload/（不是合法 IPA）"; unzip -l "$IPA" | head; exit 1; }
-          # 2) 扩展可执行文件在包里
-          unzip -l "$IPA" | grep -q "Payload/Runner.app/PlugIns/PacketTunnel.appex/PacketTunnel" \
-            || { echo "error: IPA 里没有扩展可执行文件"; exit 1; }
-          unzip -l "$IPA" | grep -q "PacketTunnel.appex/geosite.dat" \
-            || echo "warning: 扩展内缺少 geosite.dat（分流规则会降级）"
-          # 新版 macOS 要求 `--entitlements :-`（旧的 `-` 已弃用/输出不同）
-          codesign -d --entitlements :- Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
-            | grep -q "packet-tunnel-provider" \
-            || { echo "error: 扩展未携带 packet-tunnel-provider entitlement（装上后隧道不可用）"; exit 1; }
-          # 应用图标校验：断言图标存在、尺寸正确、PNG/CgBI 可解析。
-          # 关键：包内图标是 Apple 优化的 PNG —— 8 字节签名后紧跟 CgBI 块，
-          # IHDR 从偏移 24 开始（标准 PNG 是 8）。按标准偏移读会得到垃圾值
-          # （曾因此读出 1342185478x750286694 并「假通过」）。
-          python3 - <<'PYEOF'
-          import glob, struct, sys, zipfile
+          # 整段用一个 Python 脚本完成：早先用 unzip|awk|grep 管道 + heredoc 的写法
+          # 在 shell 层踩过坑（退出码 127），与产物质量无关却把构建判失败。
+          python3 - <<'PYCHECK'
+          import glob, plistlib, struct, subprocess, sys, zipfile
+
           ipa = glob.glob('dist/MoneyFly-ios-*.ipa')[0]
           z = zipfile.ZipFile(ipa)
-          names = sorted(n for n in z.namelist() if 'AppIcon' in n and n.endswith('.png'))
-          if not names:
-              sys.exit('error: IPA 内未找到 AppIcon（图标未打包）')
-          expect = {'AppIcon60x60@2x.png': (120, 120), 'AppIcon76x76@2x~ipad.png': (152, 152)}
+          names = z.namelist()
           bad = []
-          for n in names:
+
+          def need(cond, msg):
+              if not cond:
+                  bad.append(msg)
+
+          need('Payload/Runner.app/' in names, 'IPA 顶层不是 Payload/（非法 IPA）')
+          appex = 'Payload/Runner.app/PlugIns/PacketTunnel.appex/'
+          need(f'{appex}PacketTunnel' in names, 'IPA 内没有扩展可执行文件')
+          need(f'{appex}geosite.dat' in names, '扩展内缺少 geosite.dat')
+          need(f'{appex}Info.plist' in names, '扩展内缺少 Info.plist')
+
+          # entitlements 必须真的写在签名里（装上后才可能拿到隧道权限）
+          try:
+              out = subprocess.run(
+                  ['codesign', '-d', '--entitlements', ':-', appex.rstrip('/')],
+                  capture_output=True).stderr.decode('utf-8', 'replace')
+              need('packet-tunnel-provider' in out,
+                   '扩展未携带 packet-tunnel-provider entitlement')
+          except Exception as e:
+              bad.append(f'codesign 调用失败: {e}')
+
+          # 应用图标：存在 + 尺寸正确（Apple 编译产物是 CgBI PNG，IHDR 偏移 24）
+          icons = [n for n in names if 'AppIcon' in n and n.endswith('.png')]
+          need(bool(icons), 'IPA 内未找到 AppIcon（图标未打包）')
+          expect = {'AppIcon60x60@2x.png': (120, 120),
+                    'AppIcon76x76@2x~ipad.png': (152, 152)}
+          for n in icons:
               head = z.open(n).read(64)
-              if head[:8] != b'\x89PNG\r\n\x1a\n':
-                  bad.append(f'{n}: 不是 PNG'); continue
               off = 24 if head[12:16] == b'CgBI' else 8
               if head[off + 4:off + 8] != b'IHDR':
                   bad.append(f'{n}: 未找到 IHDR'); continue
               w, h = struct.unpack('>II', head[off + 8:off + 16])
-              ctype = head[off + 17]  # IHDR: w(4) h(4) bitdepth(1) colortype(1)
-              print(f'  {n.split("/")[-1]}: {w}x{h} colorType={ctype} '
-                    f'({"CgBI" if off == 24 else "PNG"})')
-              # 注意：**不**断言 colorType —— Xcode 的 actool 会把应用图标统一
-              # 编译成 CgBI RGBA（colorType=6）。「图标不能带 alpha」是针对源图
-              # 内容（像素须不透明），不是编译产物的通道数；按通道数断言会把
-              # 正常构建判失败（真发生过）。
-              _ = ctype
               short = n.split('/')[-1]
+              print(f'  {short}: {w}x{h}')
               if short in expect and (w, h) != expect[short]:
-                  bad.append(f'{n}: 尺寸 {w}x{h} 与预期 {expect[short]} 不符')
+                  bad.append(f'{n}: 尺寸 {w}x{h} != {expect[short]}')
+
           if bad:
-              sys.exit('error: 图标校验失败 -> ' + '; '.join(bad))
-          print('✓ 应用图标校验通过（尺寸正确、无 alpha）')
-          PYEOF
-          PYEOF
-          echo "✓ IPA 结构校验通过：$IPA"
+              sys.exit('error: IPA 结构校验失败 -> ' + '; '.join(bad))
+          print(f'✓ IPA 结构校验通过: {ipa}')
+          PYCHECK
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-ios
