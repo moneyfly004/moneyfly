@@ -521,12 +521,33 @@ jobs:
             - **macOS arm64**（Apple 芯片）: `MoneyFly-macos-arm64-*.dmg` — 需 **macOS 11+**
             - **macOS x64**（Intel，原生构建）: `MoneyFly-macos-x64-*.dmg` — 需 **macOS 10.15+**（建议 11+）
             - **Windows**: `MoneyFly-setup-*.exe` 安装版 + `MoneyFly-windows-x64-portable-*.zip`（Windows 10+）
+            - **iOS**: `MoneyFly-ios-*.ipa`（**未签名，需侧载**）— 需 **iOS 14+**
+              - **TrollStore（巨魔）直接安装**：包内已内嵌 Network Extension entitlement，无需 Apple 账号
+              - 或用 Sideloadly / AltStore 自签（需**付费** Apple 开发者账号才能启用 VPN 能力）
+              - 隧道由 PacketTunnel 扩展提供（内核 mihomo 跑在扩展进程内）
             - **iOS**: `MoneyFly-ios-*.ipa`（**未签名，需侧载**：TrollStore 直接安装；或用 Sideloadly / AltStore 自签）— 需 **iOS 14+**
               - 隧道依赖 NetworkExtension entitlement，苹果只对付费开发者账号签发，故本包不带 Apple 签名，由设备侧安装器授权
 
             各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
 
             ## 本版更新
+            - 新增：**iOS 版本**（未签名 IPA，TrollStore / 自签侧载安装），内核跑在 PacketTunnel 网络扩展内
+            - 修复：系统代理残留恢复原先完全空转（新进程里状态恒为空），残留代理会导致重启后整机断网；改为枚举式清扫
+            - 修复：Android「仅勾选应用」模式把自己也放进隧道，导致进程内内核自代理循环（该模式下无流量）
+            - 修复：就绪判定只看 Clash API 200，端口被占用/非法时内核照跑照 200 → 误判「已连接」并把系统代理指向死端口；补充本地端口探活与 TUN 失败检测
+            - 修复：内核启停无互斥，快速连点可双开内核并留下清不掉的孤儿进程（占死端口与 cache.db）
+            - 修复：重连上限「一连上就清零」，内核反复崩溃时会无限自连；改为稳定存活后才清零并加熔断
+            - 修复：内核异常退出原因（如 code=-9）不进 UI，只能自己翻日志
+            - 修复：系统代理绕过列表 macOS 完全不设、Windows 只有 <local>，已按平台补全
+            - 修复：日志旋转在超长单行时上限失效（文件可无界增长）
+            - 修复：更新包可能匹配到其它平台/架构（Windows 用户被引导下载 APK）
+            - 修复：默认测速地址仍是明文 HTTP（易被劫持导致测速失真），改 HTTPS 并加延迟可信区间
+            - 修复：geo 数据非原子写入且失败也标记已同步，可静默损坏分流规则
+            - 修复：TUN 开关改了不生效也不提示；Android 日志级别同样静默
+            - 修复：桌面 TUN 复用 Android 语义（auto-route:false）导致形同虚设
+            - 修复：注销/关机不清理系统代理（Windows WM_ENDSESSION / macOS applicationShouldTerminate 钩子）
+            - 优化：订阅拉取加请求序号，作废的在途结果不再把老配置写回；定时刷新失败退避
+            - 新增：注销/关机清理、订阅自定义 UA、CI 真实内核 -t 校验（生成配置有了回归防线）
             - 修复：清理僵尸内核时可能误杀当前连接（改为跳过本 App 启动的内核子进程）
             - 新增：6 套完整主题（海洋蓝/暗夜黑/石墨灰/翡翠绿/紫罗兰/暖咖橙），设置页一键切换并记忆
             - 优化：暗色主题整体调亮（背景改中灰黑）+ 文字提亮，信息卡/菜单/套餐文字清晰可读
