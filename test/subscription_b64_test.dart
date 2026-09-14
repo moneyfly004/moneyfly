@@ -32,18 +32,22 @@ void main() {
       '?security=tls&type=ws&path=%2Fws&host=cdn.example.com&sni=cdn.example.com'
       '#%E6%97%A5%E6%9C%AC-1';
 
-  final plain = [hy2, vlessReality, vlessWs].join('\n');
+  // 同一份订阅里 hy2:// 与 hysteria2:// 混用（面板很常见）：两种写法都必须认
+  const hy2Long = 'hysteria2://b07db61f-a207-4508-97f5-68182991c2d6'
+      '@203.27.106.148:60000?sni=www.apple.com&insecure=0#%E6%96%B0%E5%8A%A0%E5%9D%A1-2';
+  final plain = [hy2, hy2Long, vlessReality, vlessWs].join('\n');
   String b64(String s) => base64.encode(utf8.encode(s));
 
   test('base64 订阅体末尾带换行时必须解出全部节点（核心回归）', () {
     // 机场响应体真实形态：一整行 base64 + 结尾换行
     final body = '${b64(plain)}\n';
     final nodes = SubscriptionService.parseBase64Nodes(body);
-    expect(nodes.length, 3, reason: '末尾换行曾导致整份订阅解析成 0 节点');
-    expect(nodes.where((n) => n.type == 'hysteria2').length, 1);
+    expect(nodes.length, 4, reason: '末尾换行曾导致整份订阅解析成 0 节点');
+    expect(nodes.where((n) => n.type == 'hysteria2').length, 2,
+        reason: 'hy2:// 与 hysteria2:// 两种写法都要接受');
     expect(nodes.where((n) => n.type == 'vless').length, 2);
     // 走完整入口同样要正确（parseClashYaml 对非 YAML 文本回退到链接解析）
-    expect(SubscriptionService.parseClashYaml(body).length, 3);
+    expect(SubscriptionService.parseClashYaml(body).length, 4);
   });
 
   test('base64 折行 / 无填充 / CRLF 都要能解', () {
@@ -52,17 +56,17 @@ void main() {
     for (var i = 0; i < long.length; i += 76) {
       wrapped.writeln(long.substring(i, (i + 76).clamp(0, long.length)));
     }
-    expect(SubscriptionService.parseBase64Nodes(wrapped.toString()).length, 3,
+    expect(SubscriptionService.parseBase64Nodes(wrapped.toString()).length, 4,
         reason: '76 字符折行是面板导出常态');
     expect(SubscriptionService.parseBase64Nodes(long.replaceAll('=', '')).length,
-        3, reason: '部分面板去掉 = 填充');
+        4, reason: '部分面板去掉 = 填充');
     expect(
         SubscriptionService.parseBase64Nodes('${b64(plain)}\r\n\r\n'.trim())
             .length,
-        3);
+        4);
     // 首尾空白 + BOM
     expect(SubscriptionService.parseBase64Nodes('\uFEFF ${b64(plain)} \n').length,
-        3);
+        4);
   });
 
   test('hy2:// 简写按 hysteria2 解析，且密码不被截断', () {
@@ -120,13 +124,18 @@ void main() {
             .toList();
 
     final on = cfgFor(relax: true);
-    expect(proxiesOf(on, 'hysteria2').single['skip-cert-verify'], true,
-        reason: 'hy2 使用伪装 SNI，证书不可能匹配，校验开着必然连不上');
+    final hy2All = proxiesOf(on, 'hysteria2');
+    expect(hy2All, hasLength(2));
+    expect(hy2All.every((p) => p['skip-cert-verify'] == true), true,
+        reason: 'hy2:// 与 hysteria2:// 都要放宽（伪装 SNI 证书不可能匹配）');
+    expect(hy2All.map((p) => p['server']).toSet(),
+        {'152.69.220.212', '203.27.106.148'});
     expect(proxiesOf(on, 'vless').every((p) => p['skip-cert-verify'] != true),
         true, reason: 'TCP+TLS 协议证书校验照旧，不得被顺手放宽');
 
     final off = cfgFor(relax: false);
-    expect(proxiesOf(off, 'hysteria2').single['skip-cert-verify'], isNot(true));
+    expect(proxiesOf(off, 'hysteria2').every((p) => p['skip-cert-verify'] != true),
+        true);
   });
 
   test('生成的配置能被内核加载（有本地内核时）', () {
@@ -146,7 +155,7 @@ void main() {
       clashApiSecret: 'secret',
       geoReady: false,
     );
-    expect(cfg['proxies'], hasLength(3));
+    expect(cfg['proxies'], hasLength(4));
     final tmp = Directory.systemTemp.createTempSync('mf_b64_');
     File('${tmp.path}/config.yaml')
         .writeAsStringSync(MihomoConfigBuilder.encode(cfg));
