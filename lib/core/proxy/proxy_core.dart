@@ -703,6 +703,53 @@ class ConnectionController extends ChangeNotifier {
         .testAll(list, onProgress: onProgress, onEach: onEach);
   }
 
+  /// 只测**指定的一批节点**（节点页搜索/筛选后点「测速」时用）。
+  ///
+  /// 与 [retestAll] 的区别：未列入 [tags] 的节点保持原延迟与在线状态不变，
+  /// 不把时间浪费在用户当前没在看的节点上。全部命中时直接走 [retestAll]。
+  Future<void> retestSubset(Iterable<String> tags,
+      {bool switchToBest = true,
+      void Function(int done, int total)? onProgress}) async {
+    if (nodes.isEmpty || speedTesting) return;
+    final wanted = tags.toSet();
+    if (wanted.isEmpty) return;
+    final targets = nodes.where((n) => wanted.contains(n.tag)).toList();
+    if (targets.isEmpty) return;
+    if (targets.length == nodes.length) {
+      return retestAll(switchToBest: switchToBest, onProgress: onProgress);
+    }
+    final epoch = _epoch;
+    speedTesting = true;
+    notifyListeners();
+    try {
+      final tested = await testAllNodes(
+        targets,
+        onProgress: onProgress,
+        onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online),
+      );
+      if (epoch != _epoch) return;
+      // 只把被测节点替换回原列表：保持原顺序，未测节点的状态原样保留
+      // （整体替换会把没测的节点当成「刚测过」的陈旧副本一起写回）。
+      final byTag = {for (final t in tested) t.tag: t};
+      nodes = [for (final n in nodes) byTag[n.tag] ?? n];
+      _retargetCurrent();
+      lastSpeedTestTime = _now();
+      // 选优只在被测子集里进行：用户筛了「日本」就别偷偷切到别的国家
+      final best = selectBestRespectingLock(tested);
+      if (switchToBest &&
+          best != null &&
+          status == ConnStatus.connected &&
+          _core.isRunning) {
+        await switchNode(best, userInitiated: false);
+      }
+    } catch (_) {
+      // 测速失败不影响已建立的连接
+    } finally {
+      speedTesting = false;
+      notifyListeners();
+    }
+  }
+
   /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）。
   /// 测速在**副本**上进行：绝不把结果就地写进传入列表的元素 —— 否则
   /// 断开/切网瞬间在途测速会把 UI 正在用的节点整批标成 offline（epoch
