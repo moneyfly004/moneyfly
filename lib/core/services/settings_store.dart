@@ -46,6 +46,9 @@ class SettingsStore {
         'kernelLogLevel': 'warning',
         // DNS 解析模式：auto / fake-ip / redir-host
         'dnsMode': 'auto',
+        // hysteria/hysteria2/tuic 放宽证书校验（默认开：这些协议普遍用伪装
+        // SNI + 不匹配证书，校验开着必然连不上；实测 17/17 失败 vs 16/17 成功）
+        'udpSkipCertVerify': true,
         // 按 App 分流/排除（Android）：all / selected / denied + 包名列表
         'accessControlMode': 'all',
         'accessControlApps': <String>[],

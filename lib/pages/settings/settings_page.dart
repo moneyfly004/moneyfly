@@ -176,6 +176,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 desc: AppStrings.t('settings_fakeip_extra_desc'),
                 value: '${_fakeIpExtra().length}',
                 onTap: _pickFakeIpFilter),
+            // UDP+TLS 协议（hysteria/hysteria2/tuic）证书校验放宽：
+            // 这类节点几乎都用伪装 SNI + 不匹配证书，开着校验必然握不上手
+            // （实测 17/17 失败 → 关掉后 16/17 成功）。默认开，可关。
+            _row(icon: '🔓', title: AppStrings.t('settings_udp_insecure'),
+                desc: AppStrings.t('settings_udp_insecure_desc'),
+                trailing: _switch(_s['udpSkipCertVerify'] != false,
+                    (v) => _set('udpSkipCertVerify', v))),
             _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
                 trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
             _row(icon: '🚫', title: AppStrings.t('settings_bypass'),

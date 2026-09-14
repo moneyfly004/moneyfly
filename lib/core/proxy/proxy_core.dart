@@ -41,6 +41,7 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     // 桌面：内核自己建 TUN 接口 + 推路由（无人注入 fd）；Android：路由由
     // VpnService 全量下发，必须 auto-route:false（见 MihomoConfigBuilder）
     tunAutoRoute: args['tunAutoRoute'] == true,
+    udpSkipCertVerify: args['udpSkipCertVerify'] != false,
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
     dnsNameservers: (args['dnsNameservers'] as List?)?.cast<String>() ?? const [],
     fakeIpFilterExtra: (args['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
@@ -603,6 +604,7 @@ class ConnectionController extends ChangeNotifier {
         'dnsMode': settings['dnsMode']?.toString() ?? 'auto',
         'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
         'tunAutoRoute': !(Platform.isAndroid || Platform.isIOS),
+        'udpSkipCertVerify': settings['udpSkipCertVerify'] != false,
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
         'dnsNameservers': (settings['dnsNameservers'] as List?)?.cast<String>() ?? const [],
         'fakeIpFilterExtra': (settings['fakeIpFilterExtra'] as List?)?.cast<String>() ?? const [],
