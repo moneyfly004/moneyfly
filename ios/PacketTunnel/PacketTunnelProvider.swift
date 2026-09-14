@@ -31,9 +31,31 @@ enum TunnelDiag {
         }
     }
 
-    /// 当前轨迹（供 App 查询）
+    /// 当前轨迹（供 App 查询）。附上内核日志尾部 —— App Group 若失效，
+    /// 内核日志文件写不进去，这是唯一的获取途径。
     static var trace: String {
-        queue.sync { memory.joined(separator: "\n") }
+        queue.sync {
+            var out = memory.joined(separator: "\n")
+            if !kernelRing.isEmpty {
+                out += "\n[内核日志尾部]\n" + kernelRing.joined(separator: "\n")
+            }
+            return out
+        }
+    }
+
+    /// 内核日志尾部（内存保留，避免 App Group 失效时完全看不到内核输出）
+    private static var kernelRing: [String] = []
+    private static let maxKernelRing = 60
+
+    static func appendKernel(_ text: String) {
+        queue.async {
+            for line in text.split(separator: "\n") where !line.isEmpty {
+                kernelRing.append(String(line))
+            }
+            if kernelRing.count > maxKernelRing {
+                kernelRing.removeFirst(kernelRing.count - maxKernelRing)
+            }
+        }
     }
 
     /// App Group 容器是否可用（不可用意味着共享配置/kernel.log 都拿不到）
@@ -147,17 +169,34 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             TunnelDiag.log("setTunnelNetworkSettings 成功")
-            do {
-                let fd = try self.tunnelFileDescriptor()
-                TunnelDiag.log("取得隧道 fd=\(fd)")
-                try self.startEngine(home: home, yaml: yaml, fd: fd)
-                self.startLogPump(home: home)
-                self.probeApi(port: apiPort)
-                TunnelDiag.log("✓ 内核已启动，startTunnel 完成")
-                completionHandler(nil)
-            } catch {
-                TunnelDiag.log("✗ 启动失败: \(error.localizedDescription)")
-                completionHandler(error)
+            // 关键设计：**隧道参数下发成功即报告就绪**，内核随后异步启动。
+            //
+            // 之前是在内核 Start 返回后才 completionHandler —— 一旦 Start 卡住或
+            // 失败，NE 会话会一直停在 connecting：App 既拿不到「已连接」，也无法用
+            // sendProviderMessage 向扩展索取诊断（会话未就绪时该调用不可用），
+            // 现场就变成「20 秒后内核启动超时」且**没有任何线索**（真机实测）。
+            //
+            // 现在语义清晰分层：
+            //  - NE 状态 connected = 隧道接口与路由就绪（这是系统关心的）
+            //  - App 侧「已连接」= Clash API 可达（由 Dart 就绪探测决定，逻辑不变）
+            // 内核启动失败时用 cancelTunnelWithError 主动拿下隧道，并把原因写进轨迹。
+            completionHandler(nil)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self else { return }
+                do {
+                    let fd = try self.tunnelFileDescriptor()
+                    TunnelDiag.log("取得隧道 fd=\(fd)")
+                    // 先起日志抽取：mihomo 的 Logs() 用的是独立锁，
+                    // Start 卡住/失败期间也能读到启动日志（含它卡在哪一步）
+                    self.startLogPump()
+                    try self.startEngine(home: home, yaml: yaml, fd: fd)
+                    self.probeApi(port: apiPort)
+                    TunnelDiag.log("✓ 内核启动完成")
+                } catch {
+                    TunnelDiag.log("✗ 内核启动失败: \(error.localizedDescription)")
+                    // 拿掉隧道，让 App 侧立刻看到 disconnected + 本次轨迹
+                    self.cancelTunnelWithError(error)
+                }
             }
         }
     }
@@ -334,19 +373,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// mihomo 的日志缓冲在扩展进程内，App 读不到 → 由扩展抽到 App Group 共享
     /// 文件，App 侧「内核日志」页沿用 Android 的同一套读取逻辑。
-    private func startLogPump(home: String) {
+    private func startLogPump() {
         stopLogPump()
-        guard let file = sharedLogURL() else {
-            TunnelDiag.log("✗ App Group 不可用，内核日志无法共享给 App")
-            return
+        let file = sharedLogURL()
+        if file == nil {
+            TunnelDiag.log("App Group 不可用：内核日志只保留在内存轨迹里")
         }
         let timer = DispatchSource.makeTimerSource(queue: logQueue)
-        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        timer.schedule(deadline: .now(), repeating: .seconds(1))
         timer.setEventHandler {
             #if canImport(Mihomelib)
             let delta = MihomelibLogs()
             guard !delta.isEmpty else { return }
-            Self.append(delta, to: file)
+            TunnelDiag.appendKernel(delta)
+            if let file { Self.append(delta, to: file) }
             #endif
         }
         timer.resume()
