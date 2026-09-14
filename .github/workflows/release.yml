@@ -530,9 +530,12 @@ jobs:
 
           # entitlements 必须真的写在签名里（装上后才可能拿到隧道权限）
           try:
-              out = subprocess.run(
+              pr = subprocess.run(
                   ['codesign', '-d', '--entitlements', ':-', appex.rstrip('/')],
-                  capture_output=True).stderr.decode('utf-8', 'replace')
+                  capture_output=True)
+              # 关键：entitlements 由 codesign 写到 **stdout**（已本地实测），
+              # 只读 stderr 会误判「未携带」
+              out = (pr.stdout + pr.stderr).decode('utf-8', 'replace')
               need('packet-tunnel-provider' in out,
                    '扩展未携带 packet-tunnel-provider entitlement')
           except Exception as e:
