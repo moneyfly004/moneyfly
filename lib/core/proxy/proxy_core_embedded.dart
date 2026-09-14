@@ -265,6 +265,13 @@ class ProxyCoreEmbedded extends ProxyCore {
     final parts = <String>[];
     final st = await _iosVpnStatus();
     if (st != null) parts.add('隧道状态: $st');
+    // App 侧轨迹（含 NE 会话状态变化）—— 扩展没起来时这是唯一线索
+    try {
+      final appSide = await _channel.invokeMethod<String>('fetchVpnDiag');
+      if (appSide != null && appSide.trim().isNotEmpty) {
+        parts.add('[App 侧轨迹]\n$appSide');
+      }
+    } catch (_) {}
     try {
       final live = await _channel.invokeMethod<String>('fetchTunnelDiag');
       if (live != null && live.trim().isNotEmpty) {
@@ -273,9 +280,9 @@ class ProxyCoreEmbedded extends ProxyCore {
     } catch (_) {}
     try {
       final persisted = await _channel.invokeMethod<String>('fetchTunnelLog');
-      if (persisted != null &&
-          persisted.trim().isNotEmpty &&
-          !persisted.startsWith('（暂无')) {
+      // 注意：即使是「暂无 tunnel.log」也要带上 —— 这条本身就是关键结论
+      // （扩展从未被系统拉起 / App Group 失效），原先被过滤掉反而丢线索
+      if (persisted != null && persisted.trim().isNotEmpty) {
         parts.add('[扩展落盘轨迹]\n$persisted');
       }
     } catch (_) {}

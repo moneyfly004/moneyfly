@@ -282,22 +282,34 @@ class _KernelLogTabState extends State<_KernelLogTab>
             ],
           ),
         ),
+        // 级别语义说明：这个下拉既改内核输出级别、也过滤本页显示
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          child: Text(AppStrings.t('kernel_log_level_desc'),
+              style: TextStyle(fontSize: 10, color: MFColors.txt3, height: 1.4)),
+        ),
         Divider(height: 1, color: MFColors.line),
-        // 日志区（reverse：最新在底部并自动贴底）
+        // 日志区：**最新在最上方**（不用 reverse）。
+        // 原实现用 reverse:true 让最新贴底，但日志条数少于视口高度时，内容会全部
+        // 堆在底部、顶部留出一大片空白（真机反馈「上半截一片空白」）。
+        // 改为从上往下、最新在前：无论日志多少都从顶部开始排，且最新一条无需滚动。
         Expanded(
-          child: _lines.isEmpty
+          child: _visibleLines.isEmpty
               ? Center(
-                  child: Text(AppStrings.t('kernel_log_empty'),
+                  child: Text(
+                      _lines.isEmpty
+                          ? AppStrings.t('kernel_log_empty')
+                          : AppStrings.t('kernel_log_empty_at_level',
+                              {'level': _level.toUpperCase()}),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 12, color: MFColors.txt3, height: 1.7)))
               : ListView.builder(
-                  reverse: true,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  itemCount: _lines.length,
+                  itemCount: _visibleLines.length,
                   itemBuilder: (context, i) {
-                    final line = _lines[_lines.length - 1 - i];
+                    final line = _visibleLines[_visibleLines.length - 1 - i];
                     final lc = _lineColor(line);
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 1),
@@ -318,8 +330,45 @@ class _KernelLogTabState extends State<_KernelLogTab>
     );
   }
 
+  /// 级别数值：越大越严重（与 mihomo 的 debug/info/warning/error/silent 一致）
+  static int _levelRank(String level) {
+    switch (level.toLowerCase()) {
+      case 'debug':
+        return 0;
+      case 'info':
+        return 1;
+      case 'warning':
+      case 'warn':
+        return 2;
+      case 'error':
+        return 3;
+      case 'silent':
+        return 4;
+      default:
+        return 1; // 无法识别的行（如自有的提示行）按 info 处理
+    }
+  }
+
+  /// 从 mihomo 日志行里取级别（形如 `time="…" level=info msg="…"`）
+  static String _lineLevel(String line) {
+    final m = RegExp(r'level=([a-zA-Z]+)').firstMatch(line);
+    return m?.group(1) ?? 'info';
+  }
+
+  /// 本页显示的行：**按当前级别过滤**。
+  /// 原先级别只作用于「内核输出」（PATCH /configs），已收集的日志不受影响，
+  /// 于是切换 debug/info/warning/error 时看到的内容几乎一样（真机反馈
+  /// 「感觉区别不大」）。现在同一级别同时过滤显示，切换立刻可见。
+  List<String> get _visibleLines {
+    final min = _levelRank(_level);
+    return _lines
+        .where((l) => _levelRank(_lineLevel(l)) >= min)
+        .toList(growable: false);
+  }
+
   Future<void> _copyAll() async {
-    final text = _lines.join('\n');
+    // 复制「当前可见」的行：与页面所见一致（级别过滤后只导错误时有意义）
+    final text = _visibleLines.join('\n');
     if (text.isEmpty) return;
     final messenger = ScaffoldMessenger.of(context);
     await Clipboard.setData(ClipboardData(text: text));
@@ -420,7 +469,7 @@ class _AppLogTabState extends State<_AppLogTab>
           child: Row(
             children: [
               Expanded(
-                child: Text(AppStrings.t('settings_log_desc'),
+                child: Text(AppStrings.t('app_log_desc'),
                     style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
               ),
               IconButton(
@@ -481,8 +530,9 @@ class _AppLogTabState extends State<_AppLogTab>
                           child: Text(AppStrings.t('log_no_errors'),
                               style: TextStyle(
                                   fontSize: 12, color: MFColors.txt3)))
+                      // 不用 reverse：日志条数少时 reverse 会把内容全堆在底部，
+                      // 顶部留一大片空白（真机反馈）；改为最新在最上方。
                       : ListView.builder(
-                          reverse: true,
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 10),
                           itemCount: _visible.length,

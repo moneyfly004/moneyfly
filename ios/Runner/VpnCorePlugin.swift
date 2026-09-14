@@ -21,6 +21,32 @@ class VpnCorePlugin {
     /// 最近一次启动失败原因（Dart 侧连接失败时读取，给出可诊断信息）
     private static var lastError: String?
 
+    /// App 侧诊断轨迹：记录每次连接尝试的关键节点与 NE 会话状态变化。
+    /// 与扩展侧轨迹互补 —— 即使扩展根本没起来（或 App Group 失效读不到扩展文件），
+    /// 这里也能看出「配置是否保存成功 / 会话经历了哪些状态 / 最终停在哪」。
+    private static var diagNotes: [String] = []
+    private static let diagStart = Date()
+    private static var statusObserver: NSObjectProtocol?
+
+    private static func note(_ message: String) {
+        let ms = Int(Date().timeIntervalSince(diagStart) * 1000)
+        diagNotes.append("[\(ms)ms] \(message)")
+        if diagNotes.count > 300 { diagNotes.removeFirst(diagNotes.count - 300) }
+        NSLog("[moneyfly] %@", message)
+    }
+
+    private static func statusName(_ s: NEVPNStatus) -> String {
+        switch s {
+        case .invalid: return "invalid"
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .reasserting: return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown"
+        }
+    }
+
     /// 增量读内核日志的游标（字节偏移）
     private static var logCursor: UInt64 = 0
 
@@ -47,6 +73,8 @@ class VpnCorePlugin {
                 handleFetchTunnelLog(result)
             case "fetchTunnelDiag":
                 handleFetchTunnelDiag(result)
+            case "fetchVpnDiag":
+                reply(result, diagNotes.joined(separator: "\n"))
             default:
                 result(FlutterMethodNotImplemented)
             }
@@ -75,24 +103,29 @@ class VpnCorePlugin {
         // 1) 优先写 App Group 共享文件：订阅配置可能几百 KB，塞进
         //    providerConfiguration（系统 VPN 偏好）不合适
         var wroteFile = false
-        if let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) {
-            let url = container.appendingPathComponent("config.yaml")
+        let groupPath = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)?.path
+        note("startVpn: 配置 \(yaml.utf8.count)B, App Group=\(groupPath ?? "<不可用>")")
+        if let groupPath {
+            let url = URL(fileURLWithPath: groupPath).appendingPathComponent("config.yaml")
             do {
                 try yaml.write(to: url, atomically: true, encoding: .utf8)
                 providerConf["configPath"] = url.path
                 wroteFile = true
+                note("已写入共享配置 \(url.path)")
             } catch {
                 lastError = "写入共享配置失败：\(error.localizedDescription)"
+                note("✗ 写共享配置失败: \(error.localizedDescription)")
             }
         } else {
-            lastError = "App Group 不可用（entitlement 未生效？）：配置只能走内联"
+            note("App Group 不可用（entitlement 未生效？）→ 配置只能内联传递")
         }
         // 2) 内联兜底：App Group 不可用时这是唯一通路。上限 1MB ——
         //    providerConfiguration 会存进系统 VPN 偏好，过大不合适；
         //    正常订阅配置（几百 KB 以内）都能带上。
         if !wroteFile || yaml.utf8.count < 1024 * 1024 {
             providerConf["configInline"] = yaml
+            note("已附带内联配置 \(yaml.utf8.count)B（不依赖 App Group）")
         }
 
         let proto = NETunnelProviderProtocol()
@@ -126,8 +159,11 @@ class VpnCorePlugin {
                         fail("加载 VPN 配置失败：\(error.localizedDescription)", result)
                         return
                     }
+                    note("配置已保存（复用已有=\(existing != nil)），开始观察会话状态")
+                    observeStatus(manager)
                     do {
                         try manager.connection.startVPNTunnel()
+                        note("startVPNTunnel 已发起，当前状态=\(statusName(manager.connection.status))")
                         lastError = nil
                         reply(result, true)
                     } catch {
@@ -164,26 +200,20 @@ class VpnCorePlugin {
 
     /// 隧道详细状态（诊断用）：`none/<无配置>`、`invalid/…`、`disconnected/…` 等
     private static func handleVpnStatus(_ result: @escaping FlutterResult) {
+        let groupOk = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
             let manager = managers?.first {
                 ($0.protocolConfiguration as? NETunnelProviderProtocol)?
                     .providerBundleIdentifier == tunnelBundleId
             }
             guard let manager else {
-                reply(result, "no-manager")
+                reply(result, "no-manager/AppGroup=\(groupOk)")
                 return
             }
-            let name: String
-            switch manager.connection.status {
-            case .invalid: name = "invalid"
-            case .disconnected: name = "disconnected"
-            case .connecting: name = "connecting"
-            case .connected: name = "connected"
-            case .reasserting: name = "reasserting"
-            case .disconnecting: name = "disconnecting"
-            @unknown default: name = "unknown"
-            }
-            reply(result, "\(name)/enabled=\(manager.isEnabled)")
+            reply(result,
+                  "\(statusName(manager.connection.status))/enabled=\(manager.isEnabled)"
+                  + "/AppGroup=\(groupOk)")
         }
     }
 
@@ -284,6 +314,20 @@ class VpnCorePlugin {
     }
 
     // MARK: - 工具
+
+    /// 观察 NE 会话状态变化（真机排查关键：连接尝试往往停在某个中间态）。
+    private static func observeStatus(_ manager: NETunnelProviderManager) {
+        if let statusObserver {
+            NotificationCenter.default.removeObserver(statusObserver)
+        }
+        let conn = manager.connection
+        note("会话初始状态=\(statusName(conn.status))")
+        statusObserver = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange, object: conn, queue: .main
+        ) { _ in
+            note("NE 状态 → \(statusName(conn.status))")
+        }
+    }
 
     private static func withManager(_ body: @escaping (NETunnelProviderManager?) -> Void) {
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
