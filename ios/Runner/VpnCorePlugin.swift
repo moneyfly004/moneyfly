@@ -5,12 +5,14 @@ import NetworkExtension
 /// App 侧 VPN 控制通道。
 ///
 /// 与 Android 的 `top.moneyfly/vpn_core` **同名同参**，因此 Dart 侧
-/// （`ProxyCoreIos`）可以复用 Android 那套结构：
+/// （`ProxyCoreEmbedded`）可以复用 Android 那套结构：
 ///   startVpn / stopVpn / isVpnRunning / kernelVersion / fetchKernelLogs / lastStartError
+/// 另外为 iOS 增加诊断方法（Android 无对应实现，Dart 侧按需调用）：
+///   vpnStatus / fetchTunnelLog / fetchTunnelDiag
 ///
 /// 职责边界：App 只负责「把配置交给系统 VPN 子系统并起停隧道」，内核跑在
 /// PacketTunnel 扩展进程里；切节点/测速/流量仍走内核的 Clash API（Dart 直连
-/// 127.0.0.1:<apiPort>），与桌面/Android 完全同一套代码。
+/// 127.0.0.1:<apiPort>）。
 class VpnCorePlugin {
 
     private static let appGroupId = "group.top.moneyfly.app"
@@ -39,6 +41,12 @@ class VpnCorePlugin {
                 handleFetchLogs(call, result)
             case "lastStartError":
                 result(lastError ?? "")
+            case "vpnStatus":
+                handleVpnStatus(result)
+            case "fetchTunnelLog":
+                handleFetchTunnelLog(result)
+            case "fetchTunnelDiag":
+                handleFetchTunnelDiag(result)
             default:
                 result(FlutterMethodNotImplemented)
             }
@@ -66,20 +74,24 @@ class VpnCorePlugin {
 
         // 1) 优先写 App Group 共享文件：订阅配置可能几百 KB，塞进
         //    providerConfiguration（系统 VPN 偏好）不合适
+        var wroteFile = false
         if let container = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) {
             let url = container.appendingPathComponent("config.yaml")
             do {
                 try yaml.write(to: url, atomically: true, encoding: .utf8)
                 providerConf["configPath"] = url.path
+                wroteFile = true
             } catch {
                 lastError = "写入共享配置失败：\(error.localizedDescription)"
             }
+        } else {
+            lastError = "App Group 不可用（entitlement 未生效？）：配置只能走内联"
         }
-
-        // 2) 内联兜底：App Group 不可用（未签名构建/权限缺失）或体积不大时
-        //    也带一份，扩展侧优先文件、回退内联 —— 两条路都断了才报错
-        if providerConf["configPath"] == nil || yaml.utf8.count < 256 * 1024 {
+        // 2) 内联兜底：App Group 不可用时这是唯一通路。上限 1MB ——
+        //    providerConfiguration 会存进系统 VPN 偏好，过大不合适；
+        //    正常订阅配置（几百 KB 以内）都能带上。
+        if !wroteFile || yaml.utf8.count < 1024 * 1024 {
             providerConf["configInline"] = yaml
         }
 
@@ -93,8 +105,13 @@ class VpnCorePlugin {
                 fail("读取 VPN 配置失败：\(error.localizedDescription)", result)
                 return
             }
-            // 复用已有配置（避免每次连接都在系统设置里堆一条 VPN 条目）
-            let manager = managers?.first ?? NETunnelProviderManager()
+            // 只复用「本扩展」的配置：managers 里可能有用户其它 VPN 配置，
+            // 直接取 first 会覆盖别人的 profile，也会起错扩展。
+            let existing = managers?.first {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?
+                    .providerBundleIdentifier == tunnelBundleId
+            }
+            let manager = existing ?? NETunnelProviderManager()
             manager.protocolConfiguration = proto
             manager.localizedDescription = "MoneyFly"
             manager.isEnabled = true
@@ -145,11 +162,34 @@ class VpnCorePlugin {
         }
     }
 
+    /// 隧道详细状态（诊断用）：`none/<无配置>`、`invalid/…`、`disconnected/…` 等
+    private static func handleVpnStatus(_ result: @escaping FlutterResult) {
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let manager = managers?.first {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?
+                    .providerBundleIdentifier == tunnelBundleId
+            }
+            guard let manager else {
+                reply(result, "no-manager")
+                return
+            }
+            let name: String
+            switch manager.connection.status {
+            case .invalid: name = "invalid"
+            case .disconnected: name = "disconnected"
+            case .connecting: name = "connecting"
+            case .connected: name = "connected"
+            case .reasserting: name = "reasserting"
+            case .disconnecting: name = "disconnecting"
+            @unknown default: name = "unknown"
+            }
+            reply(result, "\(name)/enabled=\(manager.isEnabled)")
+        }
+    }
+
     private static func handleKernelVersion(_ result: @escaping FlutterResult) {
         withManager { manager in
-            guard
-                let session = manager?.connection as? NETunnelProviderSession
-            else {
+            guard let session = manager?.connection as? NETunnelProviderSession else {
                 reply(result, "unknown")
                 return
             }
@@ -164,7 +204,7 @@ class VpnCorePlugin {
         }
     }
 
-    // MARK: - 日志
+    // MARK: - 日志与诊断
 
     /// 内核日志由扩展抽到 App Group 的 kernel.log（内核缓冲在扩展进程里，
     /// App 读不到），这里沿用与 Android 相同的两种语义：
@@ -207,6 +247,40 @@ class VpnCorePlugin {
             "log": String(data: data, encoding: .utf8) ?? "",
             "hasMore": false,
         ])
+    }
+
+    /// 扩展写入 App Group 的启动轨迹（tunnel.log）——扩展被系统杀掉后仍可读
+    private static func handleFetchTunnelLog(_ result: @escaping FlutterResult) {
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            reply(result, "App Group 不可用，扩展轨迹文件无法读取")
+            return
+        }
+        let url = container.appendingPathComponent("tunnel.log")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            reply(result, "（暂无 tunnel.log：扩展可能从未被系统拉起）")
+            return
+        }
+        reply(result, text)
+    }
+
+    /// 向**正在运行的扩展**索取内存里的启动轨迹（sendProviderMessage）。
+    /// 失败本身就是有价值的信息：说明扩展没在运行。
+    private static func handleFetchTunnelDiag(_ result: @escaping FlutterResult) {
+        withManager { manager in
+            guard let session = manager?.connection as? NETunnelProviderSession else {
+                reply(result, "扩展未运行（无 VPN 配置）")
+                return
+            }
+            do {
+                try session.sendProviderMessage(Data("diag".utf8)) { data in
+                    let text = data.flatMap { String(data: $0, encoding: .utf8) }
+                    reply(result, text ?? "（扩展返回空）")
+                }
+            } catch {
+                reply(result, "扩展未运行（sendProviderMessage 失败：\(error.localizedDescription)）")
+            }
+        }
     }
 
     // MARK: - 工具

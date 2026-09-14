@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
@@ -141,6 +142,11 @@ class ProxyCoreEmbedded extends ProxyCore {
     // 就绪窗口 20s：Clash API 监听在内核完全起来后才可用，Doze/后台限流/
     // 低端机慢启动都可能让首个 /version 迟到。窗口略放宽 + 超时后问原生
     // 存活（见下），双保险避免误杀正在正常转发的活内核。
+    //
+    // iOS 额外做「早失败」探测：扩展启动失败时系统会很快把连接置为
+    // disconnected/invalid，这时没必要干等满 20s —— 提前失败并带上扩展轨迹，
+    // 否则用户只会看到一个没有原因的「内核启动超时」。
+    var downStreak = 0;
     while (sw.elapsed < const Duration(seconds: 20)) {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
@@ -151,6 +157,18 @@ class ProxyCoreEmbedded extends ProxyCore {
           return;
         }
       } catch (_) {}
+      if (Platform.isIOS && sw.elapsed > const Duration(seconds: 5)) {
+        final st = await _iosVpnStatus();
+        if (st != null &&
+            (st.startsWith('no-manager') ||
+                st.startsWith('invalid') ||
+                st.startsWith('disconnected'))) {
+          downStreak++;
+          if (downStreak >= 5) break; // 隧道明确没起来 → 走失败分支（含诊断）
+        } else {
+          downStreak = 0;
+        }
+      }
       await Future.delayed(const Duration(milliseconds: 300));
     }
     // 就绪窗口内 Clash API /version 未返回 200 —— 但这**不等于**内核启动失败。
@@ -211,6 +229,15 @@ class ProxyCoreEmbedded extends ProxyCore {
         detail = detail.isEmpty ? picked : '$detail | $picked';
       }
     } catch (_) {}
+    // 3) iOS：把扩展侧诊断接进来（这是「内核启动超时」唯一的定位线索）
+    if (Platform.isIOS) {
+      final diag = await _iosTunnelDiagnostics();
+      if (diag.isNotEmpty) {
+        AppLog.kernel('iOS 隧道诊断:\n$diag');
+        final brief = _lastLines(diag, 6);
+        detail = detail.isEmpty ? brief : '$detail | $brief';
+      }
+    }
     _lastError = AppStrings.t('kernel_timeout');
     try {
       await _channel.invokeMethod('stopVpn');
@@ -219,6 +246,47 @@ class ProxyCoreEmbedded extends ProxyCore {
       ConnErrorKind.kernelTimeout,
       detail.isEmpty ? _lastError! : '$_lastError：$detail',
     );
+  }
+
+  /// iOS：向原生查询隧道状态（Android 无此通道方法 → 返回 null）。
+  /// 形如 `connected/enabled=true`、`disconnected/enabled=true`、`no-manager`。
+  Future<String?> _iosVpnStatus() async {
+    try {
+      return await _channel.invokeMethod<String>('vpnStatus');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// iOS：收集扩展侧诊断（内存轨迹优先，回退落盘轨迹）。
+  /// 「内核启动超时」本身没有任何定位价值，真正的信息都在扩展进程里：
+  /// 扩展有没有被系统拉起、配置有没有拿到、fd 取没取到、内核 Start 返回什么。
+  Future<String> _iosTunnelDiagnostics() async {
+    final parts = <String>[];
+    final st = await _iosVpnStatus();
+    if (st != null) parts.add('隧道状态: $st');
+    try {
+      final live = await _channel.invokeMethod<String>('fetchTunnelDiag');
+      if (live != null && live.trim().isNotEmpty) {
+        parts.add('[扩展内存轨迹]\n$live');
+      }
+    } catch (_) {}
+    try {
+      final persisted = await _channel.invokeMethod<String>('fetchTunnelLog');
+      if (persisted != null &&
+          persisted.trim().isNotEmpty &&
+          !persisted.startsWith('（暂无')) {
+        parts.add('[扩展落盘轨迹]\n$persisted');
+      }
+    } catch (_) {}
+    return parts.join('\n');
+  }
+
+  /// 取文本末尾 [n] 行（诊断块很长，错误文案里只放最有价值的尾部）
+  static String _lastLines(String text, int n) {
+    final lines = text.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    if (lines.length <= n) return lines.join(' / ');
+    return lines.sublist(lines.length - n).join(' / ');
   }
 
   @override
