@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Packet Tunnel：iOS 上唯一能建 utun 的入口。必须由扩展持有。
+	     注意：该 entitlement 需要「Network Extensions」能力，苹果只在付费
+	     开发者账号下签发；本项目通过侧载（TrollStore / 自签）分发，
+	     由安装器写入该 entitlement。 -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<!-- App 与扩展共享 config.yaml / kernel.log（config 可能很大，
+	     不适合走 providerConfiguration） -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.top.moneyfly.app</string>
+	</array>
+</dict>
+</plist>

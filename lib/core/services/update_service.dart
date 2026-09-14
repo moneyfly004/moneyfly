@@ -129,7 +129,10 @@ class UpdateService {
         prefixes = const ['MoneyFly-android-arm64-v8a-'];
         break;
       case TargetPlatform.iOS:
-        return null;
+        // iOS 走侧载分发（IPA 挂 GitHub Releases）：TrollStore / 自签安装。
+        // 只提示新版本 + 给出 IPA 下载地址，不在 App 内自更新（系统不允许）。
+        prefixes = const ['MoneyFly-ios-'];
+        break;
       case TargetPlatform.macOS:
         prefixes = await _isMacIntel()
             ? const ['MoneyFly-macos-x64-']

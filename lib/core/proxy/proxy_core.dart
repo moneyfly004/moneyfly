@@ -13,7 +13,7 @@ import '../services/local_paths.dart';
 import '../services/settings_store.dart';
 import '../services/speed_tester.dart';
 import 'geo_assets.dart';
-import 'proxy_core_android.dart';
+import 'proxy_core_embedded.dart';
 import 'proxy_core_cli.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
@@ -110,43 +110,14 @@ abstract class ProxyCore {
 /// 平台内核工厂
 class ProxyCoreFactory {
   static ProxyCore create() {
-    if (Platform.isAndroid) return ProxyCoreAndroid();
-    if (Platform.isIOS) return _UnavailableCore();
+    // Android(VpnService) 与 iOS(NetworkExtension PacketTunnel) 共用同一实现：
+    // 内核都是 gomobile 静态库，跑在系统提供的隧道里，由原生拿 tun fd 启动，
+    // 控制面统一走 Clash API。原生通道契约同名同参。
+    if (Platform.isAndroid || Platform.isIOS) return ProxyCoreEmbedded();
     return ProxyCoreCli();
   }
 }
 
-/// iOS 暂未接入内核的占位实现
-class _UnavailableCore implements ProxyCore {
-  @override
-  Future<void> start(Map<String, dynamic> config) async =>
-      throw UnsupportedError('当前平台内核未接入');
-  @override
-  Future<void> stop() async {}
-  @override
-  Future<void> switchMode(bool smart) async {}
-  @override
-  Future<void> switchNode(String tag) async {}
-  @override
-  Future<void> setKernelLogLevel(String level) async {}
-  @override
-  Future<int> testNodeDelay(String tag,
-      {Duration timeout = const Duration(seconds: 5), String? url}) async => -1;
-  @override
-  bool get isRunning => false;
-  @override
-  String? get lastError => '当前平台的内核尚未接入';
-  @override
-  VoidCallback? get onUnexpectedExit => null;
-  @override
-  set onUnexpectedExit(VoidCallback? cb) {}
-  @override
-  void Function(double, double)? get onTraffic => null;
-  @override
-  set onTraffic(void Function(double, double)? cb) {}
-  @override
-  void dispose() {}
-}
 
 /// 全局连接控制器：状态机 + 自动测速选优 + 断线重连 + 后台测速
 class ConnectionController extends ChangeNotifier {
@@ -591,8 +562,13 @@ class ConnectionController extends ChangeNotifier {
       // 复制、零网络；落盘失败（内置文件缺失/IO 异常）→ geoReady=false →
       // 智能规则降级为全代理：内核不会因缺文件联网下载 geo，启动不被网络
       // 拖慢、不会失败。
-      final geoReady =
-          await GeoAssets.materialize(preferDir: await _geoWorkDir());
+      // iOS：geo 数据随 PacketTunnel 扩展 bundle 分发，由扩展在启动时复制进
+      // 自己的可写目录（App 写不进扩展容器，扩展也读不到 App 容器）→ 这里不落盘、
+      // 直接视为就绪。若因落盘失败置 false，生成配置会降级掉 GEOSITE/GEOIP
+      // 规则，智能分流就没了。
+      final geoReady = Platform.isIOS
+          ? true
+          : await GeoAssets.materialize(preferDir: await _geoWorkDir());
       if (epoch != _epoch) return;
       final cfg = await compute(_buildConfigInIsolate, {
         'proxies': [for (final n in nodes) n.raw],

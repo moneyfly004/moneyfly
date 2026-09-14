@@ -54,3 +54,11 @@ mihomo-bin/
 # 本地开发用 tool/fetch_geodata.sh 获取）
 assets/rules/*.dat
 assets/rules/*.mmdb
+
+# ---- iOS ----
+# 内核框架 418MB，不入库（构建前由 tool/fetch_mihomo_ios.sh 下载）
+ios/Mihomelib.xcframework/
+# 扩展的 geo 数据来自 assets/rules（构建期下载），不重复入库
+ios/PacketTunnel/country.mmdb
+ios/PacketTunnel/geosite.dat
+ios/build/

@@ -412,11 +412,86 @@ jobs:
             dist/MoneyFly-macos-universal-*.dmg
             dist/SHA256SUMS-macos-universal.txt
 
+  # ================= iOS：侧载 IPA（TrollStore / 自签） =================
+  # 为什么产出「未签名」IPA：iOS 的 VPN 必须由 NetworkExtension 提供，依赖
+  # packet-tunnel-provider entitlement —— 苹果只在付费开发者账号下签发。
+  # 本项目走侧载分发（TrollStore / Sideloadly / AltStore），由设备侧安装器
+  # 完成签名与授权。因此这里产出「结构完整、已内嵌 entitlements」的 IPA：
+  #   Payload/Runner.app/PlugIns/PacketTunnel.appex  ← 内核（mihomo）跑在这里
+  # ad-hoc 签名（codesign -s -）不带 Apple 描述文件，因此可以携带任意
+  # entitlements，正是侧载工具能识别并沿用的形态。
+  ios:
+    name: iOS (unsigned IPA, sideload)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据（iOS 随扩展 bundle 分发）
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          ls -lh assets/rules/
+      - name: 下载 iOS 内核框架（Mihomelib.xcframework）
+        run: bash tool/fetch_mihomo_ios.sh "$MIHOMO_VERSION"
+      - name: 自检扩展 target 已就位
+        run: |
+          grep -q "PacketTunnel" ios/Runner.xcodeproj/project.pbxproj \
+            || { echo "error: 缺少 PacketTunnel 扩展 target（先运行 ruby tool/ios_setup_tunnel_target.rb）"; exit 1; }
+      - name: 构建 iOS release（不签名）
+        run: flutter build ios --release --no-codesign
+      - name: 组装 IPA（含扩展 + 内嵌 entitlements）
+        run: |
+          set -e
+          V="${INPUT_VERSION:-$GITHUB_REF_NAME}"; V="${V#v}"
+          APP="build/ios/iphoneos/Runner.app"
+          [ -d "$APP/PlugIns/PacketTunnel.appex" ] || {
+            echo "error: Runner.app 内未嵌入 PacketTunnel.appex"; ls -la "$APP"; exit 1; }
+          rm -rf Payload dist; mkdir -p Payload dist
+          cp -R "$APP" Payload/
+          # 顺序必须是「先内层 appex、后外层 app」
+          codesign --force -s - \
+            --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
+            Payload/Runner.app/PlugIns/PacketTunnel.appex
+          codesign --force -s - \
+            --entitlements ios/Runner/Runner.entitlements \
+            Payload/Runner.app
+          (cd Payload && zip -qry "../dist/MoneyFly-ios-$V.ipa" Runner.app)
+          (cd dist && shasum -a 256 "MoneyFly-ios-$V.ipa" > SHA256SUMS-ios.txt && ls -lh)
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+      - name: 校验 IPA 结构（扩展 + entitlements 必须真的在包里）
+        run: |
+          set -e
+          IPA=$(ls dist/MoneyFly-ios-*.ipa)
+          unzip -l "$IPA" | grep -q "Payload/Runner.app/PlugIns/PacketTunnel.appex/PacketTunnel" \
+            || { echo "error: IPA 里没有扩展可执行文件"; exit 1; }
+          unzip -l "$IPA" | grep -q "PacketTunnel.appex/geosite.dat" \
+            || echo "warning: 扩展内缺少 geosite.dat（分流规则会降级）"
+          codesign -d --entitlements - Payload/Runner.app/PlugIns/PacketTunnel.appex 2>&1 \
+            | grep -q "packet-tunnel-provider" \
+            || { echo "error: 扩展未携带 packet-tunnel-provider entitlement（装上后隧道不可用）"; exit 1; }
+          echo "✓ IPA 结构校验通过：$IPA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moneyfly-ios
+          path: |
+            dist/MoneyFly-ios-*.ipa
+            dist/SHA256SUMS-ios.txt
+
   # ================= 发布到 GitHub Releases =================
   release:
     name: 发布到 GitHub Releases
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [android, windows, macos-arm64, macos-x64, macos-universal]
+    needs: [android, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -438,6 +513,8 @@ jobs:
             - **macOS arm64**（Apple 芯片）: `MoneyFly-macos-arm64-*.dmg` — 需 **macOS 11+**
             - **macOS x64**（Intel，原生构建）: `MoneyFly-macos-x64-*.dmg` — 需 **macOS 10.15+**（建议 11+）
             - **Windows**: `MoneyFly-setup-*.exe` 安装版 + `MoneyFly-windows-x64-portable-*.zip`（Windows 10+）
+            - **iOS**: `MoneyFly-ios-*.ipa`（**未签名，需侧载**：TrollStore 直接安装；或用 Sideloadly / AltStore 自签）— 需 **iOS 14+**
+              - 隧道依赖 NetworkExtension entitlement，苹果只对付费开发者账号签发，故本包不带 Apple 签名，由设备侧安装器授权
 
             各架构安装包均为原生编译、内置匹配架构内核，请勿跨架构混装。
 
