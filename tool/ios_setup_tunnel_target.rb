@@ -86,32 +86,25 @@ else
        '先运行 bash tool/fetch_mihomo_ios.sh'
 end
 
-# ---- 把 geo 分流数据塞进扩展 bundle ----
-# 用 Run Script 而不是直接引用文件：assets/rules/ 是构建期下载的，
-# 不提交进仓库，直接引用会让缺文件时工程本身无法打开/构建。
-phase_name = 'Copy geo data'
-target.build_phases.reject { |p| p.respond_to?(:name) && p.name == phase_name }.each { |_| }
-existing = target.build_phases.find { |p| p.respond_to?(:name) && p.name == phase_name }
-existing&.remove_from_project
-script_phase = target.new_shell_script_build_phase(phase_name)
-# geo 是构建期产物，脚本必须每次执行（否则 Xcode 会因无输出依赖而告警）
-script_phase.always_out_of_date = '1'
-script_phase.shell_script = <<~SH
-  set -e
-  SRC="$SRCROOT/../assets/rules"
-  DEST="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
-  mkdir -p "$DEST"
-  for f in country.mmdb geosite.dat; do
-    if [ -f "$SRC/$f" ]; then
-      cp -f "$SRC/$f" "$DEST/$f"
-    elif [ "$CONFIGURATION" = "Release" ]; then
-      echo "error: 缺少 $SRC/$f（iOS 分流数据必须随包分发）" >&2
-      exit 1
-    else
-      echo "warning: 缺少 $SRC/$f（Debug 构建继续，分流规则将降级）"
-    fi
-  done
-SH
+# ---- 把 geo 分流数据作为扩展的**资源**打进 appex ----
+# 为什么不用 Run Script：脚本阶段没有输出声明时，Xcode 认为它可能改到产物的
+# 任何地方；而这个 appex 又被 Runner 的 Embed App Extensions 阶段嵌入 →
+# 直接报 "Cycle inside Runner; building could produce unreliable results"。
+# 声明为资源（PBXResourcesBuildPhase）则由 Xcode 正常排序，不会有环。
+# geo 文件由 CI/本地构建前下载（assets/rules/），仓库不提交（见 .gitignore）。
+geo_group = project.main_group.find_subpath('GeoData', true)
+geo_group.set_source_tree('<group>')
+geo_group.set_path('../assets/rules')
+GEO_FILES = %w[country.mmdb geosite.dat].freeze
+GEO_FILES.each do |name|
+  ref = geo_group.files.find { |f| f.path == name } || geo_group.new_file(name)
+  unless target.resources_build_phase.files_references.include?(ref)
+    target.resources_build_phase.add_file_reference(ref)
+    puts "· geo 资源已加入扩展 bundle: #{name}"
+  end
+end
+warn '⚠ 未找到 assets/rules/*（iOS 构建会失败）。先运行 bash tool/fetch_geodata.sh' unless
+  GEO_FILES.all? { |n| File.exist?("assets/rules/#{n}") }
 
 # ---- Runner 依赖 + 嵌入 PlugIns ----
 runner.add_dependency(target) unless runner.dependencies.any? { |d| d.target == target }
@@ -127,6 +120,22 @@ embed.add_file_reference(target.product_reference) unless
   embed.files_references.include?(target.product_reference)
 embed.files.find { |f| f.file_ref == target.product_reference }
      &.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+
+# ---- 把「嵌入扩展」排到 Flutter 的脚本阶段之前 ----
+# Flutter 的 Thin Binary / Run Script 是本工程的收尾阶段；Embed App Extensions
+# 若落在它们之后，Xcode 会认为「脚本可能改动随后被嵌入的产物」从而报
+# "Cycle inside Runner"。标准做法是把嵌入阶段放在脚本之前。
+scripts = runner.build_phases.select do |p|
+  p.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase)
+end
+if scripts.any?
+  first_script_idx = runner.build_phases.index(scripts.first)
+  if runner.build_phases.index(embed) > first_script_idx
+    runner.build_phases.delete(embed)
+    runner.build_phases.insert(first_script_idx, embed)
+    puts '· 已把 Embed App Extensions 移到脚本阶段之前（消除构建环）'
+  end
+end
 
 # ---- Runner 签名 entitlements ----
 runner.build_configurations.each do |config|
