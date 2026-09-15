@@ -32,7 +32,17 @@ class _NodesPageState extends State<NodesPage> {
   String _query = '';
   int _testDone = 0;
   int _testTotal = 0;
+  /// 进度节流状态（每轮测速开始前 _resetProgress 重置）
+  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+  double _lastPct = -1;
   Timer? _debounce; // 搜索防抖
+
+  /// 每轮测速开始前重置进度节流状态：否则上一轮的 _lastPct(≈1.0) 会把
+  /// 新一轮开头几次进度回调节流掉，用户看到进度条纹丝不动。
+  void _resetProgress() {
+    _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+    _lastPct = -1;
+  }
   final _searchCtrl = TextEditingController();
 
   Future<void> _load({bool force = false}) async {
@@ -141,49 +151,48 @@ class _NodesPageState extends State<NodesPage> {
       _toast(AppStrings.t('no_nodes'));
       return;
     }
-    // 有搜索/筛选时**只测筛选出的节点**：筛出 5 个就测 5 个，
-    // 不再把上千个没在看的节点一起测一遍（白等且无意义）。
+    // 有搜索/筛选时**只测筛选出的节点**：筛出 50 个就测 50 个，
+    // 不再把上千个没在看的节点一起测（白等且看不出对比结果）。
     final targets = _filterNodes(conn.nodes);
     if (targets.isEmpty) {
       _toast(AppStrings.t('no_match_nodes'));
       return;
     }
     final filtered = targets.length != conn.nodes.length;
+    _resetProgress();
     setState(() {
       _testing = true;
       _testDone = 0;
       _testTotal = targets.length;
     });
     try {
-      // 实时测速：逐节点回填延迟到 conn.nodes（就地更新）。进度回调驱动本页
-      // setState 重建 → 按最新延迟重新分组/排序，用户看到延迟一个个填上、
-      // 节点在组内实时上浮（节流见 _onTestProgress）。
-      if (filtered) {
-        await conn.retestSubset(
-          [for (final n in targets) n.tag],
-          switchToBest: conn.autoTest,
-          onProgress: _onTestProgress,
-        );
-        if (mounted) {
-          _toast(AppStrings.t('speed_done_filtered', {'n': '${targets.length}'}));
-        }
-        return;
-      }
-      await conn.retestAll(
+      // userInitiated: true —— 已连接时后台自动测速往往正在跑（连接后立刻
+      // 一轮），旧实现遇到"忙"直接 return，用户看到的就是「只弹了个提示、
+      // 延迟一个没变、进度也不动」。现在会先让那轮收尾再测用户要的这批。
+      final tested = await conn.speedTest(
+        tags: filtered ? {for (final n in targets) n.tag} : null,
         switchToBest: conn.autoTest,
+        userInitiated: true,
         onProgress: _onTestProgress,
       );
-      if (mounted) _toast(AppStrings.t('speed_done'));
+      if (!mounted) return;
+      // 只有真的测了节点才提示"完成"；一个都没测到（连接刚断/被取代）
+      // 如实告知，不让用户以为测过了。
+      if (tested == 0) {
+        _toast(AppStrings.t('speed_test_none'));
+      } else if (filtered) {
+        _toast(AppStrings.t('speed_done_filtered', {'n': '$tested'}));
+      } else {
+        _toast(AppStrings.t('speed_done'));
+      }
     } finally {
       if (mounted) setState(() => _testing = false);
     }
   }
 
-  /// 测速进度节流：千节点时每完成一个就 setState 会触发上千次整页重建
-  /// （含分组/排序/拍平）→ 每 ≥120ms 或进度 ≥5% 才刷新一次。
-  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
-  double _lastPct = -1;
-
+  /// 测速进度回调：驱动顶部 ⚡ 按钮显示 done/total（如 12/50）。
+  /// 节流：千节点时每完成一个就 setState 会触发上千次整页重建（含分组/
+  /// 排序/拍平）→ 每 ≥120ms 或进度 ≥5% 才刷新一次（首帧必刷）。
   void _onTestProgress(int done, int total) {
     final pct = total <= 0 ? 1.0 : done / total;
     final now = DateTime.now();
