@@ -10,6 +10,7 @@ import 'geo_assets.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
 import '../services/app_log.dart';
+import '../services/kernel_log.dart';
 import '../services/local_paths.dart';
 
 /// mihomo CLI 子进程 + 本地 Clash API（macOS / Windows / Linux）
@@ -156,40 +157,134 @@ class ProxyCoreCli extends ProxyCore {
   /// bind 失败("address already in use")+ "[CacheFile] can't open cache
   /// file: timeout"，表现为「退出后重开连不上」。
   /// 只匹配命令行含 moneyfly_core 的 mihomo，不会误杀其它 Clash 类软件。
-  /// [livePid] 指定要豁免的进程（通常传当前跟踪的内核 pid）；不传则清理
-  /// 所有匹配的残留内核 —— App 启动/退出路径都传空（那两处本就没有在跑的内核）。
+  ///
+  /// **只收真孤儿**（[isStaleKernelCandidate]）：父进程还活着的内核一律不动。
+  /// 旧实现无条件 kill 所有匹配进程，多开/双实例时会把**另一个实例正在用的活内核**
+  /// 杀掉（2026-09-14 日志里的 `KERNEL process exited unexpectedly, code=-1`：
+  /// PowerShell 的 `Stop-Process -Force` 终止码正是 -1），随后因为
+  /// autoReconnect 默认关闭而不再恢复，用户看到的是「好好的突然断线」。
+  /// [livePid] 额外豁免本实例当前跟踪的内核 pid。
   static Future<void> killStaleKernels({int? livePid}) async {
     try {
-      // 只豁免「当前正在跟踪的那个内核」，而不是「所有 ppid==本 App 的子进程」。
-      // 旧实现豁免了后者，而启停竞态留下的孤儿内核 PPID 恰好就是本 App →
-      // 只要 App 不退出就永远清不掉，它会一直占着 2080/9090 与 cache.db 锁，
-      // 导致之后每次连接都 bind 失败。
-      final live = livePid;
       if (Platform.isWindows) {
-        final exclude =
-            live != null ? " -and \$_.ProcessId -ne $live" : '';
-        await Process.run('powershell', [
-          '-NoProfile', '-Command',
-          "Get-CimInstance Win32_Process | Where-Object { \$_.Name -match 'mihomo' -and \$_.CommandLine -match 'moneyfly_core'$exclude } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }",
-        ]);
+        await _reapStaleKernelsWindows(livePid);
         return;
       }
-      final r = await Process.run('ps', ['-axo', 'pid,ppid,command'],
-          environment: {'PATH': Platform.environment['PATH'] ?? ''});
-      if (r.exitCode != 0) return;
-      for (final line in (r.stdout as String).split('\n')) {
-        if (!line.contains('mihomo') || !line.contains('moneyfly_core')) {
-          continue;
-        }
-        final m = RegExp(r'^\s*(\d+)\s+(\d+)').firstMatch(line);
-        if (m == null) continue;
-        final pidToKill = int.tryParse(m.group(1)!);
-        if (pidToKill == null || pidToKill <= 1) continue;
-        if (live != null && pidToKill == live) continue;
-        AppLog.kernel('kill stale mihomo pid=$pidToKill: ${line.trim()}');
-        await Process.run('kill', ['-9', '$pidToKill']);
-      }
+      await _reapStaleKernelsPosix(livePid);
     } catch (_) {}
+  }
+
+  /// 残留内核判定（纯函数，便于单测）。
+  ///
+  /// 判据是**父进程是否还是本 App**：
+  /// - 父进程已消失 → 真孤儿（上次 App 被强杀留下的），可收；
+  /// - 父进程是活着的 MoneyFly → 那是**别的实例正在使用的内核**，绝不能杀；
+  /// - 父进程活着但不是 MoneyFly（PID 被复用的极端情况）→ 按残留处理，
+  ///   否则端口/cache 锁永远解不开，连接一直 bind 失败。
+  @visibleForTesting
+  static bool isStaleKernelCandidate({
+    required int pid,
+    required int? parentPid,
+    required bool parentAlive,
+    required bool parentIsApp,
+    int? livePid,
+  }) {
+    if (pid <= 1) return false; // 0/1 是内核线程与 init，绝不碰
+    if (livePid != null && pid == livePid) return false; // 本实例在跟踪的内核
+    if (parentPid == null) return true; // 拿不到 ppid → 视为孤儿
+    if (!parentAlive) return true; // 父进程没了
+    return !parentIsApp; // 父进程活着：是 App → 别动，不是 App → PID 复用
+  }
+
+  /// 进程命令行里出现这个片段即认定为「本 App 的内核」（workDir 名）。
+  static const _workDirTag = 'moneyfly_core';
+
+  /// Windows：用一次 PowerShell 列出候选内核及其父进程信息，再由 Dart 决策，
+  /// 只对判定为孤儿的 pid 逐个 `Stop-Process -Force`。
+  ///
+  /// 决策放在 Dart（而非整段写在 PowerShell 里）是为了可单测，也避免
+  /// 「一个 Where-Object 写错就把活内核全杀了」这类无法回归的脚本 bug。
+  static Future<void> _reapStaleKernelsWindows(int? livePid) async {
+    final r = await Process.run('powershell', [
+      '-NoProfile',
+      '-Command',
+      // 原始字符串：`$($_.ParentProcessId)` 必须原样交给 PowerShell，不能被 Dart 插值
+      r'''Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'mihomo' -and $_.CommandLine -match 'moneyfly_core' } | ForEach-Object { $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.ParentProcessId)" -ErrorAction SilentlyContinue; "$($_.ProcessId)|$($_.ParentProcessId)|$($p.Name)" }''',
+    ]);
+    if (r.exitCode != 0) return;
+    for (final line in (r.stdout as String).split('\n')) {
+      final parts = line.trim().split('|');
+      if (parts.length < 3) continue;
+      final pid = int.tryParse(parts[0].trim());
+      if (pid == null) continue;
+      final ppid = int.tryParse(parts[1].trim());
+      final parentName = parts[2].trim();
+      final parentAlive = parentName.isNotEmpty;
+      if (!isStaleKernelCandidate(
+        pid: pid,
+        parentPid: ppid,
+        parentAlive: parentAlive,
+        parentIsApp: parentName.toLowerCase().contains('moneyfly'),
+        livePid: livePid,
+      )) {
+        if (parentAlive) {
+          AppLog.kernel(
+              'keep running kernel pid=$pid (parent $ppid $parentName alive)');
+        }
+        continue;
+      }
+      AppLog.kernel('kill stale mihomo pid=$pid (parent ${ppid ?? '?'} gone)');
+      // `$pid` 由 Dart 插值成真实 pid（PowerShell 侧不再有变量）；沿用
+      // Stop-Process -Force（其终止码为 -1，与日志里「被自己人收掉」的现场
+      // 特征一致，便于事后区分外部强杀）
+      await Process.run('powershell', [
+        '-NoProfile',
+        '-Command',
+        'Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue',
+      ]);
+    }
+  }
+
+  /// macOS / Linux：同一份 `ps` 快照里既有候选内核，也有它们父进程的命令行 ——
+  /// 父进程是否存活、是否是本 App 都从这一份快照读，不再额外探测（少两次 fork）。
+  static Future<void> _reapStaleKernelsPosix(int? livePid) async {
+    final r = await Process.run('ps', ['-axo', 'pid,ppid,command'],
+        environment: {'PATH': Platform.environment['PATH'] ?? ''});
+    if (r.exitCode != 0) return;
+    // pid → 命令行（用于判断父进程是否存活/是否本 App）
+    final cmdByPid = <int, String>{};
+    final candidates = <({int pid, int ppid})>[];
+    for (final line in (r.stdout as String).split('\n')) {
+      final m = RegExp(r'^\s*(\d+)\s+(\d+)\s+(.*)$').firstMatch(line);
+      if (m == null) continue;
+      final pid = int.tryParse(m.group(1)!);
+      final ppid = int.tryParse(m.group(2)!);
+      if (pid == null || ppid == null) continue;
+      final cmd = m.group(3) ?? '';
+      cmdByPid[pid] = cmd;
+      if (cmd.contains('mihomo') && cmd.contains(_workDirTag)) {
+        candidates.add((pid: pid, ppid: ppid));
+      }
+    }
+    for (final c in candidates) {
+      final parentCmd = cmdByPid[c.ppid];
+      if (!isStaleKernelCandidate(
+        pid: c.pid,
+        parentPid: c.ppid,
+        parentAlive: parentCmd != null,
+        parentIsApp: (parentCmd ?? '').toLowerCase().contains('moneyfly'),
+        livePid: livePid,
+      )) {
+        if (parentCmd != null) {
+          AppLog.kernel(
+              'keep running kernel pid=${c.pid} (parent ${c.ppid} alive)');
+        }
+        continue;
+      }
+      AppLog.kernel(
+          'kill stale mihomo pid=${c.pid}: ${cmdByPid[c.pid]?.trim()}');
+      await Process.run('kill', ['-9', '${c.pid}']);
+    }
   }
 
   @override
@@ -209,8 +304,11 @@ class ProxyCoreCli extends ProxyCore {
     _intentionalStop = false;
     _lastError = null;
     _logTail.clear();
-    // 桌面端兜底：清理上次异常退出残留的僵尸内核（避免端口/cache 锁冲突）
-    await killStaleKernels();
+    // 桌面端兜底：清理上次异常退出残留的僵尸内核（避免端口/cache 锁冲突）。
+    // 只收真孤儿 —— 父进程还活着的内核属于别的实例，杀了就是「好好的突然断线」。
+    await killStaleKernels(livePid: _proc?.pid);
+    // 把内核日志落盘路径写进 app_log：用户导出 app_log 时能顺着找到完整内核输出
+    KernelLog.announcePaths();
 
     // 从配置同步当前模式（rule=智能 / global=全局），热切节点时选对组
     _smartMode = config['mode']?.toString() != 'global';
@@ -475,6 +573,8 @@ class ProxyCoreCli extends ProxyCore {
     if (_logTail.length > _logKeep) _logTail.removeAt(0);
     _lastCoreLogs.add(line);
     if (_lastCoreLogs.length > _coreLogKeep) _lastCoreLogs.removeAt(0);
+    // 落盘：内存里的尾部会随进程/App 退出消失，而「内核为什么死」只能靠它查
+    KernelLog.append(line);
     if (!kernelLogStream.isClosed) {
       kernelLogStream.add(line);
     }
@@ -482,7 +582,7 @@ class ProxyCoreCli extends ProxyCore {
 
   String _tail() => _logTail.isEmpty ? '（无输出）' : _logTail.join(' | ');
 
-  /// 进程退出监视：主动 stop 之外的退出 → 通知控制器重连
+  /// 进程退出监视：主动 stop 之外的退出 → 先留现场（崩溃快照），再通知控制器自愈
   Future<void> _watchProcess() async {
     final p = _proc;
     if (p == null) return;
@@ -492,6 +592,16 @@ class ProxyCoreCli extends ProxyCore {
       _trafficCancel?.cancel();
       _lastError = '内核进程退出（code $code）：${_tail()}';
       AppLog.kernel('process exited unexpectedly, code=$code, log=${_tail()}');
+      // 崩溃现场独立成文件：app_log 里那行会被 120 字截断 + 512KB 旋转滚掉，
+      // 想定因（被安全软件杀 / OOM / 端口与锁冲突 / CPU 指令集不兼容）必须
+      // 有完整尾部 + 退出码，且要活过 App 重启。
+      unawaited(KernelLog.recordCrash(
+        code: code,
+        tail: List<String>.of(_lastCoreLogs),
+        note: 'unexpected exit',
+      ).then((path) {
+        if (path != null) AppLog.kernel('crash dump saved: $path');
+      }));
       _onUnexpectedExit?.call();
     }
   }

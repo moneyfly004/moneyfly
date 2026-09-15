@@ -92,9 +92,27 @@ class SystemProxyManager {
   /// 日志却打印「已恢复」。而残留的后果是整机断网（浏览器指向已死端口）。
   ///
   /// 这里改为**直接枚举系统当前状态**：凡指向本机残留端口的一律关掉。
+  ///
+  /// 「残留」的判据是**端口上还有没有进程在监听**（见 [shouldClearResidual]）：
+  /// 旧实现只比对「系统代理是否指向本机端口」，于是在多开/双实例场景下会把
+  /// **另一个实例正在使用的、活着的**系统代理当成残留清掉（2026-09-14
+  /// `startup: cleared residual system proxy` 紧跟着内核被杀的那次故障），
+  /// 用户表现为「显示已连接，但浏览器打不开网页」。
   /// 返回是否真的做了清理（供日志如实记录）。
-  static Future<bool> clearResidual({required int port}) async {
+  static Future<bool> clearResidual({required int port, bool force = false}) async {
     if (!_isMacOS && !_isWindows) return false;
+    // 判据一：系统代理是否指向本机端口（不指向 → 与本次残留无关，直接返回）
+    final pointsLocal = await pointsToLocal(port);
+    // 判据二：该端口还有没有进程在监听（有 → 指向的是**活内核**，不是残留）
+    final alive = await isLocalPortAlive(port);
+    if (!shouldClearResidual(
+        proxyPointsToLocal: pointsLocal, portAlive: alive, force: force)) {
+      if (pointsLocal && alive) {
+        AppLog.log('APP',
+            'startup: system proxy points to a live port $port, keep it');
+      }
+      return false;
+    }
     var fixed = false;
     try {
       fixed = _isWindows
@@ -111,6 +129,38 @@ class SystemProxyManager {
       AppLog.log('APP', 'startup: cleared residual system proxy (port $port)');
     }
     return fixed;
+  }
+
+  /// 残留清扫的决策（纯函数，便于单测）：只有「指向本机端口」**且**
+  /// 「该端口已经没人监听」才算残留。[force] 跳过探活（调用方明确知道要清）。
+  @visibleForTesting
+  static bool shouldClearResidual({
+    required bool proxyPointsToLocal,
+    required bool portAlive,
+    bool force = false,
+  }) {
+    if (!proxyPointsToLocal) return false;
+    if (force) return true;
+    return !portAlive;
+  }
+
+  /// 本机 [port] 是否有进程在监听（残留 vs 活内核的唯一判据）。
+  /// 只做一次 TCP 连接尝试，超时 300ms —— 启动路径上不能拖慢启动，
+  /// 而本机回环连接要么立刻成功要么立刻被拒。
+  static Future<bool> isLocalPortAlive(int port,
+      {Duration timeout = const Duration(milliseconds: 300)}) async {
+    if (kIsWeb) return false;
+    Socket? s;
+    try {
+      s = await Socket.connect('127.0.0.1', port, timeout: timeout);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        s?.destroy();
+      } catch (_) {}
+    }
   }
 
   /// Windows 残留清扫：ProxyEnable=1 且 ProxyServer 指向本机端口 → 关掉并清值。

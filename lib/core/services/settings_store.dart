@@ -16,6 +16,17 @@ class SettingsStore {
   static final SettingsStore instance = SettingsStore._();
   static const _p = 'moneyfly_settings_v1';
 
+  /// 默认测速探测地址：**必须 HTTPS**。
+  static const defaultTestUrl = 'https://www.gstatic.com/generate_204';
+
+  /// 遗留默认测速地址（2.1.x 用的是 http 版）。它是「整份设置持久化」的字段，
+  /// 老用户升级后会一直沿用存下来的 http，所以必须显式迁移：
+  /// - 明文 HTTP 会被运营商/代理提供商劫持；
+  /// - 内核测速对同一地址连发两次请求，明文下极易被判定失败，日志满屏
+  ///   `failed to get the second response from http://...`（内核自己都会警告
+  ///   「建议改用 HTTPS」），并让在线节点被误判成掉线。
+  static const legacyHttpTestUrl = 'http://www.gstatic.com/generate_204';
+
   /// 全局串行写队列：save/update 依次执行，避免并发交错
   static final SerialExecutor _writeQueue = SerialExecutor();
 
@@ -36,7 +47,7 @@ class SettingsStore {
         // Clash API 管理端口（切节点/测速/流量统计），默认 9090
         'clashApiPort': 9090,
         // 测速探测地址（内核 delay 测试；网络环境特殊时可改）
-        'testUrl': 'https://www.gstatic.com/generate_204',
+        'testUrl': defaultTestUrl,
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',
@@ -79,11 +90,22 @@ class SettingsStore {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        return _migrateLegacyDns(
-            {..._defaults(), ...Map<String, dynamic>.from(decoded)});
+        return _migrateLegacyTestUrl(_migrateLegacyDns(
+            {..._defaults(), ...Map<String, dynamic>.from(decoded)}));
       }
     } catch (_) {}
     return _defaults();
+  }
+
+  /// 兼容遗留的明文测速地址（见 [legacyHttpTestUrl]）。
+  /// 只在「值恰好等于旧默认值」时迁移 —— 用户自己填的任意地址（含自建 http
+  /// 探测端点）一律不动，避免把有意的配置悄悄改掉。
+  static Map<String, dynamic> _migrateLegacyTestUrl(Map<String, dynamic> s) {
+    final u = s['testUrl']?.toString().trim() ?? '';
+    if (u == legacyHttpTestUrl) {
+      s['testUrl'] = defaultTestUrl;
+    }
+    return s;
   }
 
   /// 兼容遗留单值键 `dns`：多 DNS 列表功能上线后，`dns` 只在
