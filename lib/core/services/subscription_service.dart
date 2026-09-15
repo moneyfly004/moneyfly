@@ -93,8 +93,28 @@ class SubscriptionService {
   /// - 账号正常：force 刷新 → 成功覆盖内存与磁盘缓存；网络/后端失败 →
   ///   回退本地缓存（仅当缓存属于当前安装且版本匹配），保证「运行即拉新
   ///   订阅覆盖旧配置」，断网时也不至于登录后一片空白。
+  /// 订阅同步中（含拉取 + 解析）。UI 用它显示「正在同步订阅…」：
+  /// 刚登录 / 刚刷新时这是**过程**，不该被展示成错误。
+  /// 放在这里而不是各调用点 —— fetchNodes 是所有订阅拉取的唯一收口。
+  final ValueNotifier<bool> syncing = ValueNotifier<bool>(false);
+  int _syncingDepth = 0;
+
+  void _enterSync() {
+    _syncingDepth++;
+    syncing.value = true;
+  }
+
+  void _exitSync() {
+    _syncingDepth--;
+    if (_syncingDepth <= 0) {
+      _syncingDepth = 0;
+      syncing.value = false;
+    }
+  }
+
   Future<List<ProxyNode>> fetchNodes({bool force = false}) async {
     final epoch = _epoch;
+    _enterSync();
     try {
       final info = await fetchInfo();
       if (info.subscribeUrl.isEmpty) return [];
@@ -133,6 +153,8 @@ class SubscriptionService {
         return List.of(_cache);
       }
       rethrow;
+    } finally {
+      _exitSync();
     }
   }
 

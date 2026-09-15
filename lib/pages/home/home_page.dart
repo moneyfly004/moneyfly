@@ -103,6 +103,8 @@ class _HomePageState extends State<HomePage>
     }
     if (conn.nodes.isNotEmpty && !force) return;
     setState(() => _loadingNodes = true);
+    // 订阅同步状态由 SubscriptionService 自行维护（见 syncing）；同步开始时
+    // ConnectionController 会清掉残留错误，UI 显示「正在同步订阅…」而非报错
     try {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       // 用受保护的合并入口:已连接且当前线路不在新订阅时保持现状(不打断),
@@ -143,6 +145,9 @@ class _HomePageState extends State<HomePage>
       // 到期 / 设备满 / 被禁用 / 未开通：先给对应提示，绝不放行
       // （状态在登录/进入主页时已判定，这里不依赖节点拉取结果）
       _showBlockedDialog(acc);
+    } else if (conn.syncingSubscription && conn.nodes.isEmpty) {
+      // 订阅还在同步：这是过程不是错误，别报"没有节点"
+      _toast(AppStrings.t('sub_syncing_wait'));
     } else if (conn.nodes.isEmpty) {
       _toast(AppStrings.t('no_nodes'));
     } else {
@@ -417,8 +422,10 @@ class _HomePageState extends State<HomePage>
               // switchNode 先把 realCountry 置 null（显示「检测中」）、再写回新国家
               // 或置失败态，若 selector 不监听它们，这几次 notifyListeners 都不会
               // 触发本卡重建，「真实出口」就停留在旧显示，直到别的字段变化才被动刷新。
-              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm, String? rc, bool rcf})>(
-                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode, rc: c.realCountry, rcf: c.realCountryFailed),
+              // sy（订阅同步中）必须进 selector：否则同步状态单独变化时
+              // 连接卡不会重建 —— 会出现「同步中」文案一直挂着不消失
+              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm, String? rc, bool rcf, bool sy})>(
+                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode, rc: c.realCountry, rcf: c.realCountryFailed, sy: c.syncingSubscription),
                 builder: (ctx, v, child) {
                   final conn = ctx.read<ConnectionController>();
                   final connected = conn.status == ConnStatus.connected;
@@ -903,6 +910,9 @@ class _HomePageState extends State<HomePage>
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 11, color: MFColors.txt3)),
           ],
+          // 真实错误优先（如内核启动失败），绝不被同步提示掩盖；
+          // 没有错误且正在同步 → 显示「正在同步订阅…」这个**过程**，
+          // 而不是让用户看到上一会话残留/或"节点还没到"的假错误。
           if (conn.error != null) ...[
             const SizedBox(height: 8),
             Text(conn.error!, textAlign: TextAlign.center,
@@ -914,6 +924,24 @@ class _HomePageState extends State<HomePage>
               const SizedBox(height: 8),
               _buildErrorActions(conn),
             ],
+          ],
+          if (conn.error == null && conn.syncingSubscription) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.5, color: MFColors.brandLight),
+                ),
+                const SizedBox(width: 6),
+                Text(AppStrings.t('sub_syncing'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+              ],
+            ),
           ],
           const SizedBox(height: 10),
           _buildModeSwitch(conn),
@@ -1240,7 +1268,8 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
                 GestureDetector(
                   onTap: conn.speedTesting
                       ? null
-                      : () => conn.retestAll(switchToBest: false),
+                      : () => conn.retestAll(
+                          switchToBest: false, userInitiated: true),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
