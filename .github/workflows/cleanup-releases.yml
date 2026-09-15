@@ -1,0 +1,71 @@
+name: Cleanup Releases
+
+# 发布物清理：删除指定 tag 的 GitHub Release（可选连带删除 tag）。
+#
+# 用途：本项目经常「删掉某个版本的 release → 改代码 → 重新构建同一版本」。
+# 没有本地 GitHub 凭据时（gh 未登录 / token 失效），用本工作流借仓库自带的
+# GITHUB_TOKEN 完成删除。
+#
+# 两种触发方式：
+#   1) 往 .github/cleanup-releases.txt 写入要删的 tag（每行一个）并推到 main；
+#      工作流消费后会把该文件清空并提交（带 [skip ci]，不会自触发）。
+#   2) Actions 页面手动 Run workflow，填逗号分隔的 tag。
+on:
+  push:
+    branches: [main]
+    paths: ['.github/cleanup-releases.txt']
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: '要删除的 tag（逗号分隔，如 v2.2.3,v2.2.4）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      - name: 删除指定 release（及 tag）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            raw="${{ github.event.inputs.tags }}"
+          else
+            raw="$(grep -v '^[[:space:]]*#' .github/cleanup-releases.txt | tr -d '\r' | tr '\n' ',' || true)"
+          fi
+          echo "待删除: $raw"
+          IFS=',' read -ra arr <<< "$raw"
+          for t in "${arr[@]}"; do
+            tag="$(echo "$t" | xargs)"
+            [ -z "$tag" ] && continue
+            echo "--- $tag ---"
+            gh release delete "$tag" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" \
+              && echo "release $tag 已删除（含 tag）" \
+              || echo "release $tag 不存在或无权限，尝试只删 tag"
+            git push origin --delete "$tag" 2>/dev/null && echo "tag $tag 已删除" || true
+          done
+          echo "剩余 release："
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 10 || true
+
+      - name: 清空待删除清单
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          printf '# 要删除的 release tag：每行一个（本工作流消费后会自动清空）\n' \
+            > .github/cleanup-releases.txt
+          git add .github/cleanup-releases.txt
+          if git diff --cached --quiet; then
+            echo "清单已为空，无需提交"
+          else
+            git commit -m "chore: 清空待删除 release 清单 [skip ci]"
+            git push
+          fi
