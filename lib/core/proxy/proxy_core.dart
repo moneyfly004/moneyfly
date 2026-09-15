@@ -11,6 +11,7 @@ import '../services/geo_lookup.dart';
 import '../services/local_notify.dart';
 import '../services/local_paths.dart';
 import '../services/settings_store.dart';
+import '../services/subscription_service.dart';
 import '../services/speed_tester.dart';
 import 'geo_assets.dart';
 import 'proxy_core_embedded.dart';
@@ -55,6 +56,9 @@ int _asPort(dynamic v, int fallback) {
   final p = int.tryParse(v?.toString().trim() ?? '');
   return p ?? fallback;
 }
+
+/// 测速后的节点切换策略（见 ConnectionController._applySwitchPolicy）
+enum _SwitchPolicy { none, best, auto }
 
 /// 连接状态
 enum ConnStatus { disconnected, disconnecting, testing, connecting, connected, reconnecting, error }
@@ -125,6 +129,15 @@ class ConnectionController extends ChangeNotifier {
   ConnectionController._() {
     _core.onUnexpectedExit = onDisconnectedUnexpectedly;
     _core.onTraffic = _onTraffic;
+    // 订阅同步状态变化 → 转发给 UI；开始同步时顺手清掉上一会话残留的错误，
+    // 免得刚登录时按钮下方挂着红色错误、让用户以为出错了
+    SubscriptionService.instance.syncing.addListener(() {
+      if (SubscriptionService.instance.syncing.value) {
+        error = null;
+        errorKind = ConnErrorKind.none;
+      }
+      notifyListeners();
+    });
   }
   static final ConnectionController instance = ConnectionController._();
 
@@ -201,6 +214,10 @@ class ConnectionController extends ChangeNotifier {
 
   /// 后台测速中（已连接状态下并行测速；不阻塞连接，仅用于 UI 提示）
   bool speedTesting = false;
+
+  /// 订阅同步中（登录后拉取/刷新订阅）：直接反映 SubscriptionService 的
+  /// 拉取状态。UI 用它显示「正在同步订阅…」——同步是过程，不是错误。
+  bool get syncingSubscription => SubscriptionService.instance.syncing.value;
 
   /// 实时速率（MB/s）——由内核 /traffic 1s 推送。
   /// 用独立 ValueNotifier：每秒更新只通知速率监听者（首页速率卡片），
@@ -483,6 +500,14 @@ class ConnectionController extends ChangeNotifier {
       return;
     }
     if (nodes.isEmpty) {
+      // 订阅正在同步（刚登录/刚刷新）→ 这是过程不是错误，由 UI 显示同步中
+      if (syncingSubscription) {
+        status = ConnStatus.disconnected;
+        error = null;
+        errorKind = ConnErrorKind.none;
+        notifyListeners();
+        return;
+      }
       error = AppStrings.t('no_available_nodes');
       errorKind = ConnErrorKind.none;
       notifyListeners();
@@ -695,58 +720,135 @@ class ConnectionController extends ChangeNotifier {
   /// [onEach] 每测完一个节点即回调 (tag, 延迟, 在线)，供上层实时回填 UI。
   Future<List<ProxyNode>> testAllNodes(List<ProxyNode> list,
       {void Function(int done, int total)? onProgress,
-      void Function(String tag, int latencyMs, bool online)? onEach}) async {
+      void Function(String tag, int latencyMs, bool online)? onEach,
+      bool Function()? shouldStop}) async {
     if (status == ConnStatus.connected && _core.isRunning) {
-      return _testViaKernel(list, onProgress: onProgress, onEach: onEach);
+      return _testViaKernel(list,
+          onProgress: onProgress, onEach: onEach, shouldStop: shouldStop);
     }
-    return SpeedTester.instance
-        .testAll(list, onProgress: onProgress, onEach: onEach);
+    return SpeedTester.instance.testAll(list,
+        onProgress: onProgress, onEach: onEach, shouldStop: shouldStop);
   }
 
-  /// 只测**指定的一批节点**（节点页搜索/筛选后点「测速」时用）。
+  /// 测速串行化：同一时刻只跑一轮测速。旧实现是「忙就直接 return」，
+  /// 于是连接后自动跑的后台测速会**静默吃掉**用户手动点的测速 ——
+  /// 用户看到的是「点了 ⚡ 只弹了个提示、延迟一个没变、也没有进度」。
+  Future<void>? _speedTestInFlight;
+
+  /// 测速代次：新一轮测速一开始就自增，让在跑的那轮尽快收尾（其结果作废）。
+  int _speedTestGen = 0;
+
+  /// 统一测速入口（节点页 ⚡ / 首页 ⚡ / 后台自动测速都走这里）。
   ///
-  /// 与 [retestAll] 的区别：未列入 [tags] 的节点保持原延迟与在线状态不变，
-  /// 不把时间浪费在用户当前没在看的节点上。全部命中时直接走 [retestAll]。
-  Future<void> retestSubset(Iterable<String> tags,
-      {bool switchToBest = true,
-      void Function(int done, int total)? onProgress}) async {
-    if (nodes.isEmpty || speedTesting) return;
-    final wanted = tags.toSet();
-    if (wanted.isEmpty) return;
-    final targets = nodes.where((n) => wanted.contains(n.tag)).toList();
-    if (targets.isEmpty) return;
-    if (targets.length == nodes.length) {
-      return retestAll(switchToBest: switchToBest, onProgress: onProgress);
+  /// [tags] 非空 = **只测这些节点**（节点页搜索/筛选后），null = 测全部。
+  /// [userInitiated] true = 用户主动点的：即使已有测速在跑也会**排队执行**，
+  ///   并先让在跑的那轮收尾（通常几百毫秒内），绝不静默丢弃请求。
+  /// 返回**实际测过的节点数**（0 = 一个都没测，调用方不要谎报"已完成"）。
+  Future<int> speedTest({
+    Set<String>? tags,
+    bool switchToBest = true,
+    bool userInitiated = true,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    if (nodes.isEmpty) return 0;
+    final running = _speedTestInFlight;
+    if (running != null) {
+      if (!userInitiated) return 0; // 后台自动测速：忙就跳过，避免任务堆叠
+      _speedTestGen++; // 让在跑的那轮尽快收尾
+      await running;
     }
-    final epoch = _epoch;
+    final targets = tags == null
+        ? List<ProxyNode>.of(nodes)
+        : nodes.where((n) => tags.contains(n.tag)).toList();
+    if (targets.isEmpty) return 0;
+    final gen = ++_speedTestGen;
+    final task = _runSpeedTest(
+      targets,
+      replaceAll: tags == null,
+      switchPolicy: switchToBest ? _SwitchPolicy.best : _SwitchPolicy.none,
+      onProgress: onProgress,
+      gen: gen,
+      epoch: _epoch,
+    );
+    _speedTestInFlight = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_speedTestInFlight, task)) _speedTestInFlight = null;
+    }
+  }
+
+  /// 执行一轮测速。[replaceAll] true=整体替换节点列表（测了全部），
+  /// false=只把被测节点替换回去（未测节点状态原样保留）。
+  Future<int> _runSpeedTest(
+    List<ProxyNode> targets, {
+    required bool replaceAll,
+    required _SwitchPolicy switchPolicy,
+    required int gen,
+    required int epoch,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    bool cancelled() => gen != _speedTestGen || epoch != _epoch;
     speedTesting = true;
     notifyListeners();
     try {
       final tested = await testAllNodes(
         targets,
         onProgress: onProgress,
-        onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online),
+        onEach: (tag, ms, online) {
+          if (gen != _speedTestGen) return; // 已被更新的一轮取代：不再回填
+          _mergeOneLatency(epoch, tag, ms, online);
+        },
+        shouldStop: cancelled,
       );
-      if (epoch != _epoch) return;
-      // 只把被测节点替换回原列表：保持原顺序，未测节点的状态原样保留
-      // （整体替换会把没测的节点当成「刚测过」的陈旧副本一起写回）。
-      final byTag = {for (final t in tested) t.tag: t};
-      nodes = [for (final n in nodes) byTag[n.tag] ?? n];
+      if (cancelled()) return 0; // 被新请求取代：本轮结果作废
+      if (replaceAll) {
+        nodes = tested;
+      } else {
+        // 只替换被测节点：未列入的节点既不改延迟也不改在线状态
+        final byTag = {for (final t in tested) t.tag: t};
+        nodes = [for (final n in nodes) byTag[n.tag] ?? n];
+      }
       _retargetCurrent();
       lastSpeedTestTime = _now();
-      // 选优只在被测子集里进行：用户筛了「日本」就别偷偷切到别的国家
-      final best = selectBestRespectingLock(tested);
-      if (switchToBest &&
-          best != null &&
-          status == ConnStatus.connected &&
-          _core.isRunning) {
-        await switchNode(best, userInitiated: false);
-      }
-    } catch (_) {
-      // 测速失败不影响已建立的连接
+      await _applySwitchPolicy(switchPolicy, tested);
+      return tested.length;
+    } catch (e) {
+      AppLog.error('测速失败: $e');
+      return 0;
     } finally {
       speedTesting = false;
       notifyListeners();
+    }
+  }
+
+  /// 测速后的切换策略：
+  /// - [none]：手动挑节点场景，只填延迟，不动当前线路
+  /// - [best]：直接切到实测最优（节点页 / 用户点「自动最优」）
+  /// - [auto]：连接后的后台测速，只在当前线路离线或明显更慢（>100ms）时才切，
+  ///   避免把用户手选的线路无谓地换掉
+  Future<void> _applySwitchPolicy(
+      _SwitchPolicy policy, List<ProxyNode> tested) async {
+    if (policy == _SwitchPolicy.none) return;
+    if (status != ConnStatus.connected || !_core.isRunning) return;
+    final best = selectBestRespectingLock(tested);
+    if (best == null) return;
+    if (policy == _SwitchPolicy.best) {
+      await switchNode(best, userInitiated: false);
+      return;
+    }
+    final cur = current;
+    if (cur == null) {
+      await switchNode(best, userInitiated: false);
+      return;
+    }
+    final curOnline =
+        nodes.firstWhere((n) => n.tag == cur.tag, orElse: () => cur);
+    if (!curOnline.online ||
+        (best.latencyMs >= 0 &&
+            curOnline.latencyMs >= 0 &&
+            best.latencyMs < curOnline.latencyMs - 100)) {
+      await switchNode(best, userInitiated: false);
     }
   }
 
@@ -756,7 +858,8 @@ class ConnectionController extends ChangeNotifier {
   /// 守卫只能阻止"整体替换"，挡不住"元素已被逐个改写"）。
   Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress,
-      void Function(String tag, int latencyMs, bool online)? onEach}) async {
+      void Function(String tag, int latencyMs, bool online)? onEach,
+      bool Function()? shouldStop}) async {
     if (nodes.isEmpty) return nodes;
     final result = [for (final n in nodes) n.clone()];
     var nextIdx = 0;
@@ -765,6 +868,8 @@ class ConnectionController extends ChangeNotifier {
 
     Future<void> worker() async {
       while (true) {
+        // 用户中途发起新一轮测速 → 立即收尾（不再发新的探测请求）
+        if (shouldStop != null && shouldStop()) break;
         final idx = nextIdx;
         if (idx >= result.length) break;
         nextIdx++;
@@ -804,8 +909,9 @@ class ConnectionController extends ChangeNotifier {
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
   /// 只测速+热切换节点，不重启内核、不断网）
   Future<void> retest() async {
-    if (nodes.isEmpty || speedTesting) return;
-    await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
+    if (nodes.isEmpty) return;
+    // 用户主动触发（首页「重新测速/自动最优」）：排队执行，不被后台测速吃掉
+    await speedTest(switchToBest: true, userInitiated: true);
   }
 
   /// 实时测速通知节流：逐节点回填每来一次就 notifyListeners 会在千节点时
@@ -840,77 +946,39 @@ class ConnectionController extends ChangeNotifier {
   /// - 节点页「⚡测速」、首页选择器「⚡测速」都走这里；
   /// - [switchToBest] 已连接且允许时测完切到最优（节点页/自动选优 true；
   ///   首页选择器手动挑节点时传 false，不打断用户选择）；
-  /// - [onProgress] 进度回调（节点页顶部 done/total 用）。
-  Future<void> retestAll({
+   /// 手动重新测速（节点页 / 首页「⚡测速」）：[switchToBest] 已连接且允许时
+  /// 测完切到最优；[tags] 非空时只测这些节点（节点页筛选后）。
+  /// 返回实际测过的节点数。
+  Future<int> retestAll({
     bool switchToBest = true,
+    bool userInitiated = true,
     void Function(int done, int total)? onProgress,
-  }) async {
-    if (nodes.isEmpty || speedTesting) return;
-    final epoch = _epoch;
-    speedTesting = true;
-    notifyListeners();
-    try {
-      final tested = await testAllNodes(
-        nodes,
+  }) =>
+      speedTest(
+        switchToBest: switchToBest,
+        userInitiated: userInitiated,
         onProgress: onProgress,
-        onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online),
       );
-      if (epoch != _epoch) return;
-      nodes = tested;
-      _retargetCurrent(); // 列表整体替换后 current 重指向新实例
-      lastSpeedTestTime = _now();
-      final best = selectBestRespectingLock(tested);
-      if (switchToBest &&
-          best != null &&
-          status == ConnStatus.connected &&
-          _core.isRunning) {
-        await switchNode(best, userInitiated: false);
-      }
-    } catch (_) {
-      // 测速失败不影响已建立的连接
-    } finally {
-      speedTesting = false;
-      notifyListeners();
-    }
-  }
 
   /// 后台测速 + 自动切换最优节点（不阻塞连接；测速中保持已连接状态，
   /// UI 通过 speedTesting 标记显示「测速中」）。
   /// 尊重 [lockedCountry]：用户手动选了国家后，只在该国范围内选最优。
   Future<void> _autoSpeedTestAndSwitch(int epoch, {bool forceBest = false}) async {
-    speedTesting = true;
-    notifyListeners();
+    // 已有测速在跑（用户手动或上一轮后台）→ 跳过本轮，绝不与用户抢
+    if (nodes.isEmpty || _speedTestInFlight != null) return;
+    final gen = ++_speedTestGen;
+    final task = _runSpeedTest(
+      List<ProxyNode>.of(nodes),
+      replaceAll: true,
+      switchPolicy: forceBest ? _SwitchPolicy.best : _SwitchPolicy.auto,
+      gen: gen,
+      epoch: epoch,
+    );
+    _speedTestInFlight = task;
     try {
-      final tested = await testAllNodes(nodes,
-          onEach: (tag, ms, online) => _mergeOneLatency(epoch, tag, ms, online));
-      if (epoch != _epoch) return;
-      nodes = tested;
-      _retargetCurrent(); // 列表整体替换后 current 重指向新实例
-      final best = selectBestRespectingLock(tested);
-      lastSpeedTestTime = _now();
-      if (best != null && status == ConnStatus.connected && _core.isRunning) {
-        if (forceBest) {
-          await switchNode(best, userInitiated: false);
-        } else {
-          final cur = current;
-          if (cur == null) {
-            await switchNode(best, userInitiated: false);
-          } else {
-            final curOnline =
-                nodes.firstWhere((n) => n.tag == cur.tag, orElse: () => cur);
-            if (!curOnline.online ||
-                (best.latencyMs >= 0 && curOnline.latencyMs >= 0 &&
-                    best.latencyMs < curOnline.latencyMs - 100)) {
-              await switchNode(best, userInitiated: false);
-            }
-          }
-        }
-      }
-    } catch (_) {
-      // 测速失败不影响已建立的连接
+      await task;
     } finally {
-      speedTesting = false;
-      notifyListeners();
+      if (identical(_speedTestInFlight, task)) _speedTestInFlight = null;
     }
   }
 

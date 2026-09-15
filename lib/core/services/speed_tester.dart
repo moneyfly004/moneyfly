@@ -61,13 +61,17 @@ class SpeedTester {
   /// UI（边测边刷、实时重排），不必等整批完成。
   Future<List<ProxyNode>> testAll(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress,
-      void Function(String tag, int latencyMs, bool online)? onEach}) async {
+      void Function(String tag, int latencyMs, bool online)? onEach,
+      /// 返回 true 时立即收尾：放弃剩余节点的探测（用户中途发起新一轮
+      /// 测速时用来快速腾出位置，见 ConnectionController.speedTest）
+      bool Function()? shouldStop}) async {
     final result = [for (final n in nodes) n.clone()];
     final queue = List<int>.generate(result.length, (i) => i);
     var done = 0;
 
     Future<void> worker() async {
       while (queue.isNotEmpty) {
+        if (shouldStop != null && shouldStop()) break;
         final idx = queue.removeLast();
         final n = result[idx];
         final udp = n.isUdpOnly;

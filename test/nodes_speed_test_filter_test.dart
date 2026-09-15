@@ -46,12 +46,19 @@ void main() {
   // 防火墙静默丢弃会跑到 5s 超时，真实探测的用例既慢又不确定）
   late List<String> probed;
 
+  /// 桩的每节点耗时：0 = 立即返回；>0 用来制造"测速进行中"窗口，验证进度显示
+  var probeDelayMs = 0;
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     ProxyCoreCli.manageSystemProxy = false;
     probed = <String>[];
+    probeDelayMs = 0;
     SpeedTester.debugProbeOverride = (node) async {
       probed.add(node.tag);
+      if (probeDelayMs > 0) {
+        await Future<void>.delayed(Duration(milliseconds: probeDelayMs));
+      }
       return 7;
     };
   });
@@ -137,5 +144,98 @@ void main() {
     expect(conn.nodes.every((n) => n.latencyMs == 7), true);
     // 兜底：本地化文案存在（避免 {n} 占位符漏配导致显示异常）
     expect(AppStrings.t('speed_done_filtered', {'n': '2'}), contains('2'));
+  });
+
+  testWidgets('筛选后测速：进度分母是筛选出的节点数（显示 x/N，不是全部）', (tester) async {
+    final conn = ConnectionController.instance;
+    conn.current = null;
+    await conn.loadNodes([
+      _node('日本-01', '127.0.0.1', 'JP'),
+      _node('日本-02', '127.0.0.1', 'JP'),
+      _node('美国-01', '127.0.0.1', 'US'),
+      _node('美国-02', '127.0.0.1', 'US'),
+      _node('美国-03', '127.0.0.1', 'US'),
+    ]);
+    probeDelayMs = 400; // 让测速停在"进行中"，好观察进度文案
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(_wrap(const NodesPage()));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    });
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, '日本');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    await tester.runAsync(() async {
+      await tester.tap(find.textContaining('⚡'));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    });
+    await tester.pump();
+
+    // 筛出 2 个 → 进度必须是 2 的分母（旧实现：要么没有进度、要么按全部 5 个算）
+    expect(find.textContaining('/2'), findsOneWidget,
+        reason: '筛选后测速进度应为筛选出的节点数');
+    expect(find.textContaining('/5'), findsNothing);
+
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 1200)));
+    await tester.pump();
+    expect(probed.toSet(), {'日本-01', '日本-02'});
+  });
+
+  test('后台测速正在跑时，用户手动测速必须排队执行而不是被静默丢弃', () async {
+    final conn = ConnectionController.instance;
+    conn.current = null;
+    await conn.loadNodes([
+      _node('日本-01', '127.0.0.1', 'JP'),
+      _node('日本-02', '127.0.0.1', 'JP'),
+      _node('美国-01', '127.0.0.1', 'US'),
+      _node('美国-02', '127.0.0.1', 'US'),
+    ]);
+    probeDelayMs = 150;
+
+    // 后台自动测速（连接后立刻会跑一轮）：占用测速通道
+    final background =
+        conn.retestAll(switchToBest: false, userInitiated: false);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    probed.clear();
+
+    // 用户此时筛选后点测速：旧实现 busy 直接 return → 只弹提示、一个都不测
+    final tested = await conn.speedTest(
+      tags: {'日本-01', '日本-02'},
+      switchToBest: false,
+      userInitiated: true,
+    );
+    await background;
+
+    expect(tested, 2, reason: '手动测速必须真的测到筛选出的节点');
+    expect(probed.toSet(), {'日本-01', '日本-02'},
+        reason: '只测筛选出的节点，且未被后台测速吃掉');
+    // 未筛选的节点保持原延迟（哨兵值），没有被后台那轮的结果覆盖
+    expect(
+        conn.nodes
+            .where((n) => n.tag.startsWith('美国'))
+            .every((n) => n.latencyMs == sentinel),
+        true);
+  });
+
+  test('tags 为空 / 全量标签时行为正确', () async {
+    final conn = ConnectionController.instance;
+    conn.current = null;
+    await conn.loadNodes([
+      _node('香港-01', '127.0.0.1', 'HK'),
+      _node('香港-02', '127.0.0.1', 'HK'),
+    ]);
+    probed.clear();
+    expect(await conn.speedTest(tags: const <String>{}, userInitiated: true), 0);
+    expect(probed, isEmpty);
+    expect(
+        await conn.speedTest(
+            tags: {'香港-01', '香港-02'},
+            switchToBest: false,
+            userInitiated: true),
+        2);
+    expect(probed.toSet(), {'香港-01', '香港-02'});
   });
 }
