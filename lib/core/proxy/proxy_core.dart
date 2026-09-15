@@ -123,6 +123,39 @@ class ProxyCoreFactory {
   }
 }
 
+/// 内核「异常退出」后的处置决策（纯逻辑，便于单元测试）
+enum CrashRecoveryAction {
+  /// 自动拉起内核：与用户偏好无关，客户端自身故障必须自愈
+  recover,
+
+  /// 放弃自动恢复，如实报错并把决定权交回用户
+  giveUp,
+}
+
+/// 内核异常退出处置纯函数（无副作用，可单测）：
+/// - 已熔断（10 分钟内反复崩溃）→ giveUp：否则「能启动但几秒后必崩」的内核
+///   会陷入 connect→崩→reconnect 的无限循环，每轮都动系统代理与通知；
+/// - 用户开了自动重连 → 沿用 reconnectTimes 额度（行为与旧版一致）；
+/// - 用户关了自动重连 → **仍然**允许内核崩溃自愈，额度 [maxKernelRecover]。
+///   这是关键差异：autoReconnect 管的是「网络/节点原因断开后要不要自动重连」，
+///   而内核进程消失是客户端自身故障 —— 停在那里等于让用户「只能直连、
+///   App 一声不吭」（2026-09-10 内核 code=1 静默退出后 count=0，一次没重试）。
+CrashRecoveryAction decideCrashRecovery({
+  required bool autoReconnect,
+  required bool burst,
+  required int reconnectCount,
+  required int maxReconnect,
+  required int kernelRecoverCount,
+  required int maxKernelRecover,
+}) {
+  if (burst) return CrashRecoveryAction.giveUp;
+  if (reconnectCount >= maxReconnect) return CrashRecoveryAction.giveUp;
+  if (autoReconnect) return CrashRecoveryAction.recover;
+  return kernelRecoverCount < maxKernelRecover
+      ? CrashRecoveryAction.recover
+      : CrashRecoveryAction.giveUp;
+}
+
 
 /// 全局连接控制器：状态机 + 自动测速选优 + 断线重连 + 后台测速
 class ConnectionController extends ChangeNotifier {
@@ -151,8 +184,10 @@ class ConnectionController extends ChangeNotifier {
   /// 最近一次连接失败的类型（首页错误区按类型给不同引导；非错误态为 none）
   ConnErrorKind errorKind = ConnErrorKind.none;
 
-  /// 测速探测地址（设置页可改；内核 delay 测试用，默认谷歌 204）
-  static const defaultTestUrl = 'https://www.gstatic.com/generate_204';
+  /// 测速探测地址（设置页可改；内核 delay 测试用，默认谷歌 204）。
+  /// 默认值收敛到 [SettingsStore.defaultTestUrl]：它同时也是「旧 http 默认值」
+  /// 迁移的判据（见 SettingsStore.legacyHttpTestUrl），两处必须是同一个常量。
+  static const defaultTestUrl = SettingsStore.defaultTestUrl;
   String testUrl = defaultTestUrl;
   bool smartMode = true;
 
@@ -358,6 +393,36 @@ class ConnectionController extends ChangeNotifier {
   static const _exitWindow = Duration(minutes: 10);
   static const _exitBurstLimit = 5;
 
+  /// 内核进程「异常消失」的自愈次数（本轮链条内）。
+  ///
+  /// 与用户偏好 [autoReconnect] **解耦**：autoReconnect 管的是「网络/节点原因
+  /// 断开后要不要自动重连」，而内核进程消失属于客户端自身故障 —— 静默停下
+  /// 等于让用户「整机只能直连、App 一声不吭」。实测 2026-09-10 内核 code=1
+  /// 静默退出后 `count=0`（一次都没重试），用户一小时后又自己发现。
+  int _kernelRecoverCount = 0;
+
+  /// 本轮重连链是否由「内核异常退出」触发。决定续链走自愈额度（不受
+  /// autoReconnect 门控）还是走用户的自动重连偏好。
+  bool _crashRecoveryChain = false;
+
+  /// 内核崩溃自愈的次数上限（仅在 autoReconnect 关闭时生效；开着时沿用
+  /// 用户的 reconnectTimes 与 [_exitBurstLimit] 熔断，行为与旧版一致）。
+  static const _maxKernelRecover = 3;
+
+  /// 是否还允许再自动拉起一轮（续链判定，用于 connect 失败后的下一轮）。
+  /// 熔断只在崩溃入口判一次（同一个 10 分钟窗口内已经判过），这里传 burst:false
+  /// —— 重连失败本身不会让「短时间反复崩溃」的计数增长。
+  bool get _autoRetryAllowed =>
+      decideCrashRecovery(
+        autoReconnect: autoReconnect,
+        burst: false,
+        reconnectCount: _reconnectCount,
+        maxReconnect: _maxReconnect,
+        kernelRecoverCount: _kernelRecoverCount,
+        maxKernelRecover: _maxKernelRecover,
+      ) ==
+      CrashRecoveryAction.recover;
+
   /// 各平台内核工作目录（geo 数据与 config 同目录，mihomo 按默认文件名加载）：
   /// - 桌面：CLI workDir（系统临时目录 moneyfly_core）
   /// - Android/iOS：filesDir/work（MoneyFlyVpnService 同一内核目录）
@@ -522,6 +587,12 @@ class ConnectionController extends ChangeNotifier {
     }
     final epoch = ++_epoch;
     _reconnectTimer?.cancel();
+    // 用户手动发起的连接（含启动自动连接）：上一轮崩溃自愈链作废，额度重置 ——
+    // 否则「连着崩三次后用户自己点了一次连接」会带着已耗尽的额度继续算账。
+    if (!fromReconnect) {
+      _crashRecoveryChain = false;
+      _kernelRecoverCount = 0;
+    }
     // 等待上一次断开(内核停止)真正完成，再启动新内核 —— 避免
     // disconnect 的 stop() 与本次 start() 并发：旧 stop 的
     // POST /shutdown / 系统代理 restore 可能误关刚就绪的新内核/新代理
@@ -647,7 +718,13 @@ class ConnectionController extends ChangeNotifier {
       // 不立刻清零重连计数：只有稳定存活够久才算「真的连上了」，才允许把
       // 计数归零（见 _stableResetTimer 说明）
       _stableResetTimer?.cancel();
-      _stableResetTimer = Timer(_stableResetAfter, () => _reconnectCount = 0);
+      _stableResetTimer = Timer(_stableResetAfter, () {
+        // 稳定存活够久才算「真的连上了」→ 重连/崩溃自愈计数一并归零
+        // （否则「能启动但几十秒后必崩」的内核会被计数逐步耗尽额度）
+        _reconnectCount = 0;
+        _kernelRecoverCount = 0;
+        _crashRecoveryChain = false;
+      });
       sessionUpMB = 0;
       sessionDownMB = 0;
       AppLog.conn('connected via ${current?.tag} (${current?.type})');
@@ -705,8 +782,9 @@ class ConnectionController extends ChangeNotifier {
       // 下一次重连成功后的 apply 交错，出现「已连接但系统代理被误关」；
       // 系统代理异常时由连接期的保活巡检自动恢复（见 SystemProxyManager）。
       // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（上限取自
-      // 设置 reconnectTimes）
-      if (fromReconnect && autoReconnect && _reconnectCount < _maxReconnect) {
+      // 设置 reconnectTimes；内核崩溃自愈链在 autoReconnect 关闭时用自愈额度，
+      // 见 [_autoRetryAllowed]）
+      if (fromReconnect && _autoRetryAllowed) {
         _scheduleReconnect();
       }
     }
@@ -998,6 +1076,9 @@ class ConnectionController extends ChangeNotifier {
     sessionDownMB = 0;
     upHistory.clear();
     downHistory.clear();
+    // 用户主动断开/登出：本轮崩溃自愈链作废（下次内核崩了重新给满额度）
+    _crashRecoveryChain = false;
+    _kernelRecoverCount = 0;
   }
 
   /// 在途的内核停止任务（disconnect/resetForLogout 发起）。
@@ -1165,7 +1246,8 @@ class ConnectionController extends ChangeNotifier {
 
   /// 内核异常退出回调：未连接/用户主动断开时忽略，否则走重连或放弃
   void onDisconnectedUnexpectedly() {
-    AppLog.kernel('unexpected exit, status=$status, autoReconnect=$autoReconnect, count=$_reconnectCount');
+    AppLog.kernel('unexpected exit, status=$status, autoReconnect=$autoReconnect, '
+        'count=$_reconnectCount, recover=$_kernelRecoverCount');
     if (status != ConnStatus.connected && status != ConnStatus.reconnecting) {
       return; // 用户主动断开/未连接时不重连
     }
@@ -1176,11 +1258,27 @@ class ConnectionController extends ChangeNotifier {
     _unexpectedExitAt.removeWhere((t) => now.difference(t) > _exitWindow);
     _unexpectedExitAt.add(now);
     final burst = _unexpectedExitAt.length > _exitBurstLimit;
-    if (!autoReconnect || burst || _reconnectCount >= _maxReconnect) {
+    // 本次是「内核进程消失」触发 → 标记为崩溃自愈链：即使 autoReconnect 关闭，
+    // 也必须拉起来（额度见 [_maxKernelRecover]，判定见 [decideCrashRecovery]）
+    _crashRecoveryChain = true;
+    final action = decideCrashRecovery(
+      autoReconnect: autoReconnect,
+      burst: burst,
+      reconnectCount: _reconnectCount,
+      maxReconnect: _maxReconnect,
+      kernelRecoverCount: _kernelRecoverCount,
+      maxKernelRecover: _maxKernelRecover,
+    );
+    if (action == CrashRecoveryAction.giveUp) {
       status = ConnStatus.disconnected;
-      error = _withKernelReason(autoReconnect && !burst
+      // 文案分层：开了自动重连却「重连次数耗尽」沿用原文案；内核反复异常退出
+      // 则直接指向「谁在杀内核」的排查方向（安全软件拦截 / 端口与缓存锁冲突 /
+      // 旧 CPU 指令集与新版内核不兼容），而不是含糊的「连接已断开」。
+      final exhausted =
+          !burst && autoReconnect && _reconnectCount >= _maxReconnect;
+      error = _withKernelReason(exhausted
           ? AppStrings.t('reconnect_exhausted')
-          : AppStrings.t('disconnected_hint'));
+          : AppStrings.t('kernel_crash_recover_failed'));
       errorKind = ConnErrorKind.none;
       unawaited(SystemProxyManager.restore());
       LocalNotify.instance.showReconnectFailed();
@@ -1208,6 +1306,11 @@ class ConnectionController extends ChangeNotifier {
     status = ConnStatus.reconnecting;
     notifyListeners();
     _reconnectCount++;
+    if (_crashRecoveryChain) {
+      _kernelRecoverCount++;
+      AppLog.conn('kernel crash recovery #$_kernelRecoverCount '
+          '(autoReconnect=$autoReconnect)');
+    }
     final delay = [1, 2, 5][(_reconnectCount - 1).clamp(0, 2)];
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(

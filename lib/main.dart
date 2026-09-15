@@ -22,6 +22,7 @@ import 'core/services/subscription_scheduler.dart';
 import 'core/services/tray_service.dart';
 import 'core/services/update_service.dart';
 import 'core/services/settings_store.dart';
+import 'core/services/single_instance.dart';
 import 'core/proxy/system_proxy.dart';
 import 'l10n/app_strings.dart';
 import 'pages/auth/login_page.dart';
@@ -63,6 +64,17 @@ void main() async {
   // 在创建窗口之前拦截：第二进程连窗口都不会创建就退出。这里不再做 Dart 侧
   // 检查——否则第一个实例会被自己持有的原生 mutex 误判成「已有实例」而自杀。
   WidgetsFlutterBinding.ensureInitialized();
+  // macOS/Linux 没有原生入口层可挂，用排他文件锁补上单实例守卫。
+  // 必须**早于**任何系统代理/内核清扫与 runApp：否则第二个实例的启动巡检
+  // 已经在动第一个实例的内核与系统代理了（多开互相打架的源头）。
+  final isDesktopRuntime = !Platform.environment.containsKey('FLUTTER_TEST') &&
+      (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+  if (isDesktopRuntime && !Platform.isWindows) {
+    if (!await SingleInstance.acquire()) {
+      AppLog.log('APP', 'another instance is running, exit this one');
+      exit(0);
+    }
+  }
   // 桌面端窗口管理（关闭=隐藏到托盘，不退出进程）
   if (!Platform.environment.containsKey('FLUTTER_TEST') &&
       (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
@@ -159,21 +171,28 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     CrashLogger.init();
     // 本地通知初始化（到期提醒 / 连接异常）
     LocalNotify.instance.init();
-    // 启动巡检(桌面):上次异常退出（强杀/注销/关机）可能残留系统代理指向死端口
-    // → 直接枚举系统当前状态清掉（不能走 restore()：新进程里 _applied/_original
-    // 恒为空，restore 会直接 return 什么都不做，导致整机断网却无法自愈）
+    // 启动巡检(桌面)：先收残留内核，再判系统代理。
+    //
+    // 顺序不能反：残留判定用「本地端口是否还有进程监听」区分「死掉的残留」
+    // 与「别的实例正在用的活代理」（见 SystemProxyManager.clearResidual）。
+    // 若先判代理（此时被强杀留下的孤儿内核还活着、端口在听 → 保留代理），
+    // 紧接着把它当孤儿收掉，系统代理就指向了一个刚被我们杀死的端口 ——
+    // 用户重启 App 反而整机断网。先收内核，端口自然变死，代理才会被判为残留清掉。
     if (Platform.isMacOS || Platform.isWindows) {
       unawaited(() async {
+        // 清扫上次残留的内核进程：占着 2080/9090 与 cache.db 锁会让
+        // 之后每次连接都 bind 失败（表现为「退出后重开连不上」）
+        try {
+          await ProxyCoreCli.killStaleKernels();
+        } catch (_) {}
+        // 清掉指向死端口的残留系统代理（不能走 restore()：新进程里
+        // _applied/_original 恒为空，restore 会直接 return 什么都不做，
+        // 导致整机断网却无法自愈）
         try {
           final s = await SettingsStore.instance.load();
           final port =
               (s['localPort'] as num?)?.toInt() ?? SystemProxyManager.defaultPort;
           await SystemProxyManager.clearResidual(port: port);
-        } catch (_) {}
-        // 同时清扫上次残留的内核进程：占着 2080/9090 与 cache.db 锁会让
-        // 之后每次连接都 bind 失败（表现为「退出后重开连不上」）
-        try {
-          await ProxyCoreCli.killStaleKernels();
         } catch (_) {}
       }());
     }

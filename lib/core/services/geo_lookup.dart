@@ -66,17 +66,21 @@ class GeoLookupService {
     } catch (_) {}
     Dio? dio;
     final errors = <String>[];
+    // 超时 8s（原 5s）：出口定位的外呼走刚建立的隧道，首包要等链路就绪 +
+    // 握手 + 远端回源，5s 在跨境线路上偏紧，会把「慢但可用」判成失败
+    // （日志里的 `The request connection took longer than 0:00:05` 即此）。
+    const lookupTimeout = Duration(seconds: 8);
     try {
       dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 5),
+        connectTimeout: lookupTimeout,
+        receiveTimeout: lookupTimeout,
         headers: {'Accept': 'application/json', 'User-Agent': 'MoneyFly'},
       ));
       // 显式走本地混合代理（App 自身请求默认不走系统代理）
       dio.httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () {
           final c = HttpClient();
-          c.connectionTimeout = const Duration(seconds: 5);
+          c.connectionTimeout = lookupTimeout;
           c.findProxy = (uri) => 'PROXY 127.0.0.1:$port';
           return c;
         },
