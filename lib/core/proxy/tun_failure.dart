@@ -45,6 +45,17 @@ const _fatalMarkers = <String>[
   'start tun interface timeout',
 ];
 
+/// 已核实的**正常** TUN 日志（从内核二进制里逐条挑出）。
+/// 这些行含 tun + failed/error，但完全不代表 TUN 没起来 —— 弱判据里要排除它们，
+/// 否则每台多网卡机器都会刷一条无意义的「疑似 TUN 异常」。
+const _knownBenignMarkers = <String>[
+  'auto detect interface', // auto-detect-interface 探不到出口接口（多网卡/Hyper-V/VPN）
+  'default interface changed', // 网卡切换监控
+  'default interface lost',
+  'tun name failed', // 取设备名失败，会用回退名继续
+  'unsupported tunname',
+];
+
 /// 权限类特征（Windows ERROR_ACCESS_DENIED / POSIX EPERM）
 const _privilegeMarkers = <String>[
   'access is denied',
@@ -76,7 +87,15 @@ const _driverMarkers = <String>[
   'not found',
 ];
 
-/// 从内核日志中判定 TUN 是否启动失败、以及失败原因（纯函数）。
+/// 单行是否命中「真致命」标记。
+///
+/// 供内核日志**边收边判**用：日志缓冲区有容量上限（40 行）且级别可调成 debug，
+/// 只在就绪时回头扫缓冲区会漏判 —— 启动瞬间打了几十条 debug 日志就把致命行挤
+/// 出去了。收到即判定与缓冲区无关。
+bool isFatalTunLine(String line) =>
+    _fatalMarkers.any((m) => line.toLowerCase().contains(m));
+
+/// TUN 是否真的启动失败、以及失败原因（纯函数）。
 ///
 /// 只在 [lines] 里找到 [_fatalMarkers] 时才返回失败；分类取「最后一条致命行」
 /// 及其之后的内容（内核通常把致命行与 OS 错误打在同一行或紧随其后）。
@@ -101,6 +120,33 @@ TunStartFailure detectTunStartFailure(Iterable<String> lines) {
   if (has(_busyMarkers)) return TunStartFailure.adapterBusy;
   return TunStartFailure.unknown;
 }
+
+/// **弱判据**：日志里有「像 TUN 出错」的行，但不是已知的致命串、也不是已知的
+/// 正常日志。
+///
+/// 存在意义：内核的失败文案无法穷举，[detectTunStartFailure] 只认两个已核实
+/// 的致命串 —— 万一真失败换了文案，硬判据会漏判。此时不强判失败（避免重演
+/// 「正常连接被判死」），而是让上层记一条可查的提示，把「静默假连接」降级成
+/// 「日志里留痕」。所以这个函数**允许假阳性**：命中也只写日志，不中断连接。
+bool looksLikeTunTrouble(Iterable<String> lines) {
+  for (final l in lines) {
+    final s = l.toLowerCase();
+    if (!s.contains('tun')) continue;
+    if (!(s.contains('error') || s.contains('failed') || s.contains('unable'))) {
+      continue;
+    }
+    if (_knownBenignMarkers.any(s.contains)) continue; // 已核实的正常日志
+    return true;
+  }
+  return false;
+}
+
+/// 该失败是否值得自动重试。
+/// 权限类**不重试**：进程不可能在运行中获得管理员权限，重试只是把可执行的
+/// 提示延后 8~30 秒（autoReconnect 开启且次数较大时更久），用户白等。
+/// 其余（网卡残留、驱动被拦）可能是暂态（上一轮的内核还在拆适配器），值得重试。
+bool isRetryableTunFailure(TunStartFailure failure) =>
+    failure != TunStartFailure.none && failure != TunStartFailure.privilege;
 
 /// TUN 启动失败（携带分类与内核尾部日志，供上层给出可执行提示 + 落盘取证）
 class TunStartException implements Exception {

@@ -795,8 +795,11 @@ class ConnectionController extends ChangeNotifier {
       // 系统代理异常时由连接期的保活巡检自动恢复（见 SystemProxyManager）。
       // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（上限取自
       // 设置 reconnectTimes；内核崩溃自愈链在 autoReconnect 关闭时用自愈额度，
-      // 见 [_autoRetryAllowed]）
-      if (fromReconnect && _autoRetryAllowed) {
+      // 见 [_autoRetryAllowed]）。例外：TUN 权限类失败是**确定性**的（进程不可能
+      // 运行中拿到管理员权限），重试只会把可执行提示推迟 8~30 秒。
+      if (fromReconnect &&
+          _autoRetryAllowed &&
+          (tunErr == null || isRetryableTunFailure(tunErr.failure))) {
         _scheduleReconnect();
       }
     }
