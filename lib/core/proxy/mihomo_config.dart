@@ -289,6 +289,19 @@ class MihomoConfigBuilder {
         'auto-route': tunAutoRoute,
         'auto-detect-interface': true,
         'dns-hijack': ['any:53'],
+        // 局域网在**路由层**就排除，与下面 bypassLan 的直连规则保持同一语义。
+        // 只在规则层直连（旧行为）时，局域网包仍要先被 TUN 抓进去再靠规则绕回，
+        // 对 NAS / 网络打印机 / mDNS、SSDP 局域网发现、局域网联机这类场景会变慢
+        // 甚至找不到设备。bypassLan=false（用户明确要局域网走代理）时不排除。
+        if (bypassLan && tunAutoRoute)
+          'route-exclude-address': const [
+            '127.0.0.0/8', // 回环（内核 API / 本机服务必须直连可达）
+            '10.0.0.0/8',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+            '169.254.0.0/16', // link-local
+            '224.0.0.0/4', // 组播（mDNS/SSDP）
+          ],
       };
     }
 
