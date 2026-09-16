@@ -68,6 +68,12 @@ class ProxyCoreCli extends ProxyCore {
 
   /// 本次启动是否已经就「TUN 起不来」报过一次日志（避免就绪轮询里刷屏）
   bool _tunFailureLogged = false;
+
+  /// 内核日志里第一条「真致命」TUN 行 + 紧随其后的上下文（供分类）
+  final List<String> _tunFatalContext = [];
+
+  /// 出现过「像 TUN 出错」但无法确认的行（见 looksLikeTunTrouble）
+  bool _tunSuspectSeen = false;
   String? _lastError;
   String? _configPath;
 
@@ -309,6 +315,8 @@ class ProxyCoreCli extends ProxyCore {
     _lastError = null;
     _logTail.clear();
     _tunFailureLogged = false;
+    _tunFatalContext.clear();
+    _tunSuspectSeen = false;
     // 桌面端兜底：清理上次异常退出残留的僵尸内核（避免端口/cache 锁冲突）。
     // 只收真孤儿 —— 父进程还活着的内核属于别的实例，杀了就是「好好的突然断线」。
     await killStaleKernels(livePid: _proc?.pid);
@@ -388,25 +396,30 @@ class ProxyCoreCli extends ProxyCore {
             await Future.delayed(const Duration(milliseconds: 200));
             continue;
           }
-          // TUN 判定：只认「真的没起来」的致命串（见 tun_failure.dart）。
-          // 旧实现是「行里同时含 tun 和 error/failed」，会把 mihomo 的正常告警
-          // （`[TUN] Auto detect interface … failed`，多虚拟网卡/Hyper-V 环境常见）
-          // 与数据面噪音（`error writing to TUN device`）当成致命失败 →
-          // 直接中断一条本来正常的连接，还提示「请以管理员身份运行」。
-          final tunFailure = detectTunStartFailure(_logTail);
+          // TUN 判定：只认「真的没起来」的致命串（见 tun_failure.dart），
+          // 且用边收边判的 [_tunFatalContext]（不受 40 行缓冲与 debug 级别影响）。
+          final tunFailure = detectTunStartFailure(_tunFatalContext);
           if (tunFailure != TunStartFailure.none) {
             if (_tunForceMode) {
               // force 模式只有 TUN 一条路 → 必须中断，否则是假连接
               await stop();
-              throw TunStartException(tunFailure, _tail());
+              throw TunStartException(tunFailure, _tunFatalContext.join(' | '));
             }
             // 自动模式（TUN + 系统代理）：TUN 挂了系统代理仍可用，不该中断连接；
             // 但绝不能静默 —— 用户以为游戏/UDP 走了代理，实际是直连。
             if (!_tunFailureLogged) {
               _tunFailureLogged = true;
               AppLog.error('[TUN] 启动失败（${tunFailure.name}），'
-                  '本次连接仅系统代理生效（UDP/游戏等不走代理）：${_tail()}');
+                  '本次连接仅系统代理生效（UDP/游戏等不走代理）：'
+                  '${_tunFatalContext.join(' | ')}');
             }
+          } else if (_tunSuspectSeen && !_tunFailureLogged) {
+            // 弱判据：有「像 TUN 出错」的行但无法确认致命。不中断连接（不重演
+            // 「正常连接被判死」），但留痕 —— 万一内核换了失败文案，至少日志里
+            // 能查到线索，而不是静默假连接。
+            _tunFailureLogged = true;
+            AppLog.error('[TUN] 检测到 TUN 相关错误但无法确认是否致命'
+                '（force 模式请确认是否有流量）：${_tail()}');
           }
           // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
           if (manageSystemProxy && !_tunForceMode) {
@@ -584,8 +597,25 @@ class ProxyCoreCli extends ProxyCore {
     if (_lastCoreLogs.length > _coreLogKeep) _lastCoreLogs.removeAt(0);
     // 落盘：内存里的尾部会随进程/App 退出消失，而「内核为什么死」只能靠它查
     KernelLog.append(line);
+    _trackTunLog(line);
     if (!kernelLogStream.isClosed) {
       kernelLogStream.add(line);
+    }
+  }
+
+  /// TUN 失败**边收边判**：就绪时再回头扫 `_logTail` 会漏 —— 缓冲区只有 40 行
+  /// 且日志级别可调成 debug，启动瞬间几十行 debug 足以把致命行挤出去（一旦漏判，
+  /// force 模式就是「显示已连接、零流量、零报错」）。收到即判定，与缓冲区无关。
+  void _trackTunLog(String line) {
+    if (_tunFatalContext.isNotEmpty) {
+      // 已在收集致命行之后的上下文（OS 错误常另起一行），最多留 8 行
+      if (_tunFatalContext.length < 8) _tunFatalContext.add(line);
+      return;
+    }
+    if (isFatalTunLine(line)) {
+      _tunFatalContext.add(line);
+    } else if (looksLikeTunTrouble([line])) {
+      _tunSuspectSeen = true;
     }
   }
 

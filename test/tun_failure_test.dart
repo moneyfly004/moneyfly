@@ -119,4 +119,61 @@ void main() {
       );
     });
   });
+
+  group('isFatalTunLine：单行判定（边收边判用，不受缓冲区容量影响）', () {
+    test('只认真致命串', () {
+      expect(isFatalTunLine('msg="Start TUN listening error: Access is denied."'),
+          isTrue);
+      expect(isFatalTunLine('Start Tun interface timeout'), isTrue);
+      expect(
+          isFatalTunLine(
+              'msg="[TUN] Auto detect interface for X failed, return \'<invalid>\'"'),
+          isFalse);
+      expect(isFatalTunLine('msg="[TUN] Tun adapter listening at: MoneyFly"'),
+          isFalse);
+    });
+  });
+
+  group('looksLikeTunTrouble：弱判据（只留痕，不中断）', () {
+    test('已核实的正常日志不算可疑（避免多网卡机器每次连接都刷一条）', () {
+      expect(
+          looksLikeTunTrouble([
+            'msg="[TUN] Auto detect interface for Ethernet 2 failed, return \'<invalid>\'"',
+            'msg="[TUN] default interface changed by monitor"',
+            'msg="[TUN] get tun name failed for fd 3"',
+          ]),
+          isFalse);
+    });
+
+    test('未知的 TUN 错误算可疑（内核换文案时的兜底线索）', () {
+      expect(
+          looksLikeTunTrouble([
+            'msg="[TUN] setup route failed: some brand new error text"',
+          ]),
+          isTrue);
+    });
+
+    test('与 TUN 无关的错误不算可疑', () {
+      expect(
+          looksLikeTunTrouble(['msg="Start ShadowSocks server error: x"']),
+          isFalse);
+      expect(looksLikeTunTrouble(const []), isFalse);
+    });
+  });
+
+  group('isRetryableTunFailure：确定性失败不重试', () {
+    test('权限类不重试（运行中不可能拿到管理员权限，重试只会推迟提示）', () {
+      expect(isRetryableTunFailure(TunStartFailure.privilege), isFalse);
+    });
+
+    test('网卡残留 / 驱动被拦可重试（上一轮内核可能还在拆适配器）', () {
+      expect(isRetryableTunFailure(TunStartFailure.adapterBusy), isTrue);
+      expect(isRetryableTunFailure(TunStartFailure.driver), isTrue);
+      expect(isRetryableTunFailure(TunStartFailure.unknown), isTrue);
+    });
+
+    test('没有失败时不重试', () {
+      expect(isRetryableTunFailure(TunStartFailure.none), isFalse);
+    });
+  });
 }
