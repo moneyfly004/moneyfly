@@ -18,6 +18,7 @@ import 'proxy_core_embedded.dart';
 import 'proxy_core_cli.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
+import 'tun_failure.dart';
 import '../../l10n/app_strings.dart';
 import 'conn_error.dart';
 export 'conn_error.dart';
@@ -758,19 +759,30 @@ class ConnectionController extends ChangeNotifier {
       errorKind = typedErr?.kind ?? ConnErrorKind.unknown;
       // StateError('内核已在运行') 是内部并发守卫触发的英文串（Bad state: ...），
       // 不该直接展示给用户；转成可读文案。
-      var errMsg = typedErr?.message ??
-          (e is UnsupportedError
-              ? _core.lastError ?? e.message
-              : (e is StateError ? AppStrings.t('kernel_busy') : e.toString()));
-      // TUN 模式需要管理员权限（macOS/Windows），给出明确提示
-      // （仅对未分类错误做文本映射；类型化错误已带明确语义，不再改写。
-      //  Android 的错误都是类型化/平台语义的，不走这里的桌面管理员文案）
-      if (typedErr == null &&
+      // TUN 启动失败：按分类给出**可执行**的提示（提权 / 网卡冲突 / 驱动被拦），
+      // 并把内核尾部日志落到日志中心 —— 比一句万能的「请以管理员身份运行」有用。
+      final tunErr = e is TunStartException ? e : null;
+      var errMsg = tunErr != null
+          ? _tunFailureMessage(tunErr.failure)
+          : (typedErr?.message ??
+              (e is UnsupportedError
+                  ? _core.lastError ?? e.message
+                  : (e is StateError ? AppStrings.t('kernel_busy') : e.toString())));
+      if (tunErr != null) {
+        AppLog.error('[TUN] 启动失败（${tunErr.failure.name}）：${tunErr.tail}');
+      }
+      // 桌面 TUN 的权限提示兜底：只匹配**真正的权限类文本**。
+      // 旧实现在这里还带一个 `'tun'` 子串 —— 任何提到 tun 的错误都会被改写成
+      // 「需要管理员权限」，把「网卡冲突 / 驱动被拦」这类真因掩盖掉。
+      if (tunErr == null &&
+          typedErr == null &&
           (Platform.isMacOS || Platform.isWindows) &&
           (tunMode == 'force' || tunMode == 'auto')) {
         final errLower = errMsg?.toLowerCase() ?? '';
-        if (errLower.contains('permission') || errLower.contains('operation not permitted') ||
-            errLower.contains('access') || errLower.contains('tun')) {
+        if (errLower.contains('permission') ||
+            errLower.contains('operation not permitted') ||
+            errLower.contains('access is denied') ||
+            errLower.contains('access denied')) {
           errMsg = Platform.isMacOS
               ? AppStrings.t('tun_need_admin_mac')
               : AppStrings.t('tun_need_admin_win');
@@ -1299,6 +1311,16 @@ class ConnectionController extends ChangeNotifier {
     final brief = first.length > 120 ? '${first.substring(0, 120)}…' : first;
     return '$base：$brief';
   }
+
+  /// TUN 启动失败的分类 → 可执行文案。
+  /// 旧实现不分原因，一律提示「请以管理员身份运行」，于是「同名虚拟网卡残留」
+  /// 与「驱动被安全软件拦」这两类非权限问题被掩盖，用户按提示提权后照样失败。
+  String _tunFailureMessage(TunStartFailure failure) => switch (failure) {
+        TunStartFailure.privilege => AppStrings.t('tun_fail_privilege'),
+        TunStartFailure.adapterBusy => AppStrings.t('tun_fail_adapter_busy'),
+        TunStartFailure.driver => AppStrings.t('tun_fail_driver'),
+        _ => AppStrings.t('tun_fail_unknown'),
+      };
 
   /// 调度下一次重连（onDisconnectedUnexpectedly 与重连失败共用，
   /// 保证链条连续：第 1 次失败 → 第 2 次 → 第 3 次 → 放弃）

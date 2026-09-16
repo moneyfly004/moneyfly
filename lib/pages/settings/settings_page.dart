@@ -129,7 +129,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _pickTestUrl),
             // ② 代理与分流：TUN、DNS、直连名单、按应用分流
             _section(AppStrings.t('group_proxy')),
-            if (!Platform.isAndroid)
+            // TUN 模式行只在**真的能选**的平台显示：Android/iOS 的 tunMode 会被
+            // 内核侧强制成 auto（移动端只能走系统隧道），显示出来是个点了没用的
+            // 假开关 —— 用户以为自己关掉了 TUN，其实仍在走（旧实现 iOS 正是如此）。
+            if (!Platform.isAndroid && !Platform.isIOS)
               _row(icon: '🚀', title: AppStrings.t('settings_tun'),
                   desc: _tunDesc(),
                   value: switch (_s['tunMode']?.toString()) {

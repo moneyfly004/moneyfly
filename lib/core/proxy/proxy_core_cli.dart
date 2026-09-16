@@ -9,6 +9,7 @@ import 'proxy_core.dart';
 import 'geo_assets.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
+import 'tun_failure.dart';
 import '../services/app_log.dart';
 import '../services/kernel_log.dart';
 import '../services/local_paths.dart';
@@ -64,6 +65,9 @@ class ProxyCoreCli extends ProxyCore {
   /// （双开内核 → `_proc` 被覆盖 → 失去跟踪的那个成为清不掉的孤儿）。
   bool _starting = false;
   bool _intentionalStop = false;
+
+  /// 本次启动是否已经就「TUN 起不来」报过一次日志（避免就绪轮询里刷屏）
+  bool _tunFailureLogged = false;
   String? _lastError;
   String? _configPath;
 
@@ -304,6 +308,7 @@ class ProxyCoreCli extends ProxyCore {
     _intentionalStop = false;
     _lastError = null;
     _logTail.clear();
+    _tunFailureLogged = false;
     // 桌面端兜底：清理上次异常退出残留的僵尸内核（避免端口/cache 锁冲突）。
     // 只收真孤儿 —— 父进程还活着的内核属于别的实例，杀了就是「好好的突然断线」。
     await killStaleKernels(livePid: _proc?.pid);
@@ -383,14 +388,25 @@ class ProxyCoreCli extends ProxyCore {
             await Future.delayed(const Duration(milliseconds: 200));
             continue;
           }
-          // TUN-only(force) 模式没有 mixed 入站，端口探活失效 → 改看内核日志：
-          // 非管理员/被安全软件拦截时 mihomo 只打 `Start TUN listening error`
-          // 却继续运行、Clash API 照样 200，不检查就会「显示已连接、零流量、零报错」。
-          if (_tunForceMode && _tunFailedInLog) {
-            await stop();
-            throw UnsupportedError('TUN 未能启动（通常是缺少管理员/root 权限或'
-                '被安全软件拦截）。请以管理员身份运行，或改用「仅系统代理」模式。'
-                '日志：${_tail()}');
+          // TUN 判定：只认「真的没起来」的致命串（见 tun_failure.dart）。
+          // 旧实现是「行里同时含 tun 和 error/failed」，会把 mihomo 的正常告警
+          // （`[TUN] Auto detect interface … failed`，多虚拟网卡/Hyper-V 环境常见）
+          // 与数据面噪音（`error writing to TUN device`）当成致命失败 →
+          // 直接中断一条本来正常的连接，还提示「请以管理员身份运行」。
+          final tunFailure = detectTunStartFailure(_logTail);
+          if (tunFailure != TunStartFailure.none) {
+            if (_tunForceMode) {
+              // force 模式只有 TUN 一条路 → 必须中断，否则是假连接
+              await stop();
+              throw TunStartException(tunFailure, _tail());
+            }
+            // 自动模式（TUN + 系统代理）：TUN 挂了系统代理仍可用，不该中断连接；
+            // 但绝不能静默 —— 用户以为游戏/UDP 走了代理，实际是直连。
+            if (!_tunFailureLogged) {
+              _tunFailureLogged = true;
+              AppLog.error('[TUN] 启动失败（${tunFailure.name}），'
+                  '本次连接仅系统代理生效（UDP/游戏等不走代理）：${_tail()}');
+            }
           }
           // 内核就绪后管理系统代理（仅有 mixed 端口时，TUN force 模式不需要）
           if (manageSystemProxy && !_tunForceMode) {
@@ -411,13 +427,6 @@ class ProxyCoreCli extends ProxyCore {
             '已停止以避免误判为「已连接」。请在设置中更换端口。日志：${_tail()}'
         : '内核启动超时（${_readyTimeout.inSeconds}s）。日志：${_tail()}$_winKernelHint');
   }
-
-  /// 内核日志里是否出现「TUN 启动失败」。非管理员/被拦截时 mihomo 只打
-  /// error 日志、进程不退出、Clash API 仍返回 200 → 不检查就是假连接。
-  bool get _tunFailedInLog => _logTail.any((l) {
-        final s = l.toLowerCase();
-        return s.contains('tun') && (s.contains('error') || s.contains('failed'));
-      });
 
   /// 本地端口探活：内核是否真的在 [port] 上监听。
   /// 比 Clash API 的 200 更接近「系统代理指向它能上网」这一实际语义。
