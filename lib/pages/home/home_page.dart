@@ -711,8 +711,17 @@ class _HomePageState extends State<HomePage>
       ),
       child: Column(
         children: [
-          Text(statusLabel,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: statusColor)),
+          // 状态文案定高 + 单行：文案在「已连接」↔「已连接 · 测速中」之间切换、
+          // 窄窗口下也不折行，卡片高度恒定（避免每次自动测速都顶一下下方内容）
+          SizedBox(
+            height: 17,
+            child: Text(statusLabel,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600, color: statusColor)),
+          ),
           // 已连接时长 + 本次流量(独立 1s 刷新,不重建整卡)
           if (connected) ...[
             const SizedBox(height: 6),
@@ -815,12 +824,19 @@ class _HomePageState extends State<HomePage>
                           border: Border.all(
                               color: mfLatencyColor(node.latencyMs, true).withValues(alpha: .25)),
                         ),
-                        child: Text('${node.latencyMs} ms',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: mfLatencyColor(node.latencyMs, true),
-                                fontFamily: kNumFont,
-                                fontWeight: FontWeight.w600)),
+                        child: SizedBox(
+                          width: 46,
+                          child: Text('${node.latencyMs} ms',
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              softWrap: false,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: mfLatencyColor(node.latencyMs, true),
+                                  fontFamily: kNumFont,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                  fontWeight: FontWeight.w600)),
+                        ),
                       ),
                     const SizedBox(width: 6),
                     // #2 明显的切换箭头（整行可点）
@@ -888,27 +904,44 @@ class _HomePageState extends State<HomePage>
           // 不再整块消失/永远停在「检测中」，用户始终知道出口状态
           if (connected) ...[
             const SizedBox(height: 8),
-            if (conn.realCountry != null)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CountryFlag(conn.realCountry, size: 13, rounded: true),
-                  const SizedBox(width: 5),
-                  Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
-                      style: TextStyle(fontSize: 11, color: MFColors.green)),
-                ],
-              )
-            else if (conn.realCountryFailed)
-              GestureDetector(
-                onTap: () => conn.refreshRealCountry(force: true),
-                child: Text(AppStrings.t('real_exit_failed_retry'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11, color: MFColors.amber)),
-              )
-            else
-              Text(AppStrings.t('real_exit_detecting'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+            // 定高一行：三个状态（已测出 / 检测中 / 检测失败可点重试）文案长度
+            // 不同，旧实现高度随内容变，切换时下方内容上下跳
+            SizedBox(
+              height: 16,
+              child: conn.realCountry != null
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CountryFlag(conn.realCountry, size: 13, rounded: true),
+                        const SizedBox(width: 5),
+                        Text('${AppStrings.t('real_exit')} · ${GeoLookupService.countryName(conn.realCountry)}',
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: MFColors.green)),
+                      ],
+                    )
+                  : conn.realCountryFailed
+                      ? GestureDetector(
+                          onTap: () => conn.refreshRealCountry(force: true),
+                          child: Center(
+                            child: Text(AppStrings.t('real_exit_failed_retry'),
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 11, color: MFColors.amber)),
+                          ),
+                        )
+                      : Center(
+                          child: Text(AppStrings.t('real_exit_detecting'),
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+                        ),
+            ),
           ],
           // 真实错误优先（如内核启动失败），绝不被同步提示掩盖；
           // 没有错误且正在同步 → 显示「正在同步订阅…」这个**过程**，
@@ -1025,15 +1058,19 @@ class _HomePageState extends State<HomePage>
     return ValueListenableBuilder<SpeedSnapshot>(
       valueListenable: conn.speedNotifier,
       builder: (context, snap, _) {
-        final up = snap.upMbps;
-        final down = snap.downMbps;
+        // 单位迟滞需要「上次的单位」。这两个字段是**显示缓存**：随每次速率快照
+        // 更新，同一次 build 立刻用到，所以直接赋值、不调 setState（不触发重建）。
+        final up = formatSpeed(snap.upMbps, lastUnit: _upUnit);
+        final down = formatSpeed(snap.downMbps, lastUnit: _downUnit);
+        _upUnit = up.unit;
+        _downUnit = down.unit;
         return Row(
           children: [
             Expanded(
               child: _StatCard(
                 label: AppStrings.t('up_speed'),
-                value: _formatSpeed(up),
-                unit: _speedUnit(up),
+                value: up.value,
+                unit: up.unit,
                 icon: Icons.arrow_upward_rounded,
                 color: MFColors.brandLight,
                 spark: conn.upHistory,
@@ -1043,8 +1080,8 @@ class _HomePageState extends State<HomePage>
             Expanded(
               child: _StatCard(
                 label: AppStrings.t('down_speed'),
-                value: _formatSpeed(down),
-                unit: _speedUnit(down),
+                value: down.value,
+                unit: down.unit,
                 icon: Icons.arrow_downward_rounded,
                 color: MFColors.green,
                 spark: conn.downHistory,
@@ -1056,17 +1093,9 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  String _formatSpeed(double mbps) {
-    if (mbps <= 0) return '0.0';
-    if (mbps < 0.1) return (mbps * 1024).toStringAsFixed(0);
-    return mbps.toStringAsFixed(1);
-  }
-
-  String _speedUnit(double mbps) {
-    if (mbps <= 0) return 'MB/s';
-    if (mbps < 0.1) return 'KB/s';
-    return 'MB/s';
-  }
+  /// 速率显示单位缓存（见 [_buildStats] 与 [formatSpeed] 的迟滞说明）
+  String _upUnit = 'MB/s';
+  String _downUnit = 'MB/s';
 
   /// 快速切换国家：点按即切该国延迟最优的在线节点
   Widget _buildQuickCountries(ConnectionController conn) {
@@ -1189,9 +1218,10 @@ class _NodePickerSheet extends StatefulWidget {
 }
 
 class _NodePickerSheetState extends State<_NodePickerSheet> {
-  static const _sortGap = Duration(milliseconds: 300);
   List<ProxyNode> _sorted = const [];
-  DateTime _lastSort = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 上一轮通知时是否在测速：用于识别「测速刚结束」这一次转换
+  bool _wasTesting = false;
 
   @override
   void initState() {
@@ -1208,7 +1238,15 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
 
   void _onConnChanged() {
     if (!mounted) return;
-    if (DateTime.now().difference(_lastSort) >= _sortGap) {
+    final conn = widget.conn;
+    final testing = conn.speedTesting;
+    final wasTesting = _wasTesting;
+    _wasTesting = testing;
+    // 测速**进行中不重排**：逐节点回填会以 ~10fps 通知，表在测速过程中不断换位
+    // （用户看到的是「列表自己来回跳」），且每次重排是 O(n log n)。
+    // 现在只在「测速刚结束」或「节点列表被整体替换（订阅刷新 → 长度变化，
+    // 否则表里还是旧对象）」时重排一次；其余通知只刷新高亮/延迟。
+    if (conn.nodes.length != _sorted.length || (wasTesting && !testing)) {
       _resort();
     } else {
       setState(() {}); // 仅刷新高亮/延迟，不重排
@@ -1216,7 +1254,6 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
   }
 
   void _resort() {
-    _lastSort = DateTime.now();
     final sorted = List.of(widget.conn.nodes)..sort(_compare);
     if (mounted) setState(() => _sorted = sorted);
   }
@@ -1480,18 +1517,44 @@ class _StatCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                      color: color,
-                      fontFamily: kNumFont,
-                      height: 1)),
+              // 数值定宽 + 右对齐：位数变化（0.0 / 51 / 1234）与单位切换都不再
+              // 推动右侧内容 —— 旧实现里 unit 是这个 Text 的兄弟节点，数值一变宽
+              // 单位就左右平移（每秒一次，就是用户看到的「卡片来回跳」）。
+              // 宽度按最大现实值取：MB/s 下 4 位整数 + 小数（~78px）。
+              SizedBox(
+                width: 88,
+                child: Text(value,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: color,
+                        fontFamily: kNumFont,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        height: 1)),
+              ),
               const SizedBox(width: 6),
-              Text(unit, style: TextStyle(fontSize: 13, color: MFColors.txt3, fontWeight: FontWeight.w500)),
+              // 单位也定宽左对齐：KB/s 与 MB/s 等长，但仍占固定槽位，彻底不受影响
+              SizedBox(
+                width: 42,
+                child: Text(unit,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: MFColors.txt3,
+                        fontWeight: FontWeight.w500)),
+              ),
             ],
           ),
-          if (spark != null && spark!.length >= 2) ...[
+          // 趋势线**始终占位**：旧实现按 `spark.length >= 2` 决定是否渲染，
+          // 连上约 2 秒后卡片突然长高 36px、断开清空 history 又缩回去 ——
+          // 下方所有卡片跟着上下位移。现在恒定占位，样本不足时画一条基线。
+          if (spark != null) ...[
             const SizedBox(height: 10),
             SizedBox(height: 26, width: double.infinity, child: _Sparkline(values: spark!, color: color)),
           ],
@@ -1499,6 +1562,24 @@ class _StatCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 速率显示（数值 + 单位）。
+///
+/// 为什么需要迟滞（hysteresis）：单位切换的分界点是 0.1 MB/s，而空闲时保活
+/// 流量/心跳会让速率在 0 附近抖动 —— 没有迟滞时单位每秒在 `KB/s` 与 `MB/s`
+/// 之间翻转，加上数值位数变化（`0.0` ↔ `51` ↔ `1234`），视觉上就是「卡片里的
+/// 数字来回跳」。迟滞把「切到 KB/s」和「切回 MB/s」的门槛分开，抖动不再翻转。
+///
+/// [lastUnit] 上次显示的单位（首次传 null）。完全空闲（<=0）时**沿用**上次
+/// 单位，避免刚归零就换单位。
+({String value, String unit}) formatSpeed(double mbps, {String? lastUnit}) {
+  const kb = 'KB/s';
+  const mb = 'MB/s';
+  if (mbps <= 0) return (value: '0.0', unit: lastUnit ?? mb);
+  final useKb = lastUnit == kb ? mbps < 0.15 : mbps < 0.08;
+  if (!useKb) return (value: mbps.toStringAsFixed(1), unit: mb);
+  return (value: (mbps * 1024).toStringAsFixed(0), unit: kb);
 }
 
 /// 迷你趋势折线(无新依赖,纯 CustomPaint):平滑一条随时间变化的速率曲线
@@ -1523,7 +1604,19 @@ class _SparkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (values.length < 2 || size.width <= 0 || size.height <= 0) return;
+    if (size.width <= 0 || size.height <= 0) return;
+    // 样本不足（刚连接、断开后清空）也画一条基线：占位高度恒定，卡片不再
+    // 因为「趋势线有没有」而长高/缩回，避免下方内容上下跳。
+    if (values.length < 2) {
+      canvas.drawLine(
+        Offset(0, size.height - 0.7),
+        Offset(size.width, size.height - 0.7),
+        Paint()
+          ..strokeWidth = 1.4
+          ..color = color.withValues(alpha: .35),
+      );
+      return;
+    }
     var maxV = 0.0;
     for (final v in values) {
       if (v > maxV) maxV = v;
@@ -1633,12 +1726,48 @@ class _SessionInfoState extends State<_SessionInfo> {
   Widget build(BuildContext context) {
     final conn = widget.conn;
     if (conn.status != ConnStatus.connected || conn.connectedAt == null) {
-      return const SizedBox.shrink();
+      // 固定高度占位：连接/断开切换时卡片高度不变，下方内容不上下跳
+      return const SizedBox(height: 15);
     }
-    return Text(
-      '${AppStrings.t('connected_for')} ${conn.sessionUptime} · '
-      '↑ ${_fmtMB(conn.sessionUpMB)} ↓ ${_fmtMB(conn.sessionDownMB)}',
-      style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont),
+    // 整行用**固定宽度槽位**拼装（不用单个居中 Text）：时长是定宽的 HH:MM:SS，
+    // 但 ↑/↓ 的累计值每秒都在变宽（1.2 MB → 12.3 MB → 1.02 GB），旧实现是一行
+    // 居中的 Text → 宽度每秒变一次、整行重新居中，看起来就是卡片内容左右抖。
+    final numStyle = TextStyle(
+        fontSize: 10.5,
+        color: MFColors.txt3,
+        fontFamily: kNumFont,
+        fontFeatures: const [FontFeature.tabularFigures()]);
+    return SizedBox(
+      height: 15,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text('${AppStrings.t('connected_for')} ${conn.sessionUptime}',
+              maxLines: 1, softWrap: false, style: numStyle),
+          const SizedBox(width: 6),
+          Text('↑', style: numStyle),
+          const SizedBox(width: 3),
+          SizedBox(
+              width: 62,
+              child: Text(_fmtMB(conn.sessionUpMB),
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.clip,
+                  style: numStyle)),
+          const SizedBox(width: 8),
+          Text('↓', style: numStyle),
+          const SizedBox(width: 3),
+          SizedBox(
+              width: 62,
+              child: Text(_fmtMB(conn.sessionDownMB),
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.clip,
+                  style: numStyle)),
+        ],
+      ),
     );
   }
 }
