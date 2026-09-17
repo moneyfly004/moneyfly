@@ -39,9 +39,59 @@ Future<bool> _winProxyPointsTo(int port) async {
   return (r.stdout as String).contains('127.0.0.1:$port');
 }
 
+// ---- 基线快照：这些 macOS 用例会真改本机系统代理，必须知道「测试前是什么样」----
+//
+// 旧实现假设「测试前系统代理是关闭的」，于是 restore 后断言 `HTTPEnable : 0`。
+// 但开发机/用户机上常常**另有代理程序在跑**（实测：另一份 mihomo 客户端占着
+// 127.0.0.1:17890 并开着系统代理）—— 此时 restore 会**正确**地恢复到那个开启
+// 状态，断言却要求它是关闭的 → 用例变红，且红得毫无信息量。
+// 现在改为：先快照基线 → 结束时断言「恢复到基线」；若发现别人的代理正占用
+// （开启且端口不是本程序的 2080），直接跳过，避免两个代理程序互相抢系统代理。
+
+const _localTestPort = 2080;
+
+Future<String> _proxySnapshot() async =>
+    (await Process.run('scutil', ['--proxy'])).stdout as String;
+
+/// 基线是否为「别人的代理」正在生效
+bool _foreignProxyActive(String baseline) {
+  if (!baseline.contains('HTTPEnable : 1')) return false;
+  final m = RegExp(r'HTTPPort : (\d+)').firstMatch(baseline);
+  return m != null && m.group(1) != '$_localTestPort';
+}
+
+/// 断言已恢复到基线状态（而不是硬编码「应当是关闭的」）
+void _expectRestoredToBaseline(String after, String baseline) {
+  if (baseline.contains('HTTPEnable : 1')) {
+    expect(after.contains('HTTPEnable : 1'), isTrue,
+        reason: '应恢复到测试前的开启状态\n$after');
+    final port = RegExp(r'HTTPPort : (\d+)').firstMatch(baseline)?.group(1);
+    if (port != null) {
+      expect(after.contains('HTTPPort : $port'), isTrue,
+          reason: '应恢复到测试前的端口 $port\n$after');
+    }
+    return;
+  }
+  expect(after.contains('HTTPEnable : 0'), isTrue,
+      reason: '代理应已关闭（恢复原状）\n$after');
+  expect(after.contains('HTTPSEnable : 0'), isTrue);
+  expect(after.contains('SOCKSEnable : 0'), isTrue);
+}
+
+/// 测试前的跳过判定：返回跳过原因（null = 可以跑）
+Future<String?> _skipIfForeignProxy() async {
+  final base = await _proxySnapshot();
+  if (_foreignProxyActive(base)) {
+    return '检测到另一个代理程序正在管理系统代理'
+        '（${RegExp(r'HTTPProxy : (\S+)').firstMatch(base)?.group(1)}:'
+        '${RegExp(r'HTTPPort : (\d+)').firstMatch(base)?.group(1)}）——'
+        '本用例会真改系统代理，跳过以免与本程序的 apply/restore 互相干扰';
+  }
+  return null;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
   // ==================== macOS ====================
 
   test('macOS 系统代理：apply 设置 → restore 恢复', () async {
@@ -49,6 +99,12 @@ void main() {
       markTestSkipped('仅 macOS 验证');
       return;
     }
+    final skip = await _skipIfForeignProxy();
+    if (skip != null) {
+      markTestSkipped(skip);
+      return;
+    }
+    final baseline = await _proxySnapshot();
     // 1) 设置系统代理
     await SystemProxyManager.apply(port: 2080);
     final applied =
@@ -66,10 +122,7 @@ void main() {
     await SystemProxyManager.restore();
     final restored =
         (await Process.run('scutil', ['--proxy'])).stdout as String;
-    expect(restored.contains('HTTPEnable : 0'), isTrue,
-        reason: '代理应已关闭（恢复原状）\n$restored');
-    expect(restored.contains('HTTPSEnable : 0'), isTrue);
-    expect(restored.contains('SOCKSEnable : 0'), isTrue);
+    _expectRestoredToBaseline(restored, baseline);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   // 回归：系统代理保活。核心验证「代理被外部关掉后，ensureApplied 能强制重开」
@@ -80,6 +133,12 @@ void main() {
       markTestSkipped('仅 macOS 可真实验证系统代理保活');
       return;
     }
+    final skip = await _skipIfForeignProxy();
+    if (skip != null) {
+      markTestSkipped(skip);
+      return;
+    }
+    final baseline = await _proxySnapshot();
     try {
       // 1) 连接：设置系统代理
       await SystemProxyManager.apply(port: 2080);
@@ -124,16 +183,21 @@ void main() {
     }
     // 4) 断开：恢复到原始（关闭）状态
     final after = await _scutil();
-    expect(after.contains('HTTPEnable : 0'), isTrue,
-        reason: 'restore 后应回到关闭\n$after');
+    _expectRestoredToBaseline(after, baseline);
     expect(SystemProxyManager.isApplied, isFalse);
   }, timeout: const Timeout(Duration(seconds: 90)));
 
-  test('macOS 保活 reassert 不破坏原始配置捕获：restore 仍回到原始关闭态', () async {
+  test('macOS 保活 reassert 不破坏原始配置捕获：restore 仍回到原始状态（基线）', () async {
     if (!Platform.isMacOS) {
       markTestSkipped('仅 macOS');
       return;
     }
+    final skip = await _skipIfForeignProxy();
+    if (skip != null) {
+      markTestSkipped(skip);
+      return;
+    }
+    final baseline = await _proxySnapshot();
     try {
       await SystemProxyManager.apply(port: 2080);
       // 连续多次 reassert（模拟多轮保活），不应把「自己写入的值」误存为原始配置
@@ -143,8 +207,7 @@ void main() {
       await SystemProxyManager.restore();
     }
     final after = await _scutil();
-    expect(after.contains('HTTPEnable : 0'), isTrue,
-        reason: '多轮保活后 restore 仍应回到原始关闭态\n$after');
+    _expectRestoredToBaseline(after, baseline);
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   // ==================== Windows ====================
