@@ -15,6 +15,7 @@ import 'core/services/account_service.dart';
 import 'core/services/app_data_cleaner.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/app_log.dart';
+import 'core/services/autostart.dart';
 import 'core/services/crash_logger.dart';
 import 'core/services/local_notify.dart';
 import 'core/services/network_monitor.dart';
@@ -92,6 +93,18 @@ void main() async {
   // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。
   await AppDataCleaner.cleanupOnLaunch();
   AppLog.log('APP', 'launched v${UpdateInfo.currentVersion}, ${Platform.operatingSystem}');
+  // 开机自启自愈：Windows 注册的是 **exe 绝对路径**，换目录安装/手动移动目录、
+  // 或被任务管理器清掉后这条会失效 —— 设置里开着但系统里没有就补注册（失败只记
+  // 日志，不影响启动）。旧实现连注册都没发生过，见 AutostartService 注释。
+  if (isDesktopRuntime) {
+    unawaited(() async {
+      try {
+        final s = await SettingsStore.instance.load();
+        await AutostartService.syncOnStartup(
+            prefEnabled: s['launchAtStartup'] == true);
+      } catch (_) {}
+    }());
+  }
   runApp(const MoneyFlyApp());
 }
 

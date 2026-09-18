@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/app_log.dart';
+import '../../core/services/autostart.dart';
 import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
 import '../../core/services/subscription_service.dart';
@@ -107,12 +107,18 @@ class _SettingsPageState extends State<SettingsPage> {
             if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) ...[
               _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
                   trailing: _switch(_s['launchAtStartup'] == true, (v) async {
-                    await _set('launchAtStartup', v);
-                    if (v) {
-                      unawaited(launchAtStartup.enable());
-                    } else {
-                      unawaited(launchAtStartup.disable());
+                    // 先落系统、成功才落设置。旧实现是先写设置再 unawaited(enable())：
+                    // 插件在没 setup 时抛 UnsupportedError 被 unawaited 吞掉，于是
+                    // 开关显示「已开启」而系统里从没注册过 —— 失败必须让用户看见，
+                    // 且不能让设置项停在「开着」的假状态。
+                    final ok = v
+                        ? await AutostartService.enable()
+                        : await AutostartService.disable();
+                    if (!ok) {
+                      _toast(AppStrings.t('launch_at_startup_failed'));
+                      return;
                     }
+                    await _set('launchAtStartup', v);
                   })),
               _row(icon: '🚪', title: AppStrings.t('close_action'),
                   value: _closeActionLabel(),
