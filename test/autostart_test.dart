@@ -184,6 +184,20 @@ void main() {
       );
     });
 
+    test('宿主平台不影响判定：POSIX 与 Windows 分隔符都能识别（CI 踩过的坑）', () {
+      // 这条在 Windows 上跑时曾失败：旧实现用 Platform.pathSeparator 拼 '\\Contents\\'，
+      // 而输入是 macOS 路径（/Contents/）→ 匹配不上就原样返回。
+      for (final p in [
+        '/Applications/MoneyFly.app/Contents/MacOS/MoneyFly',
+        r'C:\Applications\MoneyFly.app\Contents\MacOS\MoneyFly',
+      ]) {
+        final out = AutostartService.resolveLaunchPath(
+            resolvedExecutable: p, isMacOS: true);
+        expect(out.endsWith('MoneyFly.app'), isTrue, reason: '未回溯到 bundle：$out');
+        expect(out.contains('Contents'), isFalse, reason: '仍带着 bundle 内部路径：$out');
+      }
+    });
+
     test('macOS 上取不到 bundle 结构时退化为原路径（不猜、不乱改）', () {
       expect(
         AutostartService.resolveLaunchPath(

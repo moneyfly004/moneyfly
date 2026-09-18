@@ -71,8 +71,19 @@ class AutostartService {
     final mac = isMacOS ?? (!kIsWeb && Platform.isMacOS);
     if (!mac) return exe;
     // …/MoneyFly.app/Contents/MacOS/MoneyFly → …/MoneyFly.app
-    final marker = '${Platform.pathSeparator}Contents${Platform.pathSeparator}';
-    final i = exe.indexOf(marker);
+    //
+    // 两种分隔符都认：喂进来的既然是 macOS 路径（语义上恒为 POSIX '/'），
+    // 就不该取决于**宿主平台** —— 否则同一段逻辑在 Windows 上跑单测会失败
+    // （实测：CI 的 Windows job 就是这么红掉的），也会让「跨平台构造路径」的
+    // 调用方踩坑。谁先出现用谁。
+    final slash = exe.indexOf('/Contents/');
+    final backslash = exe.indexOf(r'\Contents\');
+    final i = switch ((slash, backslash)) {
+      (< 0, < 0) => -1,
+      (< 0, _) => backslash,
+      (_, < 0) => slash,
+      _ => slash < backslash ? slash : backslash,
+    };
     return i > 0 ? exe.substring(0, i) : exe;
   }
 
