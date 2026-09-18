@@ -109,8 +109,10 @@ class AutostartService {
           ok ? 'autostart: 已注册（$launchPath）' : 'autostart: 注册未生效');
       return ok;
     } catch (e) {
-      // 典型：macOS 上插件缺原生实现（MissingPluginException）→ 明确记日志，
-      // 而不是像旧实现那样被 unawaited 静默吞掉
+      // macOS 侧的原生通道由 macos/Runner/MainFlutterWindow.swift 提供
+      // （SMAppService，macOS 13+）。这里若真抛 MissingPluginException /
+      // PlatformException，说明原生通道没挂上或系统版本过低 —— 必须留痕，
+      // 而不是像旧实现那样被 unawaited 静默吞掉。
       AppLog.error('autostart enable failed: $e');
       return false;
     }
