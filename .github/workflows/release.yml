@@ -36,7 +36,12 @@ name: Build Release (Android / Windows / macOS)
 #      （`--exclude-tags e2e`）→ 测试步骤 133~190s → 约 60~80s。
 #      ubuntu 上「全量并行 + 真实内核」本来就被 ci.yml 验证为绿。
 #   2) Android Gradle 依赖缓存（setup-java cache: gradle）：APK 构建 337s 里有
-#      相当一部分是冷缓存重下 AGP/Kotlin/依赖，这是关键路径上最大的一块。
+#      相当一部分是冷缓存重下 AGP/Kotlin/依赖（实测 337s → 313s，预热后更好）。
+#   2b) Android 拆成三个并行 job：verify（ubuntu 全量测试）/ android（仅 APK）/
+#      android-aab（仅 AAB）。原来「测试 98s + APK 313s + AAB 59s」串在同一个
+#      runner 上 = 9.4min 的关键路径；拆开后关键路径只剩 APK 那一段。
+#   2c) macOS arm64 保持一次性 `flutter test --concurrency=1`：实测拆成
+#      「并行 + e2e 串行」两次调用在这台 3 核 runner 上反而 237s > 174s。
 #   3) macOS 内核不再下载两次：测试用的那份直接复用给「内置内核」步骤
 #      （实测最慢一次这个重复下载花了 51s）。
 #   4) macOS x64 / universal 两个 job 不再重复跑全量测试（同一份 Dart 代码，
@@ -67,9 +72,40 @@ env:
   MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里；需与 mihomo-lib release tag 一致）
 
 jobs:
+  # ================= Linux 校验（唯一一次 ubuntu 全量测试） =================
+  # 为什么单独立一个 job：ubuntu 上的测试是纯 Dart/widget 测试，与产物 job 无关。
+  # 原来它挂在 Android job 里（98s），而 Android job 恰好是关键路径最长的一个 ——
+  # 挪出来并行跑，关键路径直接少掉这一段。
+  verify:
+    name: 校验 (analyze + test / ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据（assets 声明依赖，缺失会导致测试失败）
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      # 与 ci.yml 同一套命令（本 job 无内核二进制，e2e 组本来就会 skip；真实内核
+      # e2e 由 Windows / macOS arm64 / macOS x64 job 负责，那些平台才有内核）
+      - name: 校验
+        run: |
+          flutter analyze
+          flutter test --exclude-tags e2e
+
   # ================= Android：多 ABI 分版本 =================
   android:
-    name: Android (armeabi-v7a / arm64-v8a / x86_64 / AAB)
+    name: Android APK (armeabi-v7a / arm64-v8a / x86_64)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -110,25 +146,12 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 测试（非 e2e 并行；本 job 无内核二进制，e2e 组本来就会 skip）
-        run: |
-          flutter analyze
-          flutter test --exclude-tags e2e
-
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
         env:
           # 正式签名密钥（缺失则 build.gradle.kts 回退 debug）。
           # 必须在此注入，否则 Gradle 读不到 → 每次构建用临时 debug 签名 →
           # 版本间签名不一致，用户无法覆盖升级、必须卸载重装。
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
-      - name: 构建 AAB（应用商店备用）
-        run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
-        env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -142,12 +165,66 @@ jobs:
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/MoneyFly-android-armeabi-v7a-$V.apk
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  dist/MoneyFly-android-arm64-v8a-$V.apk
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk  dist/MoneyFly-android-x86_64-$V.apk
-          cp build/app/outputs/bundle/release/app-release.aab       dist/MoneyFly-android-$V.aab
-          cd dist && sha256sum * > SHA256SUMS.txt
+          # 校验和文件名必须按 job 区分：旧实现 android 与 windows 都写
+          # SHA256SUMS.txt，release job 用 merge-multiple 下载时互相覆盖 ——
+          # 实测 v2.2.9 的 SHA256SUMS.txt 里只有 4 个 Android 条目，Windows 的
+          # exe/zip 一直没有校验和覆盖。
+          cd dist && sha256sum * > SHA256SUMS-android-apk.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-android
+          path: dist/
+
+  # AAB 单独一个 job：它和 APK 都要各做一遍 Dart AOT + R8，串在同一个 runner 上
+  # 让关键路径白白多出 59s（实测）。拆到两个 runner 并行后，AAB 不再占关键路径。
+  android-aab:
+    name: Android AAB (应用商店备用)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: 下载离线分流数据
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
+        run: |
+          mkdir -p android/app/libs
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o android/app/libs/libmihomo.aar \
+            "https://github.com/moneyfly004/mihomo-lib/releases/download/v$MIHOMO_VERSION/libmihomo.aar"
+      - name: 依赖
+        run: flutter pub get
+      - name: 构建 AAB（应用商店备用）
+        run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: 重命名产物
+        run: |
+          V=${{ github.event.inputs.version || github.ref_name }}
+          V=${V#v}
+          mkdir -p dist
+          cp build/app/outputs/bundle/release/app-release.aab dist/MoneyFly-android-$V.aab
+          cd dist && sha256sum * > SHA256SUMS-android-aab.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moneyfly-android-aab
           path: dist/
 
   # ================= Windows：exe 安装包 + zip 便携版 =================
@@ -228,7 +305,8 @@ jobs:
           # Inno Setup 安装版（开始菜单/桌面快捷方式/卸载器）
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" //DVERSION="$V" //DBUILD_DIR="$WIN_RELEASE_DIR" scripts/windows_installer.iss
 
-          cd dist && sha256sum * > SHA256SUMS.txt
+          # 校验和文件名按 job 区分（见 APK job 的说明）
+          cd dist && sha256sum * > SHA256SUMS-windows.txt
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
 
@@ -277,12 +355,15 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 测试（非 e2e 并行 + 真实内核 e2e 串行）
+      # 这里**不**拆成两次调用：macos runner 只有 3 核，第二次调用要重新编译一遍
+      # 测试 bundle，实测「并行 350 + 串行 48」共 237s，反而比一次性
+      # `flutter test --concurrency=1`（174s）慢。并行只在核多的 ubuntu / Windows
+      # runner 上划算（那里 134/133s → 98/92s）。
+      - name: 测试（真实内核 e2e，串行）
         run: |
           export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
           flutter analyze
-          flutter test --exclude-tags e2e
-          flutter test --tags e2e --concurrency=1
+          flutter test --concurrency=1
       - name: 构建 macOS（arm64）
         run: flutter build macos --release
       - name: 校验架构
@@ -571,7 +652,7 @@ jobs:
   release:
     name: 发布到 GitHub Releases
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [android, windows, macos-arm64, macos-x64, macos-universal, ios]
+    needs: [verify, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -581,6 +662,14 @@ jobs:
         with:
           merge-multiple: true
           path: dist
+
+      - name: 合并各平台校验和成一份 SHA256SUMS.txt
+        run: |
+          cd dist
+          rm -f SHA256SUMS.txt
+          cat SHA256SUMS*.txt 2>/dev/null | sort -k2 > SHA256SUMS.txt
+          echo "── SHA256SUMS.txt 覆盖 $(wc -l < SHA256SUMS.txt) 个产物 ──"
+          cat SHA256SUMS.txt
 
       - name: 创建 Release 并上传产物
         uses: softprops/action-gh-release@v2

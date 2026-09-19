@@ -64,11 +64,16 @@ void main() {
     // 源码级守卫：0x..455FE9 是 light 模式的品牌蓝，写死就会无视外观切换
     final offenders = <String>[];
     for (final f in Directory('lib').listSync(recursive: true)) {
-      if (f is! File || !f.path.endsWith('.dart')) continue;
-      if (f.path.endsWith('theme/app_theme.dart')) continue; // 调色板本身
+      if (f is! File) continue;
+      // Windows 的路径分隔符是 \ —— 必须归一化后再比较，否则
+      // 「排除调色板本身」这条在 Windows 上失效，app_theme.dart 里的
+      // 品牌色定义会被当成违规（CI Windows job 实测红过一次）
+      final rel = f.path.replaceAll(r'\', '/');
+      if (!rel.endsWith('.dart')) continue;
+      if (rel.endsWith('theme/app_theme.dart')) continue; // 调色板本身
       final src = f.readAsStringSync();
       for (final m in RegExp(r'0x[0-9A-Fa-f]{2}455FE9').allMatches(src)) {
-        offenders.add('${f.path}: ${m.group(0)}');
+        offenders.add('$rel: ${m.group(0)}');
       }
     }
     expect(offenders, isEmpty,
