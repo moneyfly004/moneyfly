@@ -1,3 +1,6 @@
+@Tags(['e2e'])
+library;
+
 // mihomo 配置生成器测试：结构断言 + （有本地内核时）真实内核 -t 校验与 Clash API 行为验证
 import 'dart:convert';
 import 'dart:io';

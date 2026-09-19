@@ -1,3 +1,6 @@
+@Tags(['e2e'])
+library;
+
 // 残留内核收割的**真实进程**验证（POSIX）。
 //
 // 纯逻辑单测（kernel_reap_test.dart）只能证明判定函数对；这里用真进程证明

@@ -1,3 +1,6 @@
+@Tags(['e2e'])
+library;
+
 // 真实验证：连接流程（Hiddify 模式）—— 立即连接 + 后台测速不阻塞
 import 'dart:convert';
 import 'dart:io';
