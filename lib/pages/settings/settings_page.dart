@@ -14,6 +14,7 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/mf_input.dart';
+import '../../widgets/mf_row.dart';
 import '../auth/change_password_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
@@ -36,8 +37,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Map<String, dynamic> _s = {};
   bool _loaded = false;
 
-  static final _rowRadius = BorderRadius.circular(14);
-  static final _iconRadius = BorderRadius.circular(9);
 
   @override
   void initState() {
@@ -281,6 +280,9 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// 统一行组件。原实现是 `Container(height: 52)` + 「标题/描述」和「值(≤150px)」
+  /// 挤同一行 —— 380 宽（最小窗口）下描述只剩 ~94px，中英文描述都会被裁掉并抛
+  /// RenderFlex overflow（实测 37 次）。现在委托给 MFRow：最小高度 + 描述独占一行。
   Widget _row({
     required String icon,
     required String title,
@@ -291,66 +293,15 @@ class _SettingsPageState extends State<SettingsPage> {
     bool showDot = false,
     VoidCallback? onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 15),
-      height: 52,
-      decoration: BoxDecoration(
-          color: MFColors.card, borderRadius: _rowRadius,
-          border: Border.all(color: MFColors.line)),
-      child: InkWell(
-        borderRadius: _rowRadius,
-        onTap: onTap,
-        child: Row(
-          children: [
-            Container(
-              width: 28, height: 28,
-              decoration: BoxDecoration(
-                  color: danger ? MFColors.red.withValues(alpha: .12) : MFColors.card2,
-                  borderRadius: _iconRadius),
-              alignment: Alignment.center,
-              child: Text(icon, style: const TextStyle(fontSize: 12)),
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500,
-                          color: danger ? MFColors.red : MFColors.txt)),
-                  if (desc != null) Text(desc, style:  TextStyle(fontSize: 10, color: MFColors.txt3)),
-                ],
-              ),
-            ),
-            // 值用定宽上限（不再 Flexible 与标题 Expanded 抢 50/50 空间）：
-            // 标题 Expanded 吃满剩余空间 → 把「值 + 箭头」稳定推到最右，
-            // 所有行的箭头位置一致；超长值（DNS 列表/测速地址）省略号截断。
-            if (value != null)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
-                child: Text(value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: MFColors.txt3,
-                        fontFamily: kNumFont)),
-              ),
-            if (showDot) ...[
-              const SizedBox(width: 5),
-              const RedDot(size: 7),
-            ],
-            if (value != null || onTap != null) ...[
-              const SizedBox(width: 4),
-               Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),
-            ],
-            ?trailing,
-          ],
-        ),
-      ),
+    return MFRow(
+      icon: icon,
+      title: title,
+      desc: desc,
+      value: value,
+      trailing: trailing,
+      danger: danger,
+      showDot: showDot,
+      onTap: onTap,
     );
   }
 
@@ -455,40 +406,42 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// 两段式开关（智能/全局 等）。
+  ///
+  /// 标签必须能压缩：它作为「行尾控件」时拿到的宽度可能很窄（英文标签 + 380 宽
+  /// 最小窗口），旧实现两个 Text 都没有 maxLines/省略号，实测整行溢出 19px 并把
+  /// 标题挤成 0 宽（标题完全看不见）。现在每个标签 Flexible + 单行省略。
   Widget _seg2({required String left, required String right, required bool selectedLeft,
       required VoidCallback onLeft, required VoidCallback onRight}) {
+    Widget seg(String label, bool selected, VoidCallback onTap) {
+      return Flexible(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+            decoration: BoxDecoration(
+              gradient: selected ? MFColors.brandGradient : null,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Text(label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                    color: selected ? Colors.white : MFColors.txt3)),
+          ),
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(9)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          GestureDetector(
-            onTap: onLeft,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-              decoration: BoxDecoration(
-                gradient: selectedLeft ? MFColors.brandGradient : null,
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Text(left,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                      color: selectedLeft ? Colors.white : MFColors.txt3)),
-            ),
-          ),
-          GestureDetector(
-            onTap: onRight,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-              decoration: BoxDecoration(
-                gradient: selectedLeft ? null : MFColors.brandGradient,
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Text(right,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                      color: selectedLeft ? MFColors.txt3 : Colors.white)),
-            ),
-          ),
+          seg(left, selectedLeft, onLeft),
+          seg(right, !selectedLeft, onRight),
         ],
       ),
     );

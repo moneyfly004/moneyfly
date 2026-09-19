@@ -198,10 +198,17 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
     ),
     switchTheme: SwitchThemeData(
       thumbColor: const WidgetStatePropertyAll(Colors.white),
+      // 关闭态轨道必须跟着明暗走：旧实现固定深蓝 `0xFF2A3242`，在 light /
+      // warm / gray 这些浅色外观下「关闭」的开关看起来就是一个深色药丸 +
+      // 白点 —— 和「打开」几乎一样，用户分不清 TUN/自动重连/证书校验到底开没开。
       trackColor: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? t.brand : const Color(0xFF2A3242),
+        (s) => s.contains(WidgetState.selected)
+            ? t.brand
+            : (t.isDark ? const Color(0xFF2A3242) : t.line2),
       ),
-      trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+      trackOutlineColor: WidgetStateProperty.resolveWith(
+        (s) => s.contains(WidgetState.selected) ? Colors.transparent : t.line2,
+      ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,

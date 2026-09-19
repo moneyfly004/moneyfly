@@ -155,7 +155,10 @@ class _ProfilePageState extends State<ProfilePage> {
       children: [
         Container(
           width: 50, height: 50,
-          decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(15)),
+          decoration: BoxDecoration(
+              color: MFColors.isDark ? Colors.black : MFColors.card2,
+              border: Border.all(color: MFColors.line),
+              borderRadius: BorderRadius.circular(15)),
           child: Icon(Icons.flight_takeoff, color: MFColors.brand, size: 26),
         ),
         const SizedBox(width: 13),
@@ -317,9 +320,15 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(6, 15, 6, 14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        // 品牌光晕必须随外观模式走：写死浅色模式的品牌蓝时，
+        // 在 warm/gray/darkblue/black 等模式下卡片还是蓝色，和边框/文字的品牌色
+        // 对不上（外观切换是设置里的主打功能，切过去卡片不跟着变很显眼）。
+        gradient: LinearGradient(
             begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0x2E455FE9), Color(0x12455FE9)]),
+            colors: [
+              MFColors.brand.withValues(alpha: .18),
+              MFColors.brand.withValues(alpha: .07),
+            ]),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: MFColors.brand.withValues(alpha: .38)),
       ),

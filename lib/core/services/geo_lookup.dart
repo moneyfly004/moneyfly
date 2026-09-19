@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
+import '../../l10n/app_strings.dart';
 import '../models/models.dart';
 import 'app_log.dart';
 import 'settings_store.dart';
@@ -24,8 +25,16 @@ class GeoLookupService {
     _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  static String countryName(String? code) =>
-      ProxyNode.countryNames[code?.toUpperCase()] ?? code?.toUpperCase() ?? '未知';
+  /// 国家码 → 展示名。
+  ///
+  /// `'XX'` 是「无法识别」的内部哨兵值（见 ProxyNode._inferCountry），
+  /// 绝不能原样显示 —— 用户看到的是一个写着「XX」的药丸（反馈原话：
+  /// 「快速切换国家会显示一个国家XX 是什么意思」）。统一走本地化文案。
+  static String countryName(String? code) {
+    final c = code?.toUpperCase();
+    if (c == null || c.isEmpty || c == 'XX') return AppStrings.t('country_unknown');
+    return ProxyNode.countryNames[c] ?? c;
+  }
 
   /// 结果缓存：连接成功后/切换节点会重复调用，10 分钟内命中直接返回，
   /// 避免每次用户动作都触发 1-2 次经隧道的外呼(ip-api 无 key 限 45/min)
