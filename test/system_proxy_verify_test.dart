@@ -79,6 +79,12 @@ void _expectRestoredToBaseline(String after, String baseline) {
 }
 
 /// 测试前的跳过判定：返回跳过原因（null = 可以跑）
+///
+/// 两种情况都跳过（本用例会真改系统代理，硬跑只会得到假红）：
+///   1. 系统代理被**别的程序**接管（端口不是本程序的 2080）；
+///   2. 本机 2080/9090 上已有进程在监听 —— 说明**有 MoneyFly（或其它代理）实例
+///      正在运行**，它的保活/退出会与我们 apply/restore 互相覆盖。
+///      实测：开发机开着客户端时该用例必红，而 restore() 的行为其实是对的。
 Future<String?> _skipIfForeignProxy() async {
   final base = await _proxySnapshot();
   if (_foreignProxyActive(base)) {
@@ -86,6 +92,11 @@ Future<String?> _skipIfForeignProxy() async {
         '（${RegExp(r'HTTPProxy : (\S+)').firstMatch(base)?.group(1)}:'
         '${RegExp(r'HTTPPort : (\d+)').firstMatch(base)?.group(1)}）——'
         '本用例会真改系统代理，跳过以免与本程序的 apply/restore 互相干扰';
+  }
+  if (await SystemProxyManager.isLocalPortAlive(_localTestPort)) {
+    return '本机端口 $_localTestPort 上已有进程在监听（有 MoneyFly 或其它代理实例'
+        '正在运行）—— 它的保活与退出会与本用例的 apply/restore 互相覆盖，'
+        '跳过以免产生假红。请先退出正在运行的客户端再执行本文件';
   }
   return null;
 }

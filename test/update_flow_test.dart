@@ -233,7 +233,7 @@ void main() {
       expect(exited, 0, reason: '装完必须退出自己，否则安装器无法替换被占用的文件');
     });
 
-    testWidgets('不支持应用内安装（iOS 等）→ 打开下载页，绝不假装安装', (tester) async {
+    testWidgets('移动端（Android / iOS）→ 打开下载页，绝不做应用内安装', (tester) async {
       UpdateInfo.currentVersion = '1.0.0';
       UpdateService.debugCanInstallInApp = false;
       final info = _info('1.0.1');
@@ -257,7 +257,8 @@ void main() {
       await flow;
 
       expect(launchedInstaller, isFalse,
-          reason: 'iOS 不允许应用内自更新，只能给下载页');
+          reason: '移动端不走应用内安装（安卓需 FileProvider+安装意图，真机行为无法在'
+              '开发机验证；iOS 系统不允许自更新）→ 只能给下载页');
       expect(openedUrl, isNotNull, reason: '应打开与本机架构匹配的下载地址');
     });
 

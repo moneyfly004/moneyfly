@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -280,10 +279,15 @@ class UpdateService {
   static bool? debugCanInstallInApp;
 
   /// 本平台是否支持**应用内直接调起安装**
-  /// - iOS 不允许自更新（侧载 IPA），只给下载地址
+  ///
+  /// 只有桌面端（Windows / macOS）走应用内安装：这两者「下载完 → 打开安装包 →
+  /// 退出自己」是纯文件操作，行为确定。移动端一律走浏览器下载页：
+  /// - iOS 系统不允许自更新（侧载 IPA）；
+  /// - Android 需要 FileProvider + 安装意图 + REQUEST_INSTALL_PACKAGES 权限，
+  ///   属于原生改动且真机行为无法在开发机上验证（曾因此把 CI 的 assembleRelease
+  ///   搞挂）。与其带一个验证不了的原生路径，不如老老实实打开下载页。
   static bool get canInstallInApp =>
-      debugCanInstallInApp ??
-      (!kIsWeb && (Platform.isAndroid || Platform.isWindows || Platform.isMacOS));
+      debugCanInstallInApp ?? (!kIsWeb && (Platform.isWindows || Platform.isMacOS));
 
   Future<Directory?> _updateDir() async {
     final base = debugCacheDir != null
@@ -392,11 +396,6 @@ class UpdateService {
   Future<bool> launchInstaller(String path) async {
     final override = debugLaunchInstallerOverride;
     if (override != null) return override(path);
-    if (Platform.isAndroid) {
-      // 动态导入避免桌面端引入无关插件代码
-      // ignore: avoid_dynamic_calls
-      return _installApk(path);
-    }
     if (Platform.isWindows || Platform.isMacOS) {
       if (Platform.isMacOS) await clearQuarantine(path);
       try {
@@ -407,36 +406,6 @@ class UpdateService {
       }
     }
     return false;
-  }
-
-  Future<bool> _installApk(String path) async {
-    try {
-      await _apkInstaller(path);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// 测试缝：替换 APK 安装器（单测不真调系统安装器）
-  @visibleForTesting
-  static Future<void> Function(String path)? apkInstaller;
-
-  /// Android 安装通道：由 android/.../MainActivity.kt 实现
-  /// （Intent.ACTION_VIEW + FileProvider，见 Manifest 里的 provider）。
-  ///
-  /// 为什么不用 app_installer 插件：它的 Android 侧自带 `classpath
-  /// 'com.android.tools.build:gradle:3.6.2'` + `jcenter()`，与现代 AGP 不兼容，
-  /// CI 实测 `Gradle task assembleRelease failed`（`:app_installer` 配置失败）。
-  /// 自建通道只依赖 Flutter 自带的 androidx.core，不再引入 Gradle 风险。
-  static const MethodChannel _installerChannel =
-      MethodChannel('top.moneyfly/installer');
-
-  static Future<void> _apkInstaller(String path) async {
-    final fn = apkInstaller;
-    if (fn != null) return fn(path);
-    // 只在 Android 分支被调用（见 [launchInstaller]）
-    await _installerChannel.invokeMethod<void>('installApk', {'path': path});
   }
 
   /// macOS：清掉下载文件的隔离属性，否则 Gatekeeper 会拦下安装包
@@ -460,7 +429,6 @@ class UpdateService {
     debugDownloadOverride = null;
     debugLaunchInstallerOverride = null;
     debugCacheDir = null;
-    apkInstaller = null;
     debugCanInstallInApp = null;
   }
 }
