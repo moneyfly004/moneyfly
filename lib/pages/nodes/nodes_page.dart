@@ -611,7 +611,8 @@ class _CountryHeader extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 20, 8),
+        // 命中区 ≥40（审计 P2：旧实现约 34px；图标 20 + 上下 11 = 42）
+        padding: const EdgeInsets.fromLTRB(24, 11, 20, 11),
         child: Row(
           children: [
             Text(regionFlag(code), style: const TextStyle(fontSize: 13)),

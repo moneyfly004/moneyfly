@@ -10,6 +10,7 @@ import '../../core/api/api_client.dart';
 import '../../core/api/endpoints.dart';
 import '../../core/services/password_policy.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_form_error.dart';
 import '../../widgets/password_rules.dart';
 
 /// 注册页（设计稿 07）：邮箱 + 验证码（60s 倒计时）+ 用户名 + 密码 + 邀请码
@@ -43,7 +44,9 @@ class _RegisterPageState extends State<RegisterPage> {
   bool _agreed = false;
 
   /// 未勾选就点注册时的常驻提示（toast 只闪一下，容易被忽略）
-  bool _agreeError = false;
+  /// 校验/接口失败原因：**常驻**在按钮上方（审计 P2：注册页和改密码页当时只
+  /// 靠 `return _toast(...)`，手机端键盘会挡住 snackbar，用户看到的是「点了没反应」）
+  String? _formError;
 
   late final TapGestureRecognizer _tosTap = TapGestureRecognizer()
     ..onTap = () => _openDocs();
@@ -109,18 +112,24 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   Future<void> _register() async {
-    if (_username.text.trim().length < 4) return _toast(AppStrings.t('username_short'));
+    if (_username.text.trim().length < 4) {
+      return _fail(AppStrings.t('username_short'));
+    }
     // 与后端同规则校验新密码（长度 + 四类字符至少三种）
     final pwdErr = PasswordPolicy.errorFor(_password.text);
-    if (pwdErr != null) return _toast(pwdErr);
-    if (_password.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
-    if (!looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_invalid'));
-    if (!_agreed) {
-      // 常驻提示 + toast 双通道：用户未同意协议时绝不发起注册请求
-      setState(() => _agreeError = true);
-      return _toast(AppStrings.t('agree_required'));
+    if (pwdErr != null) return _fail(pwdErr);
+    if (_password.text != _confirm.text) {
+      return _fail(AppStrings.t('pwd_mismatch'));
     }
-    setState(() => _loading = true);
+    if (!looksLikeEmail(_email.text)) {
+      return _fail(AppStrings.t('email_invalid'));
+    }
+    // 未同意协议时绝不发起注册请求，并把原因常驻在按钮上方
+    if (!_agreed) return _fail(AppStrings.t('agree_required'));
+    setState(() {
+      _formError = null;
+      _loading = true;
+    });
     try {
       await ApiClient.instance.post(Endpoints.register, data: {
         'username': _username.text.trim(),
@@ -132,10 +141,16 @@ class _RegisterPageState extends State<RegisterPage> {
       _toast(AppStrings.t('registered'));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      _fail(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// 校验/接口失败：常驻在按钮上方（清掉上一次的提示）
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() => _formError = msg);
   }
 
   void _toast(String msg) {
@@ -229,7 +244,7 @@ class _RegisterPageState extends State<RegisterPage> {
                 borderRadius: BorderRadius.circular(10),
                 onTap: () => setState(() {
                   _agreed = !_agreed;
-                  if (_agreed) _agreeError = false;
+                  if (_agreed) _formError = null;
                 }),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 44),
@@ -285,18 +300,9 @@ class _RegisterPageState extends State<RegisterPage> {
                 ),
               ),
               const SizedBox(height: 22),
-              // 未勾选就点注册：红字常驻在按钮上方（toast 会消失，合规提示要留住）
-              if (_agreeError) ...[
-                Text('⚠ ${AppStrings.t('agree_required')}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: MFColors.red,
-                        height: 1.5,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 10),
-              ],
+              // 校验/接口失败原因常驻在按钮上方（键盘挡不住、不会一闪而过）
+              if (_formError != null) MFFormError(message: _formError!),
+              if (_formError != null) const SizedBox(height: 10),
               MFPrimaryButton(label: AppStrings.t('register_btn'), loading: _loading, onPressed: _loading ? null : _register),
             ],
           ),
