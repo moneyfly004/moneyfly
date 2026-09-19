@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用内更新：暴露给系统安装器的路径白名单。
+     Dart 侧把更新包下载到 cacheDir/update/（见 UpdateService._updateDir），
+     这里只暴露该子目录，不暴露整个缓存目录。 -->
+<paths>
+    <cache-path name="update" path="update/" />
+    <external-cache-path name="ext_update" path="update/" />
+</paths>

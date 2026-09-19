@@ -21,6 +21,9 @@
     <!-- 电池优化豁免（省电同时防杀后台） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 应用内更新：把下载好的 APK 交给系统包安装器（Android 8+ 需声明；
+         首次安装会弹「允许安装未知应用」，用户拒绝则安装器不会启动） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 「按 App 分流/排除」需要枚举已安装应用（Android 11+ 包可见性） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
@@ -35,6 +38,17 @@
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:requestLegacyExternalStorage="true">
+        <!-- 应用内更新：把 cacheDir/update/ 下的 APK 以 content:// 交给系统安装器。
+             Android 不允许用 file:// 触发安装，必须走 FileProvider。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         <activity
             android:name=".MainActivity"
             android:exported="true"
