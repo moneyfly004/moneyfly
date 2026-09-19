@@ -10,6 +10,8 @@ import '../../core/proxy/proxy_core.dart';
 import '../../core/services/account_service.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
+import '../../core/services/update_service.dart';
+import '../../widgets/update_prompt.dart';
 import '../../core/api/api_client.dart';
 import '../../l10n/app_strings.dart';
 import '../../core/services/geo_lookup.dart';
@@ -48,12 +50,29 @@ class _HomePageState extends State<HomePage>
     _ensureNodes();
     // 连接状态变化时启停呼吸动画
     ConnectionController.instance.addListener(_onConnChanged);
+    // 启动后台检查发现新版本 → 弹一次更新提示（同版本一次运行只弹一次）
+    UpdateService.hasUpdate.addListener(_onUpdateAvailable);
+    // 检查往往在本页挂载**之前**就完成了（启动即发起），那时只加监听收不到通知
+    // → 用当前值补一次，否则「检查比进主页快」时永远不会弹（静默错过更新）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onUpdateAvailable();
+    });
     // 回前台自动刷新订阅（保活页面避免数据过期）
     WidgetsBinding.instance.addObserver(this);
   }
 
+  /// 有新版本时弹提示。放到首帧之后：构建期弹窗会抛异常。
+  void _onUpdateAvailable() {
+    if (!UpdateService.hasUpdate.value) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(UpdatePrompt.maybePromptOnLaunch(context));
+    });
+  }
+
   @override
   void dispose() {
+    UpdateService.hasUpdate.removeListener(_onUpdateAvailable);
     ConnectionController.instance.removeListener(_onConnChanged);
     WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();

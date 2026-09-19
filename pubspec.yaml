@@ -39,6 +39,8 @@ dependencies:
   dio: ^5.7.0
   provider: ^6.1.2
   url_launcher: ^6.3.1
+  app_installer: ^1.3.1
+  crypto: ^3.0.7
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.3
   qr_flutter: ^4.1.0

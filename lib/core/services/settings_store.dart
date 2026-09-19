@@ -81,6 +81,10 @@ class SettingsStore {
         'lastSelectedTag': '',
         // 内核变体偏好:compatible / standard(桌面 amd64)
         'kernelVariant': 'compatible',
+        // 检测到新版本时后台预下载安装包（下载+校验，用户点「立即更新」无需等待）
+        'autoDownloadUpdatePkg': true,
+        // 用户点过「稍后」的版本号：同一版本不再重复弹更新提示
+        'dismissedUpdateVersion': '',
       };
 
   Future<Map<String, dynamic>> load() async {
