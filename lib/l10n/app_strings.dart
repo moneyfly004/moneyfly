@@ -84,6 +84,8 @@ class AppStrings {
     'invite_label': '邀请码（选填）',
     'invite_hint': '如有邀请码请填写',
     'agree_tos': '我已阅读并同意 《用户协议》 与 《隐私政策》',
+    'pay_waiting': '正在等待支付结果…',
+    'pay_poll_stopped': '已停止自动查询（超时 15 分钟）。可点「我已支付」再查一次，或关闭后重新发起支付。',
     'agree_prefix': '我已阅读并同意 ',   // 后接 settings_tos
     'agree_and': ' 与 ',                    // 夹在 settings_tos 与 settings_privacy_policy 之间
     'open_link_failed': '无法打开链接，请检查浏览器或稍后重试',
@@ -726,6 +728,8 @@ class AppStrings {
     'invite_label': 'Invite code (optional)',
     'invite_hint': 'Enter invite code if any',
     'agree_tos': 'I agree to the Terms of Service and Privacy Policy',
+    'pay_waiting': 'Waiting for payment…',
+    'pay_poll_stopped': 'Auto-check stopped (15 min timeout). Tap "I have paid" to check again, or close and restart.',
     'agree_prefix': 'I have read and agree to the ',
     'agree_and': ' and ',
     'open_link_failed': 'Could not open the link. Check your browser and try again.',

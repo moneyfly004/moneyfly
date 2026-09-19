@@ -28,6 +28,9 @@ class PaymentQrDialog extends StatefulWidget {
   final String methodName;
   final VoidCallback? onPaid;
 
+  /// 测试用：把轮询超时缩到几秒，验证「已停止自动查询」提示真的会出现
+  static int? debugTimeoutSecsOverride;
+
   @override
   State<PaymentQrDialog> createState() => _PaymentQrDialogState();
 }
@@ -36,8 +39,16 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
   static const int _timeoutSecs = 900; // 轮询超时：真实 15 分钟，与二维码有效期对齐
   static const int _pollIntervalMs = 3000; // 与网站端一致；后端每次查询会实时向网关查单，勿过密
 
+  int get _timeout => PaymentQrDialog.debugTimeoutSecsOverride ?? _timeoutSecs;
+  /// 超时用「轮询次数」而不是墙上时钟：周期是固定 3s，次数 × 周期 就是有效等待
+  /// 时长；好处是确定性（可测）、App 挂起时不会因为时钟跳跃而提前停止查询。
+  int get _timeoutTicks => (_timeout * 1000 / _pollIntervalMs).ceil();
+  int _ticks = 0;
+
   bool _zoom = false;
   bool _polling = true; // 是否仍在轮询（超时/终态后置 false）
+  bool _timedOut = false; // 轮询超时：必须让用户看见，否则会一直盯着不再被查询的二维码
+  String? _closedStatus; // 后端返回 cancelled / expired：原因要留在界面上（toast 只闪 2 秒）
   bool _launching = false; // 跳转按钮防连点
   Timer? _timer;
   bool _pollInFlight = false;
@@ -47,7 +58,7 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _startPolling();
+    _startPolling(notify: false);
   }
 
   @override
@@ -82,17 +93,27 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
   }
 
   /// 启动/重启后台静默轮询：立即查一次（不等首个间隔），再周期节流轮询。
-  void _startPolling() {
+  void _startPolling({bool notify = true}) {
     _timer?.cancel();
     _startAt = DateTime.now();
     _pollInFlight = false;
     _polling = true;
+    _timedOut = false;
+    _closedStatus = null;
+    _ticks = 0;
+    if (notify && mounted) setState(() {});
     _pollOnce();
     _timer = Timer.periodic(const Duration(milliseconds: _pollIntervalMs), (_) {
       if (!mounted || !_polling) return;
-      if (DateTime.now().difference(_startAt).inSeconds >= _timeoutSecs) {
+      _ticks++;
+      if (_ticks >= _timeoutTicks) {
         _timer?.cancel();
-        _polling = false;
+        // 旧实现在这里直接 return：界面毫无变化，用户以为还在查单，可能对着一个
+        // 已经不再被查询的二维码付款。现在给出明确的「已停止查询」状态。
+        setState(() {
+          _polling = false;
+          _timedOut = true;
+        });
         return;
       }
       _pollOnce();
@@ -117,11 +138,12 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
       if (s.status == 'cancelled' || s.status == 'expired') {
         _timer?.cancel();
         _polling = false;
-        _snack(AppStrings.t('order_status_tip', {
-          'status': s.status == 'cancelled'
-              ? AppStrings.t('cancelled')
-              : AppStrings.t('expired'),
-        }));
+        final label = s.status == 'cancelled'
+            ? AppStrings.t('cancelled')
+            : AppStrings.t('expired');
+        // 终态要**留在界面上**（toast 只闪 2 秒，用户从支付 App 切回来就看不到了）
+        setState(() => _closedStatus = label);
+        _snack(AppStrings.t('order_status_tip', {'status': label}));
       }
     } catch (_) {
       // 瞬时网络错误：静默，下个周期重试
@@ -153,6 +175,44 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  /// 轮询状态行：等待中 / 已超时停止 / 订单终态。
+  /// 三个状态都必须**看得见** —— 旧实现下这三种情况界面完全一样（没有任何提示），
+  /// 用户无法判断这个二维码还在不在被查询。
+  Widget _statusRow() {
+    final Color color;
+    final String text;
+    var spinner = false;
+    if (_closedStatus != null) {
+      color = MFColors.red;
+      text = AppStrings.t('order_status_tip', {'status': _closedStatus!});
+    } else if (_timedOut) {
+      color = MFColors.amber;
+      text = AppStrings.t('pay_poll_stopped');
+    } else {
+      color = Colors.white70;
+      text = AppStrings.t('pay_waiting');
+      spinner = true;
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (spinner) ...[
+          SizedBox(
+            width: 11,
+            height: 11,
+            child: CircularProgressIndicator(strokeWidth: 1.6, color: color),
+          ),
+          const SizedBox(width: 6),
+        ],
+        Flexible(
+          child: Text(text,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 10.5, color: color)),
+        ),
+      ],
     );
   }
 
@@ -205,7 +265,9 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
             const SizedBox(height: 6),
             Text(AppStrings.t('qr_tap_zoom'),
                 style: const TextStyle(fontSize: 10, color: Colors.white60)),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            _statusRow(),
+            const SizedBox(height: 8),
             Text.rich(TextSpan(children: [
               TextSpan(text: '¥',
                   style: const TextStyle(fontSize: 15, color: Colors.white)),
@@ -222,12 +284,18 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
                 );
               },
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('${AppStrings.t('order_no')} ${widget.orderNo}',
-                      style: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: kNumFont, letterSpacing: .5)),
+                  Flexible(
+                    child: Text('${AppStrings.t('order_no')} ${widget.orderNo}',
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: kNumFont, letterSpacing: .5)),
+                  ),
                   const SizedBox(width: 5),
-                  Icon(Icons.copy, size: 12, color: Colors.white70),
+                  const Icon(Icons.copy, size: 12, color: Colors.white70),
                 ],
               ),
             ),
