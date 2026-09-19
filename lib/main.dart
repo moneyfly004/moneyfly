@@ -87,7 +87,17 @@ void main() async {
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();
   // 后台静默检查更新：有新版则点亮全局红点（底部「我的」tab / 设置「版本更新」行）
-  unawaited(UpdateService.instance.check());
+  // 并（默认开启）在后台把匹配本机的安装包预下载好 —— 用户点「立即更新」时无需等待。
+  unawaited(() async {
+    try {
+      final info = await UpdateService.instance.check();
+      if (info == null || !info.isNewer) return;
+      if (!UpdateService.canInstallInApp) return;
+      final s = await SettingsStore.instance.load();
+      if (s['autoDownloadUpdatePkg'] != true) return;
+      await UpdateService.instance.downloadInstaller(info: info);
+    } catch (_) {}
+  }());
   // 全新安装检测：卸载残留/数据被清 → 清空旧配置、旧 token、旧缓存，
   // 保证重装后必须重新登录并重新拉取订阅（不沿用旧配置）；版本升级 →
   // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。

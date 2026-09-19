@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/app_log.dart';
@@ -15,6 +14,7 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/mf_input.dart';
+import '../../widgets/update_prompt.dart';
 import '../auth/change_password_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
@@ -257,6 +257,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _checkUpdate,
               ),
             ),
+            if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS)
+              _row(icon: '⬇️', title: AppStrings.t('settings_auto_download_update'),
+                  desc: AppStrings.t('settings_auto_download_update_desc'),
+                  trailing: _switch(_s['autoDownloadUpdatePkg'] == true,
+                      (v) => _set('autoDownloadUpdatePkg', v))),
             _row(icon: '📋', title: AppStrings.t('log_center_title'),
                 desc: AppStrings.t('log_center_desc'),
                 onTap: () => Navigator.of(context).push(
@@ -1018,55 +1023,16 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 软件升级：读后端软件库 → 比对版本 → 弹更新对话框
+  /// 检查更新：统一走 [UpdatePrompt]（弹窗 + 一键更新 + 后台下载进度），
+  /// 不再只是打开浏览器下载页。
   Future<void> _checkUpdate() async {
     if (_checkingUpdate) return;
     setState(() => _checkingUpdate = true);
-    final info = await UpdateService.instance.check();
-    if (!mounted) return;
-    setState(() => _checkingUpdate = false);
-    if (info == null) {
-      // 网络/后端失败不能当成"已是最新"
-      _toast(AppStrings.t('check_update_fail'));
-      return;
+    try {
+      await UpdatePrompt.checkManually(context);
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
     }
-    if (!info.isNewer) {
-      _toast(AppStrings.t('latest_version', {'ver': UpdateInfo.currentVersion}));
-      return;
-    }
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: !info.forced,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(info.forced ? AppStrings.t('new_version_forced') : AppStrings.t('new_version'),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: Text(
-          AppStrings.t('update_body', {
-            'cur': 'v${UpdateInfo.currentVersion}',
-            'latest': 'v${info.latestVersion}',
-            'size': info.sizeText != null ? ' · ${info.sizeText}' : '',
-          }),
-          style:  TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7),
-        ),
-        actions: [
-          if (!info.forced)
-            TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('later'))),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final url = info.downloadUrl;
-              if (url == null || url.isEmpty) {
-                _toast(AppStrings.t('no_download_url'));
-                return;
-              }
-              final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-              if (!ok && mounted) _toast(AppStrings.t('cannot_open_url'));
-            },
-            child: Text(AppStrings.t('download_now'), style: TextStyle(color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    ));
   }
 
   String _closeActionLabel() {
