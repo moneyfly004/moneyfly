@@ -5,6 +5,7 @@ import '../../core/services/geo_update_service.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_row.dart';
 
 /// 分流数据管理页（国家 IP 库 country.mmdb / 分流规则 geosite.dat）。
 ///
@@ -19,8 +20,6 @@ class GeoUpdatePage extends StatefulWidget {
 }
 
 class _GeoUpdatePageState extends State<GeoUpdatePage> {
-  static final _radius = BorderRadius.circular(14);
-  static final _iconRadius = BorderRadius.circular(9);
 
   bool _updating = false;
   int _doneFiles = 0;
@@ -182,55 +181,13 @@ class _GeoUpdatePageState extends State<GeoUpdatePage> {
     );
   }
 
+  /// 统一行组件（原实现固定 height: 52，且「值」没有宽度上限和省略号，最易溢出）
   Widget _row({
     required String icon,
     required String title,
     String? desc,
     String? value,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 15),
-      height: 52,
-      decoration: BoxDecoration(
-          color: MFColors.card,
-          borderRadius: _radius,
-          border: Border.all(color: MFColors.line)),
-      child: Row(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-                color: MFColors.card2, borderRadius: _iconRadius),
-            alignment: Alignment.center,
-            child: Text(icon, style: const TextStyle(fontSize: 12)),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w500,
-                        color: MFColors.txt)),
-                if (desc != null)
-                  Text(desc,
-                      style: TextStyle(fontSize: 10, color: MFColors.txt3)),
-              ],
-            ),
-          ),
-          if (value != null)
-            Text(value,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: MFColors.txt3,
-                    fontFamily: kNumFont)),
-        ],
-      ),
-    );
+    return MFRow(icon: icon, title: title, desc: desc, value: value);
   }
 }

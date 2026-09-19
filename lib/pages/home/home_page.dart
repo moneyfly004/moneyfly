@@ -274,7 +274,7 @@ class _HomePageState extends State<HomePage>
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -310,7 +310,7 @@ class _HomePageState extends State<HomePage>
                   backgroundColor: MFColors.brand,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                 ),
                 onPressed: () => Navigator.pop(ctx, 'retry'),
                 child: Text(AppStrings.t('re_authorize'),
@@ -323,7 +323,7 @@ class _HomePageState extends State<HomePage>
                   side: BorderSide(color: MFColors.brand.withValues(alpha: .5)),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                 ),
                 onPressed: () => Navigator.pop(ctx, 'settings'),
                 child: Text(AppStrings.t('open_vpn_settings'),
@@ -430,8 +430,8 @@ class _HomePageState extends State<HomePage>
     final acc = context.watch<AccountService>();
     final compact = MediaQuery.sizeOf(context).height < 820;
     final pad = compact ? 16.0 : 22.0;
-    final gap = compact ? 8.0 : 12.0;
-    final gapL = compact ? 8.0 : 14.0;
+    final gap = compact ? 6.0 : 12.0;
+    final gapL = compact ? 6.0 : 14.0;
 
     return Scaffold(
       body: SafeArea(
@@ -442,7 +442,7 @@ class _HomePageState extends State<HomePage>
             padding: EdgeInsets.symmetric(horizontal: pad),
             children: [
               _buildHeader(),
-              SizedBox(height: compact ? 4 : 6),
+              SizedBox(height: compact ? 2 : 6),
               _buildSubInfoBar(acc),
               SizedBox(height: gap),
               if (acc.isBlocked) ...[
@@ -466,13 +466,14 @@ class _HomePageState extends State<HomePage>
                 },
               ),
               SizedBox(height: gapL),
-              RepaintBoundary(child: _buildStats(ConnectionController.instance)),
+              RepaintBoundary(child: _buildStats(ConnectionController.instance, compact)),
               SizedBox(height: gapL),
               Selector<ConnectionController, ({int nodesHash, String? curTag, String? lock})>(
                 selector: (_, c) => (nodesHash: c.nodes.length, curTag: c.current?.tag, lock: c.lockedCountry),
-                builder: (ctx, v, child) => _buildQuickCountries(ctx.read<ConnectionController>()),
+                builder: (ctx, v, child) =>
+                    _buildQuickCountries(ctx.read<ConnectionController>(), compact),
               ),
-              SizedBox(height: compact ? 10 : 16),
+              SizedBox(height: compact ? 6 : 16),
             ],
           ),
         ),
@@ -508,11 +509,14 @@ class _HomePageState extends State<HomePage>
                 ? MFColors.amber
                 : MFColors.brand;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         gradient: warn
             ? LinearGradient(colors: [color.withValues(alpha: .18), color.withValues(alpha: .05)])
-            : const LinearGradient(colors: [Color(0x2E455FE9), Color(0x10455FE9)]),
+            : LinearGradient(colors: [
+                MFColors.brand.withValues(alpha: .18),
+                MFColors.brand.withValues(alpha: .06),
+              ]),
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: color.withValues(alpha: warn ? .55 : .4)),
       ),
@@ -591,7 +595,7 @@ class _HomePageState extends State<HomePage>
       AccountStatus.subscriptionDisabled =>
         (MFColors.red, const Color(0x2EFF5A5F)),
       AccountStatus.noSubscription => (MFColors.amber, const Color(0x33FFB020)),
-      _ => (MFColors.brand, Color(0x2E455FE9)),
+      _ => (MFColors.brand, MFColors.brand.withValues(alpha: .18)),
     };
     final emoji = switch (status) {
       AccountStatus.expired => '⏰',
@@ -669,7 +673,7 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           Container(
@@ -731,13 +735,17 @@ class _HomePageState extends State<HomePage>
             _ => AppStrings.t('disconnected'),
           };
     return Container(
-      padding: EdgeInsets.fromLTRB(16, compact ? 12 : 20, 16, compact ? 10 : 16),
+      padding: EdgeInsets.fromLTRB(16, compact ? 10 : 20, 16, compact ? 8 : 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         // #1 背景浅化：品牌蓝紫柔光渐变（不再深黑难辨）
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
             begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0x38455FE9), Color(0x0F455FE9), Color(0x0AFFFFFF)]),
+            colors: [
+              MFColors.brand.withValues(alpha: .22),
+              MFColors.brand.withValues(alpha: .06),
+              Colors.white.withValues(alpha: .04),
+            ]),
         border: Border.all(
             color: connected ? MFColors.green.withValues(alpha: .55) : MFColors.brand.withValues(alpha: .45)),
       ),
@@ -746,7 +754,7 @@ class _HomePageState extends State<HomePage>
           // 状态文案定高 + 单行：文案在「已连接」↔「已连接 · 测速中」之间切换、
           // 窄窗口下也不折行，卡片高度恒定（避免每次自动测速都顶一下下方内容）
           SizedBox(
-            height: 17,
+            height: 16,
             child: Text(statusLabel,
                 maxLines: 1,
                 softWrap: false,
@@ -756,10 +764,10 @@ class _HomePageState extends State<HomePage>
           ),
           // 已连接时长 + 本次流量(独立 1s 刷新,不重建整卡)
           if (connected) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
             _SessionInfo(conn: conn),
           ],
-          SizedBox(height: compact ? 8 : 14),
+          SizedBox(height: compact ? 6 : 14),
           GestureDetector(
             onTap: () => _toggleConnect(conn),
             child: RepaintBoundary(
@@ -768,8 +776,8 @@ class _HomePageState extends State<HomePage>
                 builder: (context, child) {
                   final glow = connected ? _pulse.value : 1.0;
                   return Container(
-                    width: compact ? 80 : 108,
-                    height: compact ? 80 : 108,
+                    width: compact ? 62 : 108,
+                    height: compact ? 62 : 108,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
@@ -807,7 +815,7 @@ class _HomePageState extends State<HomePage>
                           )
                         : Icon(
                             Icons.power_settings_new_rounded,
-                            size: compact ? 34 : 44,
+                            size: compact ? 26 : 44,
                             color: connected ? MFColors.green : MFColors.txt2,
                           ),
                   ),
@@ -815,13 +823,13 @@ class _HomePageState extends State<HomePage>
               ),
             ),
           ),
-          SizedBox(height: compact ? 10 : 16),
+          SizedBox(height: compact ? 8 : 16),
           if (node != null)
             GestureDetector(
               onTap: () => _openNodePicker(conn),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                 decoration: BoxDecoration(
                   color: MFColors.card2.withValues(alpha: .55),
                   borderRadius: BorderRadius.circular(14),
@@ -939,7 +947,7 @@ class _HomePageState extends State<HomePage>
             // 定高一行：三个状态（已测出 / 检测中 / 检测失败可点重试）文案长度
             // 不同，旧实现高度随内容变，切换时下方内容上下跳
             SizedBox(
-              height: 16,
+              height: 15,
               child: conn.realCountry != null
                   ? Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1086,7 +1094,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildStats(ConnectionController conn) {
+  Widget _buildStats(ConnectionController conn, bool compact) {
     return ValueListenableBuilder<SpeedSnapshot>(
       valueListenable: conn.speedNotifier,
       builder: (context, snap, _) {
@@ -1106,9 +1114,10 @@ class _HomePageState extends State<HomePage>
                 icon: Icons.arrow_upward_rounded,
                 color: MFColors.brandLight,
                 spark: conn.upHistory,
+                compact: compact,
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: compact ? 10 : 12),
             Expanded(
               child: _StatCard(
                 label: AppStrings.t('down_speed'),
@@ -1117,6 +1126,7 @@ class _HomePageState extends State<HomePage>
                 icon: Icons.arrow_downward_rounded,
                 color: MFColors.green,
                 spark: conn.downHistory,
+                compact: compact,
               ),
             ),
           ],
@@ -1129,112 +1139,165 @@ class _HomePageState extends State<HomePage>
   String _upUnit = 'MB/s';
   String _downUnit = 'MB/s';
 
-  /// 快速切换国家：点按即切该国延迟最优的在线节点
-  Widget _buildQuickCountries(ConnectionController conn) {
-    // 按国家聚合出最佳在线节点（最多 6 国）
+  /// 快速切换国家：等宽网格（对称），点按即切该国延迟最优的在线节点。
+  ///
+  /// 三个决定（都来自实际反馈）：
+  ///  1. **只聚合已知国家**。`countryCode` 为空 / `'XX'`（订阅里未标地区的中转
+  ///     节点，例如 "JMS-1235364@c18s3..." 与 "未知 01"）不再进网格 —— 否则会
+  ///     出现一个写着「XX」的药丸，而且会抢掉一个真实国家的槽位。这些节点在
+  ///     节点列表 / 切换面板里照常可选。
+  ///  2. **固定 3 列等宽**。旧实现是 `Wrap`：国家一多就换行到 3~4 行（380 宽下
+  ///     实测 190px，把整页顶出屏幕）；后来改成单行横向滚动，高度稳了但用户
+  ///     看不到后面的国家。现在是恒定网格，既不随数量长高、也不藏东西。
+  ///  3. **行数随窗口高度**：默认/最小窗口（高 <820）2 行 = 自动最优 + 5 国；
+  ///     窗口拉高后 3 行 = 自动最优 + 8 国。槽位不足的国家可在「切换」面板里选。
+  ///     「自动最优」永远是第一格，任何窗口尺寸下都不会丢失。
+  Widget _buildQuickCountries(ConnectionController conn, bool compact) {
     final byCountry = <String, ProxyNode>{};
     for (final n in conn.nodes) {
+      final code = n.countryCode?.toUpperCase();
+      if (code == null || code.isEmpty || code == 'XX') continue;
       if (!n.online || n.latencyMs < 0) continue;
-      final code = n.countryCode ?? 'XX';
       final cur = byCountry[code];
       if (cur == null || n.latencyMs < cur.latencyMs) byCountry[code] = n;
     }
     final entries = byCountry.entries.toList()
       ..sort((a, b) => a.value.latencyMs.compareTo(b.value.latencyMs));
+    // 一个国家都没测出来时整段隐藏（保持冷启动时的高度不变）
     if (entries.isEmpty) return const SizedBox.shrink();
+
+    const cols = 3;
+    final rows = compact ? 2 : 3;
+    final shown = entries.take(cols * rows - 1).toList();
+    final cellH = compact ? 28.0 : 32.0;
+    final rowGap = compact ? 5.0 : 6.0;
+    // 第一格恒为「自动最优」，其余按延迟从低到高
+    final cells = <Widget>[
+      _autoBestPill(conn, 0),
+      for (var i = 0; i < shown.length; i++) _countryPill(conn, shown[i], compact, i + 1),
+    ];
     return Column(
+      key: const ValueKey('quick_countries'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          padding: EdgeInsets.only(left: 2, bottom: compact ? 5 : 8),
           child: Text(AppStrings.t('quick_switch_country'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
         ),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            // 「自动最优」：解除国家锁定，回到全局选优
-            GestureDetector(
-              onTap: () async {
-                await conn.unlockCountry();
-                if (mounted) _toast(AppStrings.t('auto_best_activated'));
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                decoration: BoxDecoration(
-                  color: conn.lockedCountry == null
-                      ? MFColors.green.withValues(alpha: .18)
-                      : MFColors.card,
-                  borderRadius: _pillRadius,
-                  border: Border.all(
-                      color: conn.lockedCountry == null
-                          ? MFColors.green.withValues(alpha: .7)
-                          : MFColors.line),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.auto_awesome, size: 14,
-                        color: conn.lockedCountry == null ? MFColors.green : MFColors.txt2),
-                    const SizedBox(width: 5),
-                    Text(AppStrings.t('auto_best'),
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: conn.lockedCountry == null
-                                ? MFColors.green
-                                : MFColors.txt)),
-                  ],
-                ),
-              ),
+        for (var r = 0; r < rows; r++) ...[
+          if (r > 0) SizedBox(height: rowGap),
+          SizedBox(
+            key: ValueKey('quick_row_$r'),
+            height: cellH,
+            child: Row(
+              children: [
+                for (var c = 0; c < cols; c++) ...[
+                  if (c > 0) const SizedBox(width: 6),
+                  // 等宽单元格（Expanded）＝ 视觉对称；空槽留白，保持行列整齐
+                  Expanded(
+                    child: r * cols + c < cells.length
+                        ? cells[r * cols + c]
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ],
             ),
-            for (final e in entries.take(6))
-              GestureDetector(
-                onTap: () async {
-                  await conn.switchNode(e.value);
-                  if (mounted) _toast(AppStrings.t('switched_to', {'name': e.value.tag}));
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: conn.current?.countryCode == e.key
-                        ? MFColors.brand.withValues(alpha: .2)
-                        : MFColors.card,
-                    borderRadius: _pillRadius,
-                    border: Border.all(
-                        color: conn.current?.countryCode == e.key
-                            ? MFColors.brand.withValues(alpha: .7)
-                            : MFColors.line),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CountryFlag(e.key, size: 15),
-                      const SizedBox(width: 6),
-                      Text(GeoLookupService.countryName(e.key),
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: conn.current?.countryCode == e.key
-                                  ? MFColors.brandLight
-                                  : MFColors.txt)),
-                      const SizedBox(width: 5),
-                      Text('${e.value.latencyMs}ms',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: MFColors.txt3,
-                              fontFamily: kNumFont)),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
+          ),
+        ],
       ],
     );
   }
 
+  /// 「自动最优」药丸：解除国家锁定，回到全局选优。恒占网格第一格。
+  Widget _autoBestPill(ConnectionController conn, int index) {
+    final active = conn.lockedCountry == null;
+    return GestureDetector(
+      key: ValueKey('quick_pill_$index'),
+      onTap: () async {
+        await conn.unlockCountry();
+        if (mounted) _toast(AppStrings.t('auto_best_activated'));
+      },
+      child: _pillShell(
+        active: active,
+        color: MFColors.green,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_awesome,
+                size: 13, color: active ? MFColors.green : MFColors.txt2),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(AppStrings.t('auto_best'),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: active ? MFColors.green : MFColors.txt)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 国家药丸：国旗 + 国家名 + 该国最低延迟
+  Widget _countryPill(
+      ConnectionController conn, MapEntry<String, ProxyNode> e, bool compact, int index) {
+    final active = conn.current?.countryCode?.toUpperCase() == e.key;
+    return GestureDetector(
+      key: ValueKey('quick_pill_$index'),
+      onTap: () async {
+        await conn.switchNode(e.value);
+        if (mounted) _toast(AppStrings.t('switched_to', {'name': e.value.tag}));
+      },
+      child: _pillShell(
+        active: active,
+        color: MFColors.brand,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CountryFlag(e.key, size: 14),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(GeoLookupService.countryName(e.key),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: compact ? 11.5 : 12,
+                      fontWeight: FontWeight.w600,
+                      color: active ? MFColors.brandLight : MFColors.txt)),
+            ),
+            const SizedBox(width: 4),
+            Text('${e.value.latencyMs}ms',
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                    fontSize: 9.5, color: MFColors.txt3, fontFamily: kNumFont)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 药丸外壳：铺满所在单元格（等宽），内容居中
+  Widget _pillShell({required bool active, required Color color, required Widget child}) {
+    return Container(
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      decoration: BoxDecoration(
+        color: active ? color.withValues(alpha: .18) : MFColors.card,
+        borderRadius: _pillRadius,
+        border: Border.all(color: active ? color.withValues(alpha: .7) : MFColors.line),
+      ),
+      child: child,
+    );
+  }
 }
 
 /// 节点选择底部面板（从首页「切换」进入）。
@@ -1516,19 +1579,25 @@ class _StatCard extends StatelessWidget {
     required this.color,
     required this.icon,
     this.spark,
+    this.compact = false,
   });
   final String label;
   final String value;
   final String unit;
   final Color color;
   final IconData icon;
+  /// 矮窗口（桌面默认 780 / 最小 620）：卡片整体再压一档，给「快速切换国家」
+  /// 的两行网格腾高度，保证主页一屏放得下
+  final bool compact;
   /// 迷你趋势(最近 ~60s 速率 MB/s;null 不显示)
   final List<double>? spark;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      // 桌面窗口高度有限（默认 780、最小 620）：卡片整体压矮，让主页一屏放得下
+      padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 14, vertical: compact ? 7 : 9),
       decoration: BoxDecoration(
         color: MFColors.card,
         borderRadius: BorderRadius.circular(16),
@@ -1539,12 +1608,18 @@ class _StatCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 16, color: color),
+              Icon(icon, size: compact ? 15 : 16, color: color),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(fontSize: 12, color: MFColors.txt2, fontWeight: FontWeight.w600)),
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: compact ? 11.5 : 12,
+                      color: MFColors.txt2,
+                      fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: compact ? 4 : 6),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
@@ -1554,14 +1629,14 @@ class _StatCard extends StatelessWidget {
               // 单位就左右平移（每秒一次，就是用户看到的「卡片来回跳」）。
               // 宽度按最大现实值取：MB/s 下 4 位整数 + 小数（~78px）。
               SizedBox(
-                width: 88,
+                width: compact ? 76 : 88,
                 child: Text(value,
                     textAlign: TextAlign.right,
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.clip,
                     style: TextStyle(
-                        fontSize: 26,
+                        fontSize: compact ? 20 : 22,
                         fontWeight: FontWeight.w700,
                         color: color,
                         fontFamily: kNumFont,
@@ -1571,13 +1646,13 @@ class _StatCard extends StatelessWidget {
               const SizedBox(width: 6),
               // 单位也定宽左对齐：KB/s 与 MB/s 等长，但仍占固定槽位，彻底不受影响
               SizedBox(
-                width: 42,
+                width: compact ? 38 : 42,
                 child: Text(unit,
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.clip,
                     style: TextStyle(
-                        fontSize: 13,
+                        fontSize: compact ? 12 : 13,
                         color: MFColors.txt3,
                         fontWeight: FontWeight.w500)),
               ),
@@ -1587,8 +1662,11 @@ class _StatCard extends StatelessWidget {
           // 连上约 2 秒后卡片突然长高 36px、断开清空 history 又缩回去 ——
           // 下方所有卡片跟着上下位移。现在恒定占位，样本不足时画一条基线。
           if (spark != null) ...[
-            const SizedBox(height: 10),
-            SizedBox(height: 26, width: double.infinity, child: _Sparkline(values: spark!, color: color)),
+            SizedBox(height: compact ? 4 : 6),
+            SizedBox(
+                height: compact ? 12 : 16,
+                width: double.infinity,
+                child: _Sparkline(values: spark!, color: color)),
           ],
         ],
       ),

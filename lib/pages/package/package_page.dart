@@ -343,7 +343,10 @@ class _PackagePageState extends State<PackagePage> {
         padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
         decoration: BoxDecoration(
           gradient: selected
-              ? const LinearGradient(colors: [Color(0x2E455FE9), Color(0x0F455FE9)])
+              ? LinearGradient(colors: [
+                  MFColors.brand.withValues(alpha: .18),
+                  MFColors.brand.withValues(alpha: .06),
+                ])
               : null,
           color: selected ? null : MFColors.card,
           borderRadius: BorderRadius.circular(16),

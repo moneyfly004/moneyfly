@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_strings.dart';
 import '../../core/api/api_client.dart';
@@ -13,6 +15,14 @@ import '../../widgets/password_rules.dart';
 /// 注册页（设计稿 07）：邮箱 + 验证码（60s 倒计时）+ 用户名 + 密码 + 邀请码
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
+
+  /// 测试用：替换真实的外呼（widget 测试里 launchUrl 会挂住不返回）
+  static Future<bool> Function(String url)? debugOpenUrlOverride;
+
+  /// 用户协议 / 隐私政策入口。App 内没有内置正文，统一打开官网（与设置页
+  /// 页脚展示的同一个域名）—— 旧实现这两个「链接」只是彩色文字，点了没有任何
+  /// 反应（用户以为点了没生效）。
+  static const docsUrl = 'https://dy.moneyfly.top';
 
   @override
   State<RegisterPage> createState() => _RegisterPageState();
@@ -28,6 +38,22 @@ class _RegisterPageState extends State<RegisterPage> {
 
   bool _obscure = true;
   bool _agreed = true;
+
+  late final TapGestureRecognizer _tosTap = TapGestureRecognizer()
+    ..onTap = () => _openDocs();
+  late final TapGestureRecognizer _privacyTap = TapGestureRecognizer()
+    ..onTap = () => _openDocs();
+
+  Future<void> _openDocs() async {
+    try {
+      final open = RegisterPage.debugOpenUrlOverride ??
+          (String u) => launchUrl(Uri.parse(u),
+              mode: LaunchMode.externalApplication);
+      await open(RegisterPage.docsUrl);
+    } catch (_) {
+      if (mounted) _toast(AppStrings.t('open_link_failed'));
+    }
+  }
   bool _sending = false;
   bool _codeSent = false;
   int _countdown = 0;
@@ -36,6 +62,8 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   void dispose() {
+    _tosTap.dispose();
+    _privacyTap.dispose();
     _timer?.cancel();
     for (final c in [_email, _code, _username, _password, _confirm, _invite]) {
       c.dispose();
@@ -181,34 +209,59 @@ class _RegisterPageState extends State<RegisterPage> {
               const SizedBox(height: 12),
               _field(AppStrings.t('invite_label'), _invite, hint: AppStrings.t('invite_hint')),
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => setState(() => _agreed = !_agreed),
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        gradient: _agreed ? MFColors.brandGradient : null,
-                        color: _agreed ? null : MFColors.card,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: _agreed ? Colors.transparent : MFColors.line2),
+              // 同意条款：整行都可点（旧实现只有 18×18 的小方块可点，手指/鼠标
+              // 都很难命中），文案走 l10n，两个「链接」真的能打开（旧实现是死的）
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _agreed = !_agreed),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          gradient: _agreed ? MFColors.brandGradient : null,
+                          color: _agreed ? null : MFColors.card,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: _agreed ? Colors.transparent : MFColors.line2),
+                        ),
+                        child: _agreed
+                            ? const Icon(Icons.check, size: 12, color: Colors.white)
+                            : null,
                       ),
-                      child: _agreed
-                          ? const Icon(Icons.check, size: 12, color: Colors.white)
-                          : null,
-                    ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text.rich(TextSpan(children: [
+                          TextSpan(
+                              text: AppStrings.t('agree_prefix'),
+                              style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
+                          TextSpan(
+                              text: AppStrings.t('settings_tos'),
+                              recognizer: _tosTap,
+                              style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: MFColors.brandLight,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline)),
+                          TextSpan(
+                              text: AppStrings.t('agree_and'),
+                              style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
+                          TextSpan(
+                              text: AppStrings.t('settings_privacy_policy'),
+                              recognizer: _privacyTap,
+                              style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: MFColors.brandLight,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline)),
+                        ])),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 9),
-                   Expanded(
-                    child: Text.rich(TextSpan(children: [
-                      TextSpan(text: '我已阅读并同意 ', style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
-                      TextSpan(text: '《用户协议》', style: TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-                      TextSpan(text: ' 与 ', style: TextStyle(fontSize: 11.5, color: MFColors.txt2)),
-                      TextSpan(text: '《隐私政策》', style: TextStyle(fontSize: 11.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-                    ])),
-                  ),
-                ],
+                ),
               ),
               const SizedBox(height: 22),
               MFPrimaryButton(label: AppStrings.t('register_btn'), loading: _loading, onPressed: _loading ? null : _register),

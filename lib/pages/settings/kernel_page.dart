@@ -4,6 +4,7 @@ import '../../core/proxy/proxy_core.dart';
 import '../../core/services/kernel_manager.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_row.dart';
 
 /// 内核管理页：显示当前内置 mihomo 版本、官方最新版本；
 /// 桌面端可直接下载官方预编译内核并替换（FlClash 同款能力）。
@@ -15,8 +16,6 @@ class KernelPage extends StatefulWidget {
 }
 
 class _KernelPageState extends State<KernelPage> {
-  static final _radius = BorderRadius.circular(14);
-  static final _iconRadius = BorderRadius.circular(9);
 
   String? _current;
   String? _latest;
@@ -514,6 +513,7 @@ class _KernelPageState extends State<KernelPage> {
     );
   }
 
+  /// 统一行组件（原实现固定 height: 52，最小窗口下描述会被裁切并抛 overflow）
   Widget _row({
     required String icon,
     required String title,
@@ -521,64 +521,6 @@ class _KernelPageState extends State<KernelPage> {
     String? value,
     VoidCallback? onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 15),
-      height: 52,
-      decoration: BoxDecoration(
-          color: MFColors.card,
-          borderRadius: _radius,
-          border: Border.all(color: MFColors.line)),
-      child: InkWell(
-        borderRadius: _radius,
-        onTap: onTap,
-        child: Row(
-          children: [
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                  color: MFColors.card2, borderRadius: _iconRadius),
-              alignment: Alignment.center,
-              child: Text(icon, style: const TextStyle(fontSize: 12)),
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w500,
-                          color: MFColors.txt)),
-                  if (desc != null)
-                    Text(desc,
-                        style:
-                            TextStyle(fontSize: 10, color: MFColors.txt3)),
-                ],
-              ),
-            ),
-            if (value != null)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
-                child: Text(value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: MFColors.txt3,
-                        fontFamily: kNumFont)),
-              ),
-            if (value != null || onTap != null) ...[
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 17, color: MFColors.txt3),
-            ],
-          ],
-        ),
-      ),
-    );
+    return MFRow(icon: icon, title: title, desc: desc, value: value, onTap: onTap);
   }
 }

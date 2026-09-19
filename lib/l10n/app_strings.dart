@@ -84,6 +84,9 @@ class AppStrings {
     'invite_label': '邀请码（选填）',
     'invite_hint': '如有邀请码请填写',
     'agree_tos': '我已阅读并同意 《用户协议》 与 《隐私政策》',
+    'agree_prefix': '我已阅读并同意 ',   // 后接 settings_tos
+    'agree_and': ' 与 ',                    // 夹在 settings_tos 与 settings_privacy_policy 之间
+    'open_link_failed': '无法打开链接，请检查浏览器或稍后重试',
     // 首页
     'home_ready': '全球加速已就绪',
     'smart_mode': '智能模式',
@@ -500,6 +503,7 @@ class AppStrings {
     'tun_auto': '自动',
     'theme_light': '浅色',
     'quick_switch_country': '快速切换国家 · 点按即切最优节点',
+    'country_unknown': '未知地区',
     'auto_best_activated': '已切换为自动选择最优节点',
     'member': '会员',
     'days': '天',
@@ -722,6 +726,9 @@ class AppStrings {
     'invite_label': 'Invite code (optional)',
     'invite_hint': 'Enter invite code if any',
     'agree_tos': 'I agree to the Terms of Service and Privacy Policy',
+    'agree_prefix': 'I have read and agree to the ',
+    'agree_and': ' and ',
+    'open_link_failed': 'Could not open the link. Check your browser and try again.',
     'home_ready': 'Ready for global access',
     'smart_mode': 'Smart Mode',
     'global_mode': 'Global Mode',
@@ -1133,6 +1140,7 @@ class AppStrings {
     'tun_auto': 'Auto',
     'theme_light': 'Light',
     'quick_switch_country': 'Quick country switch · tap for best node',
+    'country_unknown': 'Unknown region',
     'auto_best_activated': 'Switched to auto-select best node',
     'member': 'Member',
     'days': 'days',

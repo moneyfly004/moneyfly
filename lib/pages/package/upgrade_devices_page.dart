@@ -224,10 +224,13 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [Color(0x38455FE9), Color(0x0F455FE9)]),
+                          colors: [
+                            MFColors.brand.withValues(alpha: .22),
+                            MFColors.brand.withValues(alpha: .06),
+                          ]),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                           color: MFColors.brand.withValues(alpha: .3)),
