@@ -40,8 +40,11 @@ name: Build Release (Android / Windows / macOS)
 #   2b) Android 拆成三个并行 job：verify（ubuntu 全量测试）/ android（仅 APK）/
 #      android-aab（仅 AAB）。原来「测试 98s + APK 313s + AAB 59s」串在同一个
 #      runner 上 = 9.4min 的关键路径；拆开后关键路径只剩 APK 那一段。
-#   2c) macOS arm64 保持一次性 `flutter test --concurrency=1`：实测拆成
-#      「并行 + e2e 串行」两次调用在这台 3 核 runner 上反而 237s > 174s。
+#   2c) 平台校验与构建分离：Windows / macOS 各自多一个 verify-* job 跑平台测试，
+#      构建 job 专心构建。实测 Windows 测试 92~207s、macOS arm64 测试 174~211s，
+#      串在构建前等于把关键路径拉长同样多；拆开后关键路径只剩「构建+打包」。
+#      macOS 那台 3 核 runner 用一次性 `--concurrency=1`（拆两次调用要重编测试
+#      bundle，实测 237s > 174s），Windows 那台核多，用「并行 + e2e 串行」更快。
 #   3) macOS 内核不再下载两次：测试用的那份直接复用给「内置内核」步骤
 #      （实测最慢一次这个重复下载花了 51s）。
 #   4) macOS x64 / universal 两个 job 不再重复跑全量测试（同一份 Dart 代码，
@@ -102,6 +105,85 @@ jobs:
         run: |
           flutter analyze
           flutter test --exclude-tags e2e
+
+  # ================= macOS 平台校验（真实内核 e2e + macOS 分支用例） ==========
+  # 为什么在 macOS 上再跑一遍全量：不少用例按 Platform.isMacOS 分支（系统代理、
+  # 单实例锁、autostart、TUN 提权……），只在 Linux 上跑等于没验证这些分支。
+  # 单次 `--concurrency=1`：这台 runner 只有 3 核，拆成「并行 + e2e 串行」两次调用
+  # 要重新编译一遍测试 bundle，实测 237s > 174s，不划算。
+  verify-macos:
+    name: 校验 (macOS arm64, 真实内核)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      - name: 下载 mihomo 内核（真实内核 e2e 用）
+        run: |
+          mkdir -p build/mihomo
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
+      - name: 校验
+        run: |
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
+          flutter analyze
+          flutter test --concurrency=1
+
+  # ================= Windows 平台校验（真实内核 e2e + Windows 分支用例） ==========
+  # Windows 分支（注册表系统代理、单实例互斥、launch_at_startup）同样只能在
+  # Windows 上验证；这台 runner 核多，测试拆成「并行 + e2e 串行」反而更快
+  # （实测 133s → 92s）。
+  verify-windows:
+    name: 校验 (Windows, 真实内核)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据
+        shell: bash
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      - name: 下载 mihomo 内核（真实内核 e2e 用）
+        shell: bash
+        run: |
+          mkdir -p build/mihomo
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.zip \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-compatible-v$MIHOMO_VERSION.zip"
+          unzip -o mihomo.zip -d sb
+          EXE=$(find sb -iname "*.exe" | head -1)
+          [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
+      - name: 校验（非 e2e 并行 + 真实内核 e2e 串行）
+        shell: bash
+        run: |
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo.exe"
+          flutter analyze
+          flutter test --exclude-tags e2e
+          flutter test --tags e2e --concurrency=1
 
   # ================= Android：多 ABI 分版本 =================
   android:
@@ -267,14 +349,9 @@ jobs:
           [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
           ls -la build/mihomo/
 
-      - name: 测试（非 e2e 并行 + 真实内核 e2e 串行）
-        shell: bash
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo.exe"
-          flutter analyze
-          flutter test --exclude-tags e2e
-          flutter test --tags e2e --concurrency=1
-
+      # 测试已移到 verify-windows job（并行跑）：实测这个 runner 上测试要 92~207s，
+      # 串在构建前面就等于把关键路径拉长同样多。真实内核也在那边下载并验证 ——
+      # 本 job 保留内核下载只是为了「内嵌进安装包」。
       - name: 构建 Windows release
         run: flutter build windows --release
 
@@ -355,15 +432,7 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      # 这里**不**拆成两次调用：macos runner 只有 3 核，第二次调用要重新编译一遍
-      # 测试 bundle，实测「并行 350 + 串行 48」共 237s，反而比一次性
-      # `flutter test --concurrency=1`（174s）慢。并行只在核多的 ubuntu / Windows
-      # runner 上划算（那里 134/133s → 98/92s）。
-      - name: 测试（真实内核 e2e，串行）
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
-          flutter analyze
-          flutter test --concurrency=1
+      # 测试已移到 verify-macos job（并行跑）。本 job 只下载内核用于「内嵌」。
       - name: 构建 macOS（arm64）
         run: flutter build macos --release
       - name: 校验架构
@@ -652,7 +721,7 @@ jobs:
   release:
     name: 发布到 GitHub Releases
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [verify, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
+    needs: [verify, verify-macos, verify-windows, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -667,7 +736,10 @@ jobs:
         run: |
           cd dist
           rm -f SHA256SUMS.txt
-          cat SHA256SUMS*.txt 2>/dev/null | sort -k2 > SHA256SUMS.txt
+          # Windows runner 的 sha256sum（Git Bash）会写成「二进制模式」——
+          # 文件名前面多个 `*`。统一成 `<hash>  <name>` 两空格格式，免得同一份
+          # 文件里两种写法混杂（`sha256sum -c` / `shasum -c` 两种都能吃，但看着乱）
+          cat SHA256SUMS*.txt 2>/dev/null | sed 's/ \*/  /' | sort -k2 > SHA256SUMS.txt
           echo "── SHA256SUMS.txt 覆盖 $(wc -l < SHA256SUMS.txt) 个产物 ──"
           cat SHA256SUMS.txt
 
