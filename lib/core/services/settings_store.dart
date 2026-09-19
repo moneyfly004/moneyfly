@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../utils/serial_executor.dart';
@@ -28,7 +29,19 @@ class SettingsStore {
   static const legacyHttpTestUrl = 'http://www.gstatic.com/generate_204';
 
   /// 全局串行写队列：save/update 依次执行，避免并发交错
-  static final SerialExecutor _writeQueue = SerialExecutor();
+  static SerialExecutor _writeQueue = SerialExecutor();
+
+  /// 测试用：丢弃写队列状态。
+  ///
+  /// 为什么需要：写队列是**进程级单例**，任务只在 `_tail` 上串行链式执行。
+  /// widget 测试跑在各自的假异步 zone 里，某个用例结束（zone 被拆掉）时若队列里
+  /// 还有一个没跑完的任务，`_tail` 就成了永远不会完成的 future —— 之后所有
+  /// `save/update` 都会静默排在它后面、永远不执行。表现是「单个用例跑过、整个
+  /// 文件一起跑就失败」（值没落盘）。测试在 setUp 里调用本方法即可隔离。
+  @visibleForTesting
+  static void resetForTest() {
+    _writeQueue = SerialExecutor();
+  }
 
   Map<String, dynamic> _defaults() => {
         // #10：启动自动连接 / 断线自动重连 默认关闭（手动点击连接）

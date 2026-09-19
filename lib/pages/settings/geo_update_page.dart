@@ -69,11 +69,9 @@ class _GeoUpdatePageState extends State<GeoUpdatePage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: MFColors.card2,
-    ));
+    // 只留文案：背景/圆角/浮动样式统一由 ThemeData.snackBarTheme 提供
+    // （旧实现这里自己又写了一套 floating + card2，和主题重复且容易走偏）
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   String _fmt(DateTime t) {

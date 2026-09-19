@@ -37,7 +37,13 @@ class _RegisterPageState extends State<RegisterPage> {
   final _invite = TextEditingController();
 
   bool _obscure = true;
-  bool _agreed = true;
+
+  /// 同意条款默认**未勾选**：默认勾选会让「必须同意」的校验形同虚设（用户从未
+  /// 做出同意表示，却已经完成注册）—— 合规风险。未勾选时点注册会明确提示。
+  bool _agreed = false;
+
+  /// 未勾选就点注册时的常驻提示（toast 只闪一下，容易被忽略）
+  bool _agreeError = false;
 
   late final TapGestureRecognizer _tosTap = TapGestureRecognizer()
     ..onTap = () => _openDocs();
@@ -109,7 +115,11 @@ class _RegisterPageState extends State<RegisterPage> {
     if (pwdErr != null) return _toast(pwdErr);
     if (_password.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
     if (!looksLikeEmail(_email.text)) return _toast(AppStrings.t('email_invalid'));
-    if (!_agreed) return _toast(AppStrings.t('agree_required'));
+    if (!_agreed) {
+      // 常驻提示 + toast 双通道：用户未同意协议时绝不发起注册请求
+      setState(() => _agreeError = true);
+      return _toast(AppStrings.t('agree_required'));
+    }
     setState(() => _loading = true);
     try {
       await ApiClient.instance.post(Endpoints.register, data: {
@@ -211,11 +221,20 @@ class _RegisterPageState extends State<RegisterPage> {
               const SizedBox(height: 14),
               // 同意条款：整行都可点（旧实现只有 18×18 的小方块可点，手指/鼠标
               // 都很难命中），文案走 l10n，两个「链接」真的能打开（旧实现是死的）
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _agreed = !_agreed),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
+              // 勾选整行可点，命中区 ≥44 且用 InkWell 给按压反馈 ——
+              // 旧实现只有 18×18 的小方块能点，手指/鼠标都很难命中
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => setState(() {
+                  _agreed = !_agreed;
+                  if (_agreed) _agreeError = false;
+                }),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 44),
+                  child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
                   child: Row(
                     children: [
                       Container(
@@ -261,9 +280,23 @@ class _RegisterPageState extends State<RegisterPage> {
                       ),
                     ],
                   ),
+                  ),
+                ),
                 ),
               ),
               const SizedBox(height: 22),
+              // 未勾选就点注册：红字常驻在按钮上方（toast 会消失，合规提示要留住）
+              if (_agreeError) ...[
+                Text('⚠ ${AppStrings.t('agree_required')}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: MFColors.red,
+                        height: 1.5,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 10),
+              ],
               MFPrimaryButton(label: AppStrings.t('register_btn'), loading: _loading, onPressed: _loading ? null : _register),
             ],
           ),

@@ -96,6 +96,19 @@ Future<void> tapButton(WidgetTester tester, String text) async {
   await runTap(tester, f);
 }
 
+/// 勾选注册页的「同意条款」：点整行最左侧（勾选框位置）。
+/// 不点文案本身 —— 那是带手势识别器的《用户协议》外链。
+Future<void> tickAgree(WidgetTester tester) async {
+  final row = find
+      .ancestor(
+          of: find.textContaining('用户协议', findRichText: true),
+          matching: find.byType(GestureDetector))
+      .first;
+  final r = tester.getRect(row);
+  await tester.tapAt(Offset(r.left + 8, r.center.dy));
+  await tester.pump();
+}
+
 /// 放大测试视口，长表单无需滚动即可点到底部按钮
 void _bigScreen(WidgetTester tester) {
   tester.view.physicalSize = const Size(900, 1600);
@@ -162,6 +175,9 @@ void main() {
           .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
           .clearSnackBars();
       await tester.pump();
+      // 同意条款默认**未勾选**（合规：用户必须显式同意才能注册），
+      // 所以要先把整行勾上，否则会被本地校验拦下、不发注册请求
+      await tickAgree(tester);
       await tapButton(tester, '注 册');
       await tester.pumpAndSettle(); // 注册成功 pop 回宿主
 

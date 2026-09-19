@@ -56,11 +56,16 @@ class _PackagePageState extends State<PackagePage> {
       });
     }
     try {
-      // plans 与 methods 相互独立，并发发起再一起 await，省一次串行往返
-      final plansF = PaymentService.instance.plans(force: true);
-      final methodsF = PaymentService.instance.methods(force: true);
-      final plans = await plansF;
-      final methods = await methodsF;
+      // plans 与 methods 相互独立，并发发起再一起等，省一次串行往返。
+      // 用 Future.wait 而不是「先 await plansF 再 await methodsF」：后者在第一个
+      // 失败时，第二个 future 的错误还没有监听者 → 变成「无人处理的异步异常」
+      // （测试里直接判失败，线上也会写进错误日志）。Future.wait 会同时监听两者。
+      final r = await Future.wait<Object>([
+        PaymentService.instance.plans(force: true),
+        PaymentService.instance.methods(force: true),
+      ]);
+      final plans = r[0] as List<Plan>;
+      final methods = r[1] as List<PayMethod>;
       if (mounted) _apply(plans, methods);
     } catch (e) {
       // 有缓存时静默失败：保留旧目录继续浏览
@@ -252,6 +257,23 @@ class _PackagePageState extends State<PackagePage> {
     );
   }
 
+  /// 错误态 / 空态的固定高度盒子：**可滚动**。
+  ///
+  /// MFEmpty 的主文案在错误态直接是服务端原文（[ApiClient.errorMsg] 对
+  /// 「响应体是字符串」会原样返回，例如网关吐的整页 HTML），长度不可控；
+  /// 固定 320 高 + 不可滚动的居中 Column 在最小窗口（380×620）下会抛
+  /// RenderFlex overflow（实测长正文溢出 1000+ px，文字被整段裁掉）。
+  /// 内容不超过 320 时仍然居中原样显示，超了就能滚出来。
+  Widget _emptyBox(Widget child) => SizedBox(
+        height: 320,
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 320),
+            child: child,
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -271,20 +293,14 @@ class _PackagePageState extends State<PackagePage> {
                         style: TextStyle(fontSize: 12, color: MFColors.txt3)),
                     const SizedBox(height: 16),
                     if (_error != null)
-                      SizedBox(
-                        height: 320,
-                        child: MFEmpty(
-                          title: _error!,
-                          icon: Icons.cloud_off_outlined,
-                          actionLabel: AppStrings.t('retry'),
-                          onAction: _load,
-                        ),
-                      )
+                      _emptyBox(MFEmpty(
+                        title: _error!,
+                        icon: Icons.cloud_off_outlined,
+                        actionLabel: AppStrings.t('retry'),
+                        onAction: _load,
+                      ))
                     else if (_plans.isEmpty)
-                      SizedBox(
-                        height: 320,
-                        child: MFEmpty(title: AppStrings.t('no_plans')),
-                      )
+                      _emptyBox(MFEmpty(title: AppStrings.t('no_plans')))
                     else ...[
                       // #6 上下列表模式
                       for (var i = 0; i < _plans.length; i++) _buildPlanRow(i, _plans[i]),

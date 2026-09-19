@@ -6,6 +6,7 @@ import '../../core/services/account_service.dart';
 import '../../core/services/device_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_skeleton.dart';
 import '../../widgets/mf_empty.dart';
 import '../package/upgrade_devices_page.dart';
 
@@ -26,6 +27,7 @@ class _DevicesPageState extends State<DevicesPage> {
   bool _loading = true;
   int? _deletingId;
   int? _savingRemarkId;
+  String? _error; // 加载失败原因（失败≠没设备：错误态与空态分流）
 
   @override
   void initState() {
@@ -33,16 +35,30 @@ class _DevicesPageState extends State<DevicesPage> {
     _load();
   }
 
-  Future<void> _load() async {
+  /// 拉取列表。[spinner] = true 时整页转圈（首屏 / 用户主动刷新）；
+  /// 删除、改备注等 mutation 之后用 `spinner: false` 静默刷新：
+  /// 旧实现每次都把列表换成居中 CircularProgressIndicator → 操作一次整页闪白、
+  /// 滚动位置丢失、看着像卡死。
+  Future<void> _load({bool spinner = true}) async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() {
+      if (spinner) _loading = true;
+      _error = null;
+    });
     try {
       final list = await DeviceService.instance.list();
       if (mounted) setState(() => _devices = list);
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (!mounted) return;
+      // 首屏/主动刷新失败 → 错误态（带重试），不要显示成「暂无设备」
+      if (spinner) {
+        setState(() => _error = ApiClient.errorMsg(e));
+      } else {
+        // 静默刷新失败：列表原样保留，只弹提示
+        _toast(ApiClient.errorMsg(e));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _loading) setState(() => _loading = false);
     }
   }
 
@@ -67,7 +83,7 @@ class _DevicesPageState extends State<DevicesPage> {
     setState(() => _deletingId = device.id);
     try {
       await DeviceService.instance.delete(device.id);
-      await _load();
+      await _load(spinner: false);
       if (mounted) _toast(AppStrings.t('device_deleted'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
@@ -110,7 +126,7 @@ class _DevicesPageState extends State<DevicesPage> {
     setState(() => _savingRemarkId = device.id);
     try {
       await DeviceService.instance.updateRemark(device.id, saved);
-      await _load();
+      await _load(spinner: false);
       if (mounted) _toast(AppStrings.t('remark_saved'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
@@ -122,6 +138,32 @@ class _DevicesPageState extends State<DevicesPage> {
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 加载失败态（失败 ≠ 没设备）：带「重试」的空态。
+  /// 外层可滚动，后端原始错误再长也不会在 380×620 的最小窗口里顶破布局；
+  /// MFEmpty 的 hint 无法限行，所以这里把原文截断（不截断的话几十行错误会把
+  /// 「重试」按钮顶到屏幕外，用户连重试都点不到）。
+  Widget _buildError() => LayoutBuilder(
+        builder: (_, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                minHeight: box.maxHeight.isFinite ? box.maxHeight : 0),
+            child: MFEmpty(
+              icon: Icons.cloud_off,
+              title: AppStrings.t('load_failed'),
+              hint: _briefError,
+              actionLabel: AppStrings.t('retry'),
+              onAction: () => _load(),
+            ),
+          ),
+        ),
+      );
+
+  /// 错误原文（截断到一行能读完的长度，避免按钮被顶出可视区）
+  String get _briefError {
+    final e = _error ?? '';
+    return e.length > 100 ? '${e.substring(0, 100)}…' : e;
   }
 
   @override
@@ -136,8 +178,11 @@ class _DevicesPageState extends State<DevicesPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
-            : ListView(
+            // 首屏用骨架屏而不是裸转圈：转圈→内容的跳变比骨架明显得多
+            ? const MFListSkeleton()
+            : _error != null
+                ? _buildError()
+                : ListView(
                 padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                 children: [
                   _buildUpgradeEntry(),
@@ -170,7 +215,7 @@ class _DevicesPageState extends State<DevicesPage> {
     final expire = sub?.expireTime;
     final expireText = expire == null
         ? '—'
-        : '${expire.year}-${expire.month.toString().padLeft(2, '0')}-${expire.day.toString().padLeft(2, '0')}';
+        : formatDateYmd(expire); // 统一日期口径（见 app_theme.dart）
     final full = limit > 0 && used >= limit;
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
@@ -317,12 +362,27 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
-  Widget _meta(String k, String v) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('$k ', style:  TextStyle(fontSize: 10.5, color: MFColors.txt3)),
-          Text(v, style:  TextStyle(fontSize: 10.5, color: MFColors.txt2, fontFamily: kNumFont)),
-        ],
+  /// 元信息一项：`键 值`。
+  /// 值必须有宽度上限 + 省略号：IPv6 / 长的地理位置串在 380 宽的最小窗口里
+  /// 无法换行也无法省略，会把整张卡片顶出 RenderFlex overflow（审计 P2）。
+  Widget _meta(String k, String v) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 168),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('$k ', style: TextStyle(fontSize: 10.5, color: MFColors.txt3)),
+            Flexible(
+              child: Text(v,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 10.5,
+                      color: MFColors.txt2,
+                      fontFamily: kNumFont)),
+            ),
+          ],
+        ),
       );
 }
 
@@ -343,9 +403,19 @@ class _ActionBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: loading ? null : onTap,
-      child: Container(
+    // InkWell + 命中区 ≥40：旧实现是 height: 34 的裸 GestureDetector ——
+    // 「删除设备」这类破坏性操作的命中区偏小且没有按压反馈
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: loading ? null : onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Container(
         height: 34,
         padding: const EdgeInsets.symmetric(horizontal: 13),
         decoration: BoxDecoration(
@@ -363,6 +433,9 @@ class _ActionBtn extends StatelessWidget {
             const SizedBox(width: 5),
             Text(label, style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w600)),
           ],
+        ),
+            ),
+          ),
         ),
       ),
     );

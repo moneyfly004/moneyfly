@@ -5,6 +5,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/password_policy.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_form_error.dart';
 import '../../widgets/password_rules.dart';
 
 /// 修改密码（登录态，需旧密码 + 新密码）
@@ -30,13 +31,20 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
     super.dispose();
   }
 
+  /// 校验失败原因：常驻显示在按钮上方（旧实现是 `return _toast(...)` —— 手机端
+  /// 键盘会挡住 snackbar，而且只闪几秒，用户看到的是「点了没反应」）
+  String? _formError;
+
   Future<void> _submit() async {
-    if (_old.text.isEmpty) return _toast(AppStrings.t('pwd_old_required'));
+    if (_old.text.isEmpty) return _fail(AppStrings.t('pwd_old_required'));
     // 与后端同规则校验（长度≥8 + 四类字符至少三种），避免提交后服务端报强度不足
     final pwdErr = PasswordPolicy.errorFor(_newPwd.text);
-    if (pwdErr != null) return _toast(pwdErr);
-    if (_newPwd.text != _confirm.text) return _toast(AppStrings.t('pwd_mismatch'));
-    setState(() => _loading = true);
+    if (pwdErr != null) return _fail(pwdErr);
+    if (_newPwd.text != _confirm.text) return _fail(AppStrings.t('pwd_mismatch'));
+    setState(() {
+      _formError = null;
+      _loading = true;
+    });
     try {
       await AuthService.instance.changePassword(
         oldPassword: _old.text,
@@ -45,10 +53,16 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       _toast(AppStrings.t('pwd_changed'));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast(ApiClient.errorMsg(e));
+      _fail(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// 校验/接口失败：常驻在按钮上方，且清掉上一次的提示
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() => _formError = msg);
   }
 
   void _toast(String msg) {
@@ -78,6 +92,10 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
               PasswordRuleHints(controller: _newPwd),
               const SizedBox(height: 12),
               _field(AppStrings.t('confirm_pwd'), _confirm, hint: AppStrings.t('confirm_pwd_hint'), obscure: _obscure, suffix: _eyeBtn()),
+              if (_formError != null) ...[
+                const SizedBox(height: 4),
+                MFFormError(message: _formError!),
+              ],
               const SizedBox(height: 26),
               MFPrimaryButton(label: AppStrings.t('save_pwd'), loading: _loading, onPressed: _loading ? null : _submit),
             ],
@@ -107,6 +125,9 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
             Expanded(
               child: TextField(
                 controller: c,
+                onChanged: (_) {
+                  if (_formError != null) setState(() => _formError = null);
+                },
                 obscureText: obscure,
                 style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 15),
                 cursorColor: MFColors.brand,

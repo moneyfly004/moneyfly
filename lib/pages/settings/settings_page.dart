@@ -126,8 +126,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
             _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),
                 trailing: _switch(_s['autoReconnect'] == true, (v) => _set('autoReconnect', v))),
-            _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: '${_s['testIntervalMin'] ?? 30} ${AppStrings.t('settings_minutes')}',
-                onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)))),
+            _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: _testIntervalValue(),
+                onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)),
+                    current: _testIntervalValue())),
             _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
                 value: _testUrlHost(),
                 onTap: _pickTestUrl),
@@ -139,23 +140,18 @@ class _SettingsPageState extends State<SettingsPage> {
             if (!Platform.isAndroid && !Platform.isIOS)
               _row(icon: '🚀', title: AppStrings.t('settings_tun'),
                   desc: _tunDesc(),
-                  value: switch (_s['tunMode']?.toString()) {
-                    'off' => AppStrings.t('tun_off'),
-                    'force' => AppStrings.t('tun_force'),
-                    _ => AppStrings.t('tun_auto'),
-                  },
+                  value: _tunModeValue(),
                   onTap: _pickTunMode),
             if (Platform.isAndroid)
               _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
                   desc: AppStrings.t('settings_tun_stack_desc'),
-                  value: (_s['tunStack']?.toString() ?? 'gvisor') == 'mixed'
-                      ? AppStrings.t('tun_stack_mixed')
-                      : AppStrings.t('tun_stack_gvisor'),
+                  value: _tunStackValue(),
                   onTap: () => _picker([
                     AppStrings.t('tun_stack_gvisor'),
                     AppStrings.t('tun_stack_mixed'),
                   ], (v) => _set('tunStack',
-                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'))),
+                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'),
+                      current: _tunStackValue())),
             // 主 DNS 列表（逗号分隔文本编辑；旧 'dns' 单值键保留兼容，主列表优先）
             _row(icon: '🌐', title: AppStrings.t('settings_dns'),
                 desc: AppStrings.t('settings_dns_desc'),
@@ -163,11 +159,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _pickDnsList),
             _row(icon: '🧭', title: AppStrings.t('settings_dns_mode'),
                 desc: AppStrings.t('settings_dns_mode_desc'),
-                value: switch (_s['dnsMode']?.toString()) {
-                  'fake-ip' => AppStrings.t('dns_mode_fakeip'),
-                  'redir-host' => AppStrings.t('dns_mode_redirhost'),
-                  _ => AppStrings.t('dns_mode_auto'),
-                },
+                value: _dnsModeValue(),
                 onTap: () => _picker([
                   AppStrings.t('dns_mode_auto'),
                   AppStrings.t('dns_mode_fakeip'),
@@ -177,7 +169,8 @@ class _SettingsPageState extends State<SettingsPage> {
                         ? 'fake-ip'
                         : (v == AppStrings.t('dns_mode_redirhost')
                             ? 'redir-host'
-                            : 'auto')))),
+                            : 'auto')),
+                    current: _dnsModeValue())),
             // fake-ip 过滤追加（这些域名保留真实解析，不映射 fake-ip）
             _row(icon: '🧩', title: AppStrings.t('settings_fakeip_extra'),
                 desc: AppStrings.t('settings_fakeip_extra_desc'),
@@ -355,48 +348,55 @@ class _SettingsPageState extends State<SettingsPage> {
             runSpacing: 10,
             children: [
               for (final key in mfThemeKeys)
-                GestureDetector(
-                  onTap: () {
-                    ThemeController.instance.setAppearance(key);
-                    _set('appearance', key);
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: mfThemeOf(key).card,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: current == key
-                                ? MFColors.brand
-                                : mfThemeOf(key).line,
-                            width: current == key ? 2 : 1,
-                          ),
-                        ),
-                        alignment: Alignment.center,
-                        child: Container(
-                          width: 11,
-                          height: 11,
+                // 外观色卡同样要有按压反馈（旧实现 GestureDetector + Container，
+                // 按下去毫无反应）；色卡底色画在 Ink 上，水波纹才看得见
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () {
+                      ThemeController.instance.setAppearance(key);
+                      _set('appearance', key);
+                    },
+                    borderRadius: BorderRadius.circular(9),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Ink(
+                          width: 42,
+                          height: 30,
                           decoration: BoxDecoration(
-                              color: mfThemeOf(key).brand,
-                              shape: BoxShape.circle),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                          AppStrings.t(mfThemeLabels[key] ?? ''),
-                          style: TextStyle(
-                              fontSize: 10,
+                            color: mfThemeOf(key).card,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
                               color: current == key
                                   ? MFColors.brand
-                                  : MFColors.txt3,
-                              fontWeight: current == key
-                                  ? FontWeight.w700
-                                  : FontWeight.w500)),
-                    ],
+                                  : mfThemeOf(key).line,
+                              width: current == key ? 2 : 1,
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: 11,
+                              height: 11,
+                              decoration: BoxDecoration(
+                                  color: mfThemeOf(key).brand,
+                                  shape: BoxShape.circle),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                            AppStrings.t(mfThemeLabels[key] ?? ''),
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: current == key
+                                    ? MFColors.brand
+                                    : MFColors.txt3,
+                                fontWeight: current == key
+                                    ? FontWeight.w700
+                                    : FontWeight.w500)),
+                      ],
+                    ),
                   ),
                 ),
             ],
@@ -411,24 +411,34 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 标签必须能压缩：它作为「行尾控件」时拿到的宽度可能很窄（英文标签 + 380 宽
   /// 最小窗口），旧实现两个 Text 都没有 maxLines/省略号，实测整行溢出 19px 并把
   /// 标题挤成 0 宽（标题完全看不见）。现在每个标签 Flexible + 单行省略。
+  ///
+  /// 可点区域用 InkWell（审计 P2）：旧实现是 GestureDetector + Container，按下去
+  /// 没有任何反馈。渐变底必须画在 `Ink` 上（不是 Container）—— Material 的墨水层
+  /// 在子 widget **下面**，用不透明 Container 会把水波纹整个盖住。
   Widget _seg2({required String left, required String right, required bool selectedLeft,
       required VoidCallback onLeft, required VoidCallback onRight}) {
     Widget seg(String label, bool selected, VoidCallback onTap) {
       return Flexible(
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        child: Material(
+          color: Colors.transparent,
+          child: Ink(
             decoration: BoxDecoration(
               gradient: selected ? MFColors.brandGradient : null,
               borderRadius: BorderRadius.circular(7),
             ),
-            child: Text(label,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                    color: selected ? Colors.white : MFColors.txt3)),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(7),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                child: Text(label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                        color: selected ? Colors.white : MFColors.txt3)),
+              ),
+            ),
           ),
         ),
       );
@@ -455,6 +465,34 @@ class _SettingsPageState extends State<SettingsPage> {
     };
   }
 
+  /// 后台测速间隔的展示文案（同时用作选择器「当前值」判定，两者必须同源）
+  String _testIntervalValue() =>
+      '${_s['testIntervalMin'] ?? 30} ${AppStrings.t('settings_minutes')}';
+
+  /// TUN 堆栈展示文案（同上，行内展示与选择器勾选同源）
+  String _tunStackValue() =>
+      (_s['tunStack']?.toString() ?? 'gvisor') == 'mixed'
+          ? AppStrings.t('tun_stack_mixed')
+          : AppStrings.t('tun_stack_gvisor');
+
+  /// DNS 模式展示文案（同上）
+  String _dnsModeValue() {
+    return switch (_s['dnsMode']?.toString()) {
+      'fake-ip' => AppStrings.t('dns_mode_fakeip'),
+      'redir-host' => AppStrings.t('dns_mode_redirhost'),
+      _ => AppStrings.t('dns_mode_auto'),
+    };
+  }
+
+  /// TUN 模式展示文案（同上）
+  String _tunModeValue() {
+    return switch (_s['tunMode']?.toString()) {
+      'off' => AppStrings.t('tun_off'),
+      'force' => AppStrings.t('tun_force'),
+      _ => AppStrings.t('tun_auto'),
+    };
+  }
+
   String? _tunDesc() {
     final mode = _s['tunMode']?.toString() ?? 'off';
     if (mode == 'off') return AppStrings.t('tun_off_hint');
@@ -464,46 +502,92 @@ class _SettingsPageState extends State<SettingsPage> {
     return null;
   }
 
+  /// 校验型文本对话框：**校验在对话框内部执行**。
+  ///
+  /// 旧实现（审计 P1）四个对话框是同一个坏模式：`Navigator.pop(ctx, ctrl.text)`
+  /// **先关闭**，关闭之后才校验，失败只能 `_toast` 闪 4 秒 snackbar —— 用户（尤其是
+  /// 一次性粘贴一整串 DNS 的）输入全被丢掉，必须重新打开对话框、重新输入。
+  /// 现在 [validate] 返回非 null（错误文案）时：对话框**不关**、错误常驻在输入框
+  /// 下方（InputDecoration.errorText）、已输入内容原样保留，用户可以就地改。
+  Future<String?> _askText({
+    required String title,
+    required String initial,
+    required String? Function(String raw) validate,
+    String? hint,
+    String? helper,
+    TextInputType? keyboardType,
+    int? minLines,
+    int? maxLines,
+    TextStyle? style,
+  }) {
+    final ctrl = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        String? error;
+        return StatefulBuilder(builder: (ctx, setDlg) {
+          void submit() {
+            final e = validate(ctrl.text);
+            if (e != null) {
+              setDlg(() => error = e);
+              return; // 校验不过：不 pop，输入与错误都留在对话框里
+            }
+            Navigator.pop(ctx, ctrl.text);
+          }
+
+          return AlertDialog(
+            backgroundColor: MFColors.card2,
+            title: Text(title,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            content: TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: keyboardType,
+              minLines: minLines,
+              maxLines: maxLines,
+              style: style ?? TextStyle(color: MFColors.txt),
+              onSubmitted: (_) => submit(),
+              decoration: _mfInputErr(hint: hint, helper: helper, error: error),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(AppStrings.t('cancel_text')),
+              ),
+              TextButton(
+                onPressed: submit,
+                child: Text(AppStrings.t('save'),
+                    style: TextStyle(color: MFColors.brandLight)),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
   /// 端口输入弹窗通用件：返回合法端口；[forbidden] 返回与之冲突的值时应拒绝
   Future<int?> _askPort(String title, String hint, int cur, String invalidMsg,
       int? forbidden, {String? helper}) async {
-    final ctrl = TextEditingController(text: '$cur');
-    final v = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(title,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          style: TextStyle(color: MFColors.txt),
-          decoration: mfInput(
-            hint: hint,
-            helper: helper ?? AppStrings.t('settings_local_port_desc'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(AppStrings.t('cancel_text')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-            child: Text(AppStrings.t('save'),
-                style: TextStyle(color: MFColors.brandLight)),
-          ),
-        ],
-      ),
+    final v = await _askText(
+      title: title,
+      initial: '$cur',
+      hint: hint,
+      helper: helper ?? AppStrings.t('settings_local_port_desc'),
+      keyboardType: TextInputType.number,
+      validate: (raw) {
+        final p = int.tryParse(raw.trim());
+        if (p == null ||
+            p < 1024 ||
+            p > 65535 ||
+            (forbidden != null && p == forbidden)) {
+          return invalidMsg;
+        }
+        return null;
+      },
     );
-    if (v == null || v.isEmpty) return null;
-    final p = int.tryParse(v);
-    if (p == null || p < 1024 || p > 65535 || (forbidden != null && p == forbidden)) {
-      _toast(invalidMsg);
-      return null;
-    }
-    return p;
+    if (v == null) return null;
+    return int.tryParse(v.trim());
   }
 
   /// 保存端口类设置：已连接 → 自动断开并用新值重连（内核重启后才生效）
@@ -545,44 +629,22 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 测速地址（默认谷歌 204；网络环境特殊时可改）
   Future<void> _pickTestUrl() async {
     final cur = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
-    final ctrl = TextEditingController(text: cur);
-    final v = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('settings_test_url'),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.url,
-          style: TextStyle(color: MFColors.txt),
-          decoration: mfInput(
-            hint: ConnectionController.defaultTestUrl,
-            helper: AppStrings.t('settings_test_url_desc'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(AppStrings.t('cancel_text')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-            child: Text(AppStrings.t('save'),
-                style: TextStyle(color: MFColors.brandLight)),
-          ),
-        ],
-      ),
+    final v = await _askText(
+      title: AppStrings.t('settings_test_url'),
+      initial: cur,
+      hint: ConnectionController.defaultTestUrl,
+      helper: AppStrings.t('settings_test_url_desc'),
+      keyboardType: TextInputType.url,
+      validate: (raw) {
+        final u = raw.trim();
+        return (u.startsWith('http://') || u.startsWith('https://'))
+            ? null
+            : AppStrings.t('test_url_invalid');
+      },
     );
-    if (v == null || v.isEmpty) return;
-    final u = v.trim();
-    if (!u.startsWith('http://') && !u.startsWith('https://')) {
-      _toast(AppStrings.t('test_url_invalid'));
-      return;
-    }
+    if (v == null) return; // 取消
     // _set 内部已同步到连接控制器（applySettings 读取 testUrl）
-    await _set('testUrl', u);
+    await _set('testUrl', v.trim());
   }
 
   /// 订阅自定义 User-Agent：部分机场按 UA 返回不同客户端格式，留一个自救入口。
@@ -703,47 +765,26 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 主 DNS 列表编辑（逗号/换行分隔文本），合法才保存
   Future<void> _pickDnsList() async {
-    final ctrl = TextEditingController(text: _dnsList().join(', '));
-    final v = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('settings_dns'),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.url,
-          minLines: 2,
-          maxLines: 5,
-          style: TextStyle(color: MFColors.txt),
-          decoration: mfInput(hint: AppStrings.t('dns_list_hint')),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(AppStrings.t('cancel_text'))),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ctrl.text),
-            child: Text(AppStrings.t('save'),
-                style: TextStyle(color: MFColors.brandLight)),
-          ),
-        ],
-      ),
+    final v = await _askText(
+      title: AppStrings.t('settings_dns'),
+      initial: _dnsList().join(', '),
+      hint: AppStrings.t('dns_list_hint'),
+      keyboardType: TextInputType.url,
+      minLines: 2,
+      maxLines: 5,
+      validate: (raw) {
+        final servers = _splitServerText(raw);
+        if (servers.isEmpty) return AppStrings.t('dns_list_required');
+        for (var i = 0; i < servers.length; i++) {
+          if (!_isValidDnsServer(servers[i])) {
+            return AppStrings.t('dns_list_invalid', {'n': '${i + 1}'});
+          }
+        }
+        return null;
+      },
     );
-    if (v == null) return;
-    final servers = _splitServerText(v);
-    if (servers.isEmpty) {
-      _toast(AppStrings.t('dns_list_required'));
-      return;
-    }
-    for (var i = 0; i < servers.length; i++) {
-      if (!_isValidDnsServer(servers[i])) {
-        _toast(AppStrings.t('dns_list_invalid', {'n': '${i + 1}'}));
-        return;
-      }
-    }
-    await _set('dnsNameservers', servers);
+    if (v == null) return; // 取消
+    await _set('dnsNameservers', _splitServerText(v));
   }
 
   /// 规范化 fake-ip 过滤条目：小写，可选 `*.` 前缀，须为合法域名
@@ -761,44 +802,29 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// fake-ip 过滤追加域名编辑（每行一个；域名保留真实解析）
   Future<void> _pickFakeIpFilter() async {
-    final ctrl = TextEditingController(text: _fakeIpExtra().join('\n'));
-    final v = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('settings_fakeip_extra'),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.multiline,
-          minLines: 3,
-          maxLines: 6,
-          style: TextStyle(color: MFColors.txt, fontSize: 13),
-          decoration: mfInput(hint: AppStrings.t('fakeip_extra_hint')),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(AppStrings.t('cancel_text'))),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ctrl.text),
-            child: Text(AppStrings.t('save'),
-                style: TextStyle(color: MFColors.brandLight)),
-          ),
-        ],
-      ),
+    final v = await _askText(
+      title: AppStrings.t('settings_fakeip_extra'),
+      initial: _fakeIpExtra().join('\n'),
+      hint: AppStrings.t('fakeip_extra_hint'),
+      keyboardType: TextInputType.multiline,
+      minLines: 3,
+      maxLines: 6,
+      style: TextStyle(color: MFColors.txt, fontSize: 13),
+      validate: (raw) {
+        final items = _splitServerText(raw);
+        for (var i = 0; i < items.length; i++) {
+          if (_normalizeFakeIpPattern(items[i]) == null) {
+            return AppStrings.t('fakeip_invalid', {'line': '${i + 1}'});
+          }
+        }
+        return null; // 全部清空 = 合法（允许用户清掉整个列表）
+      },
     );
-    if (v == null) return;
-    final items = _splitServerText(v);
+    if (v == null) return; // 取消
     final out = <String>[];
-    for (var i = 0; i < items.length; i++) {
-      final norm = _normalizeFakeIpPattern(items[i]);
-      if (norm == null) {
-        _toast(AppStrings.t('fakeip_invalid', {'line': '${i + 1}'}));
-        return;
-      }
-      out.add(norm);
+    for (final it in _splitServerText(v)) {
+      final norm = _normalizeFakeIpPattern(it);
+      if (norm != null) out.add(norm);
     }
     await _set('fakeIpFilterExtra', out);
   }
@@ -806,6 +832,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _pickTunMode() async {
     final isDesktop = Platform.isMacOS || Platform.isWindows || Platform.isLinux;
     final options = [AppStrings.t('tun_auto'), AppStrings.t('tun_force'), AppStrings.t('tun_off')];
+    // 当前模式（与行内展示同一份映射）→ 该行打勾，用户能看出现在选的是哪个
+    final currentLabel = _tunModeValue();
     final v = await showDialog<String>(
       context: context,
       builder: (_) => SimpleDialog(
@@ -835,11 +863,27 @@ class _SettingsPageState extends State<SettingsPage> {
               onPressed: () => Navigator.pop(context, o),
               child: Row(
                 children: [
-                  Text(o, style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
-                  const Spacer(),
-                  Text(
-                    o == AppStrings.t('tun_off') ? AppStrings.t('tun_only_proxy') : (o == AppStrings.t('tun_force') ? AppStrings.t('tun_full_intercept') : AppStrings.t('tun_dual')),
-                    style: TextStyle(fontSize: 10.5, color: MFColors.txt3),
+                  if (o == currentLabel) ...[
+                    Icon(Icons.check, size: 16, color: MFColors.brandLight),
+                    const SizedBox(width: 8),
+                  ],
+                  // 标签/说明都要能压缩：Row 里非 flex 的 Text 按无限宽测量，
+                  // 窄对话框（380 最小窗口）下会直接 RenderFlex overflow
+                  Expanded(
+                    child: Text(o,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      o == AppStrings.t('tun_off') ? AppStrings.t('tun_only_proxy') : (o == AppStrings.t('tun_force') ? AppStrings.t('tun_full_intercept') : AppStrings.t('tun_dual')),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(fontSize: 10.5, color: MFColors.txt3),
+                    ),
                   ),
                 ],
               ),
@@ -887,7 +931,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) => SimpleDialog(
         backgroundColor: MFColors.card2,
-        title: const Text('Language'),
+        // 标题必须走 l10n：项目默认中文，旧实现写死英文 'Language'
+        title: Text(AppStrings.t('settings_language'), style: TextStyle(fontSize: 15)),
         children: [
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'zh'),
@@ -981,10 +1026,13 @@ class _SettingsPageState extends State<SettingsPage> {
     await _picker(labels.keys.toList(), (label) {
       final v = labels[label];
       if (v != null) unawaited(_set('closeAction', v));
-    });
+    }, current: _closeActionLabel());
   }
 
-  Future<void> _picker(List<String> options, ValueChanged<String> onSelected) async {
+  /// 单选列表弹窗。 [current] 传当前值 → 该行右侧显示勾选（审计 P2：本文件的
+  /// 选择器都不标当前值，而节点页 / 内核页都有，用户看不出现在选的是哪个）。
+  Future<void> _picker(List<String> options, ValueChanged<String> onSelected,
+      {String? current}) async {
     final v = await showDialog<String>(
       context: context,
       builder: (_) => SimpleDialog(
@@ -994,7 +1042,22 @@ class _SettingsPageState extends State<SettingsPage> {
           for (final o in options)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(context, o),
-              child: Text(o, style:  TextStyle(fontSize: 13.5, color: MFColors.txt)),
+              child: Row(
+                children: [
+                  // Expanded + 省略号：选项文案在窄对话框里必须能压缩，否则
+                  // Row 内无界测量的 Text 会直接溢出（Ahem 测试字体更宽）
+                  Expanded(
+                    child: Text(o,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13.5, color: MFColors.txt)),
+                  ),
+                  if (o == current) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.check, size: 16, color: MFColors.brandLight),
+                  ],
+                ],
+              ),
             ),
         ],
       ),
@@ -1007,3 +1070,9 @@ void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 }
+
+/// 对话框输入框装饰：错误常驻在输入框下方（审计 P1：旧实现先 pop 再校验，
+/// 错误只能靠 4 秒 snackbar 闪一下、输入还被丢掉）。
+/// 现在 [mfInput] 自己就支持 `errorText`（含错误边框），不再需要就地补一份。
+InputDecoration _mfInputErr({String? hint, String? helper, String? error}) =>
+    mfInput(hint: hint, helper: helper, errorText: error);

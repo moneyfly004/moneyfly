@@ -189,11 +189,9 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: MFColors.card2,
-    ));
+    // 只留文案：背景/圆角/浮动样式统一由 ThemeData.snackBarTheme 提供
+    // （旧实现这里自己又写了一套 floating + card2，和主题重复且容易走偏）
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -204,7 +202,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
     final expire = s?.expireTime;
     final expireText = expire == null
         ? '—'
-        : '${expire.year}-${expire.month.toString().padLeft(2, '0')}-${expire.day.toString().padLeft(2, '0')}';
+        : formatDateYmd(expire); // 与设备页/订单页统一（见 app_theme.dart）
 
     return Scaffold(
       appBar: AppBar(
@@ -215,8 +213,9 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? Center(
-                child: CircularProgressIndicator(color: MFColors.brand))
+            // 加载态与套餐页同款「静态灰块骨架」：不再是裸的居中 spinner
+            // （骨架镜像真实布局，低端机也不掉帧；且始终可滚动，不会溢出）
+            ? _buildSkeleton()
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                 children: [
@@ -343,7 +342,9 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                                   padding: const EdgeInsets.only(
                                       right: 6, bottom: 2),
                                   child: Text(
-                                    '¥${_originalAmount!.toStringAsFixed(2)}',
+                                    // 与套餐页/支付弹窗同一口径（formatPrice）：
+                                    // 200 不显示成 200.00，0.02 不显示成 0
+                                    '¥${formatPrice(_originalAmount!)}',
                                     style: TextStyle(
                                         fontSize: 11,
                                         color: MFColors.txt3,
@@ -352,7 +353,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                                   ),
                                 ),
                               Text(
-                                '¥${_finalAmount!.toStringAsFixed(2)}',
+                                '¥${formatPrice(_finalAmount!)}',
                                 style: TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.w800,
@@ -420,7 +421,7 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                           : Text(
                               _finalAmount == null
                                   ? AppStrings.t('upgrade_pay_btn')
-                                  : '${AppStrings.t('upgrade_pay_btn')} ¥${_finalAmount!.toStringAsFixed(2)}',
+                                  : '${AppStrings.t('upgrade_pay_btn')} ¥${formatPrice(_finalAmount!)}',
                               style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,
@@ -445,22 +446,103 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
   TextStyle _sectionStyle() => TextStyle(
       fontSize: 13, fontWeight: FontWeight.w700, color: MFColors.txt);
 
+  /// 首次加载（拉支付方式）期间的占位骨架：静态灰块镜像真实布局，与套餐页
+  /// package_page._buildSkeleton 同一风格（不做 shimmer 动画，低端机不掉帧）。
+  Widget _buildSkeleton() {
+    Widget block(double w, double h, {double r = 8}) => Container(
+          width: w,
+          height: h,
+          decoration: BoxDecoration(
+              color: MFColors.card2, borderRadius: BorderRadius.circular(r)),
+        );
+    Widget chip(double w) => Container(
+          margin: const EdgeInsets.only(right: 8, bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+              color: MFColors.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: MFColors.line)),
+          child: block(w, 14, r: 6),
+        );
+    return ListView(
+      // 骨架不参与滚动（与套餐页一致）
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+              color: MFColors.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: MFColors.line)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              block(96, 11),
+              const SizedBox(height: 10),
+              block(190, 15),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        block(110, 13),
+        const SizedBox(height: 10),
+        Wrap(children: [chip(58), chip(58), chip(58), chip(58)]),
+        const SizedBox(height: 14),
+        block(110, 13),
+        const SizedBox(height: 10),
+        Wrap(children: [chip(70), chip(62), chip(62)]),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+              color: MFColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: MFColors.line)),
+          child: Row(children: [block(64, 13), const Spacer(), block(72, 20)]),
+        ),
+        const SizedBox(height: 20),
+        block(double.infinity, 50, r: 14),
+      ],
+    );
+  }
+
+  /// 时长/支付方式等选择 chip。
+  ///
+  /// 审计 P1/P2 三条一起修在这里：
+  ///  · 命中区 ≥40（旧实现是 36 高的裸 GestureDetector，触屏上不好点）；
+  ///  · 用 InkWell 给按压反馈（旧实现按下去毫无反应）；
+  ///  · **[onTap] == null 时必须看起来是禁用的** —— 旧实现里「仅设备」在订阅已
+  ///    过期时被禁用，但画得和可用态一模一样，点了没反应，用户以为按钮坏了。
   Widget _chip(String label, bool selected, VoidCallback? onTap,
       {bool recommended = false}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
+    final enabled = onTap != null;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
-          gradient: selected ? MFColors.brandGradient : null,
-          color: selected ? null : MFColors.card,
+          gradient: selected && enabled ? MFColors.brandGradient : null,
+          color: selected && enabled
+              ? null
+              : (enabled ? MFColors.card : MFColors.card2),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-              color: selected
-                  ? Colors.transparent
-                  : (recommended
-                      ? MFColors.amber.withValues(alpha: .7)
-                      : MFColors.line)),
+              color: !enabled
+                  ? MFColors.line
+                  : (selected
+                      ? Colors.transparent
+                      : (recommended
+                          ? MFColors.amber.withValues(alpha: .7)
+                          : MFColors.line))),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -470,9 +552,13 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                     fontSize: 12.5,
                     fontWeight:
                         selected || recommended ? FontWeight.w700 : FontWeight.w500,
-                    color: selected
-                        ? Colors.white
-                        : (recommended ? MFColors.amber : MFColors.txt))),
+                    color: !enabled
+                        ? MFColors.txt3 // 禁用：置灰，一眼看出不可点
+                        : (selected
+                            ? Colors.white
+                            : (recommended
+                                ? MFColors.amber
+                                : MFColors.txt)))),
             if (recommended && !selected) ...[
               const SizedBox(width: 4),
               Text(AppStrings.t('upgrade_recommend'),
@@ -482,6 +568,9 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
                       color: MFColors.amber)),
             ],
           ],
+        ),
+            ),
+          ),
         ),
       ),
     );

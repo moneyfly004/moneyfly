@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/services/settings_store.dart';
@@ -27,6 +29,12 @@ enum _BypassKind {
 class BypassPage extends StatefulWidget {
   const BypassPage({super.key});
 
+  /// 测试注入点：替换设置读取（默认 [SettingsStore.instance.load]）。
+  /// 「设置读取抛错」这条路径必须能被稳定复现（`load()` 自身无法在不碰
+  /// SettingsStore 的前提下抛错），真实运行时恒为 null。
+  @visibleForTesting
+  static Future<Map<String, dynamic>> Function()? debugLoadOverride;
+
   @override
   State<BypassPage> createState() => _BypassPageState();
 }
@@ -38,16 +46,46 @@ class _BypassPageState extends State<BypassPage> {
   List<String> _domains = [];
   bool _loaded = false;
 
+  /// 设置读取失败时的错误文案（null = 正常）。
+  /// 旧实现在读取失败时 _loaded 永远为 false，页面死在一个**没有 AppBar、
+  /// 没有返回按钮**的转圈页上 —— 只能重启 App 才能离开。
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
-    SettingsStore.instance.load().then((s) {
+    unawaited(_load());
+  }
+
+  /// 读取设置 → 直连名单。**必须捕获异常**（旧实现只有 `.then()`，没有
+  /// `catchError`，一旦抛错就永远停在没有返回入口的转圈页）。
+  Future<void> _load() async {
+    final load = BypassPage.debugLoadOverride ?? SettingsStore.instance.load;
+    try {
+      final s = await load();
       if (!mounted) return;
       setState(() {
-        _domains = List<String>.from((s['bypassDomains'] as List?)?.cast<String>() ?? []);
+        _domains = List<String>.from(
+            (s['bypassDomains'] as List?)?.cast<String>() ?? const <String>[]);
+        _loadError = null;
         _loaded = true;
       });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = AppStrings.t('bypass_load_fail');
+        _loaded = true;
+      });
+    }
+  }
+
+  /// 错误态「重试」：回到加载中并重新读取设置
+  void _retryLoad() {
+    setState(() {
+      _loaded = false;
+      _loadError = null;
     });
+    unawaited(_load());
   }
 
   @override
@@ -188,7 +226,12 @@ class _BypassPageState extends State<BypassPage> {
     }
     final entry = parsed.entry;
     if (entry == null) {
+      // 空输入：按钮本身已是禁用态（视觉上明显不同）。键盘回车仍会走到这里，
+      // 这时必须明确告知 —— 旧实现 setState(_errorText = null) 直接 return，
+      // 用户按了回车毫无反应，不知道是自己没填还是 App 坏了。
       setState(() => _errorText = null);
+      _toast(AppStrings.t('bypass_input_empty'));
+      _inputFocus.requestFocus();
       return;
     }
     _input.clear();
@@ -219,20 +262,16 @@ class _BypassPageState extends State<BypassPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: MFColors.card2,
-    ));
+    // 只留文案：背景/圆角/浮动样式统一由 ThemeData.snackBarTheme 提供
+    // （旧实现这里自己又写了一套 floating + card2，和主题重复且容易走偏）
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded) {
-      return Scaffold(
-          body: Center(child: CircularProgressIndicator(color: MFColors.brand)));
-    }
     return Scaffold(
+      // AppBar **始终**渲染：无论加载中还是读取失败，用户都必须能返回
+      // （旧实现把加载中的 Scaffold 写成没有 AppBar 的裸转圈页）
       appBar: AppBar(
         leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 18),
@@ -240,143 +279,203 @@ class _BypassPageState extends State<BypassPage> {
         title: Text(AppStrings.t('bypass_title')),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(AppStrings.t('bypass_desc'),
-                  style: TextStyle(fontSize: 11.5, color: MFColors.txt3, height: 1.6)),
-              const SizedBox(height: 12),
-              // 输入行（输入框与添加按钮同高对齐，无重叠）
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 48,
-                      child: TextField(
-                        controller: _input,
-                        focusNode: _inputFocus,
-                        style: TextStyle(fontSize: 13.5, color: MFColors.txt),
-                        keyboardType: TextInputType.url,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        decoration: mfInput(hint: AppStrings.t('bypass_hint'))
-                            .copyWith(errorText: _errorText),
-                        onChanged: (_) {
-                          if (_errorText != null) {
-                            setState(() => _errorText = null);
-                          }
-                        },
-                        onSubmitted: (_) => _add(),
-                        textInputAction: TextInputAction.done,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  GestureDetector(
-                    onTap: _add,
-                    child: Container(
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      decoration: BoxDecoration(
-                          gradient: MFColors.brandGradient,
-                          borderRadius: BorderRadius.circular(12)),
-                      alignment: Alignment.center,
-                      child: Text(AppStrings.t('bypass_add'),
-                          style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // 输入格式说明（三种条目类型示例）
-              Text(AppStrings.t('bypass_help'),
-                  style:
-                      TextStyle(fontSize: 10, color: MFColors.txt3, height: 1.6)),
-              const SizedBox(height: 12),
-              Text(
-                  '${AppStrings.t('bypass_count', {'n': '${_domains.length}'})}'
-                  ' · ${AppStrings.t('bypass_effect')}',
-                  style: TextStyle(fontSize: 11, color: MFColors.txt3)),
-              const SizedBox(height: 8),
-              Expanded(
-                child: _domains.isEmpty
-                    ? Center(
-                        child: Text(AppStrings.t('bypass_empty'),
-                            style: TextStyle(
-                                fontSize: 12.5, color: MFColors.txt3)))
-                    : ListView.separated(
-                        itemCount: _domains.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 8),
-                        itemBuilder: (context, i) {
-                          final d = _domains[i];
-                          final kind = _kindOf(d);
-                          final color = _kindColor(kind);
-                          return Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 4),
-                            height: 48,
-                            decoration: BoxDecoration(
-                                color: MFColors.card,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: MFColors.line)),
-                            child: Row(
-                              children: [
-                                Text(_kindIcon(kind),
-                                    style: const TextStyle(fontSize: 13)),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(d,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontSize: 13.5,
-                                          color: MFColors.txt,
-                                          fontWeight: FontWeight.w500)),
-                                ),
-                                const SizedBox(width: 8),
-                                // 类型小标签（后缀 / 精确域名 / IP 段）
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: color.withValues(alpha: .13),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(_kindLabel(kind),
-                                      style: TextStyle(
-                                          fontSize: 9.5,
-                                          color: color,
-                                          fontWeight: FontWeight.w600)),
-                                ),
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () => _remove(d),
-                                  child: Container(
-                                    width: 30,
-                                    height: 30,
-                                    decoration: BoxDecoration(
-                                        color: MFColors.red
-                                            .withValues(alpha: .1),
-                                        borderRadius: BorderRadius.circular(9)),
-                                    child: Icon(Icons.close,
-                                        size: 15, color: MFColors.red),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
+        child: !_loaded
+            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
+            : _loadError != null
+                ? _errorBody()
+                : _body(),
+      ),
+    );
+  }
+
+  /// 读取失败态：看得懂的错误 + 重试入口（不是一直转圈）
+  Widget _errorBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('⚠️', style: TextStyle(fontSize: 24)),
+            const SizedBox(height: 10),
+            Text(_loadError!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12.5, color: MFColors.txt2, height: 1.6)),
+            const SizedBox(height: 6),
+            TextButton(
+                onPressed: _retryLoad, child: Text(AppStrings.t('retry'))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 「添加」按钮：空输入时呈**禁用态**（点击无反应必须一眼可见是禁用的）。
+  /// 命中区保持 48 高；禁用态用 card2 底 + txt3 文字，和可点态的品牌渐变明显不同。
+  Widget _addButton() {
+    final enabled = _input.text.trim().isNotEmpty;
+    final radius = BorderRadius.circular(12);
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: BoxDecoration(
+          gradient: enabled ? MFColors.brandGradient : null,
+          color: enabled ? null : MFColors.card2,
+          borderRadius: radius,
+          border: enabled ? null : Border.all(color: MFColors.line),
+        ),
+        child: InkWell(
+          onTap: enabled ? _add : null,
+          borderRadius: radius,
+          child: Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            alignment: Alignment.center,
+            child: Text(AppStrings.t('bypass_add'),
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: enabled ? Colors.white : MFColors.txt3)),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _body() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(AppStrings.t('bypass_desc'),
+              style: TextStyle(fontSize: 11.5, color: MFColors.txt3, height: 1.6)),
+          const SizedBox(height: 12),
+          // 输入行（输入框与添加按钮同高对齐，无重叠）
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 48,
+                  child: TextField(
+                    controller: _input,
+                    focusNode: _inputFocus,
+                    style: TextStyle(fontSize: 13.5, color: MFColors.txt),
+                    keyboardType: TextInputType.url,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: mfInput(hint: AppStrings.t('bypass_hint'))
+                        .copyWith(errorText: _errorText),
+                    // 空 ↔ 非空切换「添加」按钮的可用态，必须重建
+                    onChanged: (_) => setState(() => _errorText = null),
+                    onSubmitted: (_) => _add(),
+                    textInputAction: TextInputAction.done,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _addButton(),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // 输入格式说明（三种条目类型示例）
+          Text(AppStrings.t('bypass_help'),
+              style:
+                  TextStyle(fontSize: 10, color: MFColors.txt3, height: 1.6)),
+          const SizedBox(height: 12),
+          Text(
+              '${AppStrings.t('bypass_count', {'n': '${_domains.length}'})}'
+              ' · ${AppStrings.t('bypass_effect')}',
+              style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _domains.isEmpty
+                ? Center(
+                    child: Text(AppStrings.t('bypass_empty'),
+                        style: TextStyle(
+                            fontSize: 12.5, color: MFColors.txt3)))
+                : ListView.separated(
+                    itemCount: _domains.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) {
+                      final d = _domains[i];
+                      final kind = _kindOf(d);
+                      final color = _kindColor(kind);
+                      return Container(
+                        // 垂直内边距 3（+ 1px 边框）：给行尾 40×40 的删除命中区
+                        // 留出空间，行整体视觉高度仍是 48
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 3),
+                        height: 48,
+                        decoration: BoxDecoration(
+                            color: MFColors.card,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: MFColors.line)),
+                        child: Row(
+                          children: [
+                            Text(_kindIcon(kind),
+                                style: const TextStyle(fontSize: 13)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(d,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 13.5,
+                                      color: MFColors.txt,
+                                      fontWeight: FontWeight.w500)),
+                            ),
+                            const SizedBox(width: 8),
+                            // 类型小标签（后缀 / 精确域名 / IP 段）
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: .13),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(_kindLabel(kind),
+                                  style: TextStyle(
+                                      fontSize: 9.5,
+                                      color: color,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                            const SizedBox(width: 8),
+                            // 删除是破坏性操作：命中区至少 40×40（视觉仍是 30×30），
+                            // 并用 InkWell 给出按压反馈（旧实现 GestureDetector 无反馈）
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => _remove(d),
+                                borderRadius: BorderRadius.circular(9),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                      minWidth: 40, minHeight: 40),
+                                  child: Center(
+                                    child: Container(
+                                      width: 30,
+                                      height: 30,
+                                      decoration: BoxDecoration(
+                                          color: MFColors.red
+                                              .withValues(alpha: .1),
+                                          borderRadius:
+                                              BorderRadius.circular(9)),
+                                      child: Icon(Icons.close,
+                                          size: 15, color: MFColors.red),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
