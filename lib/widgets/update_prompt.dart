@@ -43,6 +43,12 @@ abstract final class UpdatePrompt {
   @visibleForTesting
   static void Function(int code)? debugExitOverride;
 
+  /// 测试缝：替换「打开下载页」。
+  /// 必须有：测试环境里 url_launcher 的通道调用**永不返回**（不抛异常，所以
+  /// try/catch 救不了）—— 实测用它写用例会把整轮测试挂死。
+  @visibleForTesting
+  static Future<void> Function(String url)? debugOpenUrlOverride;
+
   @visibleForTesting
   static bool get debugBusy => _busy;
 
@@ -52,6 +58,7 @@ abstract final class UpdatePrompt {
     _promptedThisRun.clear();
     debugWaitInstallerLimit = const Duration(minutes: 3);
     debugExitOverride = null;
+    debugOpenUrlOverride = null;
   }
 
   static Future<String> _dismissed() async {
@@ -261,6 +268,8 @@ abstract final class UpdatePrompt {
   /// 打开下载页（直链 = GitHub 上与本机平台/架构匹配的那个安装包）
   static Future<void> openDownloadPage(String url) async {
     if (url.isEmpty) return;
+    final override = debugOpenUrlOverride;
+    if (override != null) return override(url);
     try {
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } catch (e) {

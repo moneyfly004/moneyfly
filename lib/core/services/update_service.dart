@@ -270,10 +270,20 @@ class UpdateService {
 
   // ==================== 下载 / 安装（对齐 mclash 的更新体验）====================
 
+  /// 测试缝：强制「本平台支持应用内安装」。
+  ///
+  /// 为什么必须有：CI 的 Android job 在 **ubuntu** 上跑测试，而真实判定依赖
+  /// 宿主平台 → 那里恒为 false，凡是断言「点了立即更新就会调起安装器」的用例
+  /// 都会红（实测 v2.2.9 就是这么挂的）。把判定做成可注入，用例就能在任意宿主
+  /// 上覆盖两条分支。
+  @visibleForTesting
+  static bool? debugCanInstallInApp;
+
   /// 本平台是否支持**应用内直接调起安装**
   /// - iOS 不允许自更新（侧载 IPA），只给下载地址
   static bool get canInstallInApp =>
-      !kIsWeb && (Platform.isAndroid || Platform.isWindows || Platform.isMacOS);
+      debugCanInstallInApp ??
+      (!kIsWeb && (Platform.isAndroid || Platform.isWindows || Platform.isMacOS));
 
   Future<Directory?> _updateDir() async {
     final base = debugCacheDir != null
@@ -441,5 +451,6 @@ class UpdateService {
     debugLaunchInstallerOverride = null;
     debugCacheDir = null;
     apkInstaller = null;
+    debugCanInstallInApp = null;
   }
 }

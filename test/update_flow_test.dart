@@ -200,6 +200,9 @@ void main() {
 
     testWidgets('点「立即更新」：已下好 → 调起安装器 → 提示后退出进程', (tester) async {
       UpdateInfo.currentVersion = '1.0.0';
+      // 宿主平台与「是否支持应用内安装」解耦：CI 在 ubuntu 上跑，真实值恒为 false，
+      // 不固定它这条用例在 Linux 上必红（v2.2.9 实测踩过）
+      UpdateService.debugCanInstallInApp = true;
       final info = _info('1.0.1');
       // 同步把安装包放到缓存目录（等价于「后台预下载已完成」）
       final dir = Directory('${tmp.path}/update')..createSync(recursive: true);
@@ -228,6 +231,34 @@ void main() {
       await flow;
 
       expect(exited, 0, reason: '装完必须退出自己，否则安装器无法替换被占用的文件');
+    });
+
+    testWidgets('不支持应用内安装（iOS 等）→ 打开下载页，绝不假装安装', (tester) async {
+      UpdateInfo.currentVersion = '1.0.0';
+      UpdateService.debugCanInstallInApp = false;
+      final info = _info('1.0.1');
+      final dir = Directory('${tmp.path}/update')..createSync(recursive: true);
+      File('${dir.path}/${info.assetName}').writeAsStringSync('installer');
+
+      var launchedInstaller = false;
+      UpdateService.debugLaunchInstallerOverride = (path) async {
+        launchedInstaller = true;
+        return true;
+      };
+      // 必须拦掉真实 url_launcher：测试环境里它的通道调用永不返回（会挂死整轮）
+      String? openedUrl;
+      UpdatePrompt.debugOpenUrlOverride = (url) async => openedUrl = url;
+
+      late BuildContext ctx;
+      await pumpHost(tester, (c) => ctx = c);
+      final flow = UpdatePrompt.installNow(ctx, info: info);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      await flow;
+
+      expect(launchedInstaller, isFalse,
+          reason: 'iOS 不允许应用内自更新，只能给下载页');
+      expect(openedUrl, isNotNull, reason: '应打开与本机架构匹配的下载地址');
     });
 
     testWidgets('没有下载地址时给出明确提示，不静默', (tester) async {
