@@ -21,6 +21,30 @@ name: Build Release (Android / Windows / macOS)
 #     发布仓库负责「官方源码 + gomobile bind 预编译」（每日自动跟随官方新版，
 #     无 fork），本 workflow 只做秒级下载，不每次现编内核。
 # 离线分流数据：MetaCubeX/meta-rules-dat（geosite.dat / country.mmdb）。
+#
+# ── 构建耗时优化（依据一次真实成功运行的逐步骤耗时）────────────────────────
+# 实测基线（run 35437578421，全绿；关键路径 = Android 9.70min）：
+#   Android 9.70 / macOS arm64 7.47 / macOS universal 6.82 / Windows 6.67
+#   / macOS x64 6.28 / iOS 3.52 / release 0.52
+#   Android 内部：测试 134s、构建 APK 337s、构建 AAB 62s
+#   macOS/Windows 内部：测试 133~190s（这些 job 原本用 --concurrency=1 全量串行）
+# 四类优化：
+#   1) 测试拆分：`--concurrency=1` 的由来见 a29324e ——「两个真实内核测试并行会抢
+#      2080/9090 端口」。现在用 dart_test.yaml 的 e2e 标签把那几个「真实内核 /
+#      固定端口 / 真实系统代理」用例单独串行（`--tags e2e --concurrency=1`），
+#      其余几百个纯单元/widget 测试用默认并发（runner 核数）跑
+#      （`--exclude-tags e2e`）→ 测试步骤 133~190s → 约 60~80s。
+#      ubuntu 上「全量并行 + 真实内核」本来就被 ci.yml 验证为绿。
+#   2) Android Gradle 依赖缓存（setup-java cache: gradle）：APK 构建 337s 里有
+#      相当一部分是冷缓存重下 AGP/Kotlin/依赖，这是关键路径上最大的一块。
+#   3) macOS 内核不再下载两次：测试用的那份直接复用给「内置内核」步骤
+#      （实测最慢一次这个重复下载花了 51s）。
+#   4) macOS x64 / universal 两个 job 不再重复跑全量测试（同一份 Dart 代码，
+#      arm64 job 已全量验证）：只跑 e2e 组 —— x64 保住它唯一独有的信号
+#      「amd64 compatible 内核能在 Rosetta 下真跑起来」（历史上正是这里翻过车），
+#      universal 同样只跑 e2e 组。
+# 另加：同 ref 的新运行自动取消旧的（concurrency）、每个 job 设 timeout 避免卡死
+#      白等；Windows 里那个永远被 if 跳过的 Rosetta 死步骤已删除。
 
 on:
   push:
@@ -33,6 +57,11 @@ on:
         required: false
         default: ''
 
+# 同一个 ref 上连续推 tag / 反复手动触发时，取消上一次没跑完的运行
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
   MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里；需与 mihomo-lib release tag 一致）
@@ -42,6 +71,7 @@ jobs:
   android:
     name: Android (armeabi-v7a / arm64-v8a / x86_64 / AAB)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +85,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # Gradle 依赖缓存：APK+AAB 是关键路径最大的一块，冷缓存要重下
+          # AGP/Kotlin/依赖
+          cache: gradle
 
       - name: 下载离线分流数据（构建时从 GitHub 拉最新，不在仓库里存二进制）
         run: |
@@ -77,10 +110,10 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 测试
+      - name: 测试（非 e2e 并行；本 job 无内核二进制，e2e 组本来就会 skip）
         run: |
           flutter analyze
-          flutter test --concurrency=1
+          flutter test --exclude-tags e2e
 
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
@@ -121,6 +154,7 @@ jobs:
   windows:
     name: Windows (exe 安装包 + zip 便携版)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -129,13 +163,6 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-
-      - name: 安装 Rosetta 2（x64 构建需要；已安装则跳过）
-        if: matrix.rosetta == 'true'
-        run: |
-          if ! arch -x86_64 true 2>/dev/null; then
-            softwareupdate --install-rosetta --agree-to-license || true
-          fi
 
       - name: 依赖
         run: flutter pub get
@@ -163,12 +190,13 @@ jobs:
           [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
           ls -la build/mihomo/
 
-      - name: 测试（含真实内核端到端验证）
+      - name: 测试（非 e2e 并行 + 真实内核 e2e 串行）
         shell: bash
         run: |
           export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo.exe"
           flutter analyze
-          flutter test --concurrency=1
+          flutter test --exclude-tags e2e
+          flutter test --tags e2e --concurrency=1
 
       - name: 构建 Windows release
         run: flutter build windows --release
@@ -211,7 +239,7 @@ jobs:
 
   # ================= macOS：universal + arm64(Apple) + x64(Intel) =================
   # 说明：
-  #  - GitHub 公共 Intel runner(macos-13)队列极长，故 x64 在 Apple Silicon runner
+  #  - GitHub 公共 Intel runner(macos-13) 队列极长，故 x64 在 Apple Silicon runner
   #    用 Rosetta 执行整条 x86_64 构建链（arch -x86_64 flutter build），
   #    产物为纯 x86_64，快照/引擎自洽（不做 universal→thin 裁剪）。
   #  - 官方 mihomo-darwin-amd64 要求 AMD64 v3；Rosetta/老 Intel 不支持，
@@ -220,6 +248,7 @@ jobs:
   macos-arm64:
     name: macOS arm64
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -227,6 +256,12 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # CocoaPods 缓存：flutter build macos 内部会 pod install，冷缓存要重下 spec/pods
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('macos/Podfile') }}
+          restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
       - name: 下载离线分流数据
@@ -236,27 +271,27 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-      - name: 下载 mihomo 内核（测试用）
+      - name: 下载 mihomo 内核（测试与内嵌共用同一份 arm64 内核）
         run: |
           mkdir -p build/mihomo
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 测试（含真实内核 e2e）
+      - name: 测试（非 e2e 并行 + 真实内核 e2e 串行）
         run: |
           export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
           flutter analyze
-          flutter test --concurrency=1
+          flutter test --exclude-tags e2e
+          flutter test --tags e2e --concurrency=1
       - name: 构建 macOS（arm64）
         run: flutter build macos --release
       - name: 校验架构
         run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch arm64
-      - name: 内置 mihomo 内核
+      - name: 内置 mihomo 内核（复用上面已下载的 arm64 内核，不再重复下载）
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
-          gunzip -f mihomo.gz && cp mihomo "$APP/Contents/MacOS/mihomo" && chmod +x "$APP/Contents/MacOS/mihomo"
+          cp build/mihomo/mihomo "$APP/Contents/MacOS/mihomo"
+          chmod +x "$APP/Contents/MacOS/mihomo"
           lipo "$APP/Contents/MacOS/mihomo" -verify_arch arm64
       - name: 打包 arm64 DMG
         run: |
@@ -280,6 +315,7 @@ jobs:
   macos-x64:
     name: macOS x64 (Intel)
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -287,6 +323,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('macos/Podfile') }}
+          restore-keys: pods-${{ runner.os }}-
       - name: 安装 Rosetta 2
         run: |
           if ! arch -x86_64 true 2>/dev/null; then
@@ -301,27 +342,29 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-      - name: 下载 mihomo 内核（测试用，compatible 版）
+      - name: 下载 mihomo 内核（测试与内嵌共用同一份 compatible 内核）
         run: |
           mkdir -p build/mihomo
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 测试（含真实内核 e2e）
+      # 本 job 只跑 e2e 组：它是唯一提供「amd64 compatible 内核能在 Rosetta 下真跑
+      # 起来」这个信号的 job（历史上正是这里翻过车）；全量 Dart 测试已由 arm64 job
+      # 覆盖，在 Rosetta 下再串行跑一遍要多花约 157s 却没有新信号。
+      - name: 测试（仅真实内核 e2e，串行）
         run: |
           export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
           flutter analyze
-          flutter test --concurrency=1
+          flutter test --tags e2e --concurrency=1
       - name: 构建 macOS（x64，Rosetta 整链）
         run: arch -x86_64 flutter build macos --release
       - name: 校验架构
         run: lipo build/macos/Build/Products/Release/MoneyFly.app/Contents/MacOS/MoneyFly -verify_arch x86_64
-      - name: 内置 mihomo 内核（compatible 版）
+      - name: 内置 mihomo 内核（复用上面已下载的 compatible 内核，不再重复下载）
         run: |
           APP="build/macos/Build/Products/Release/MoneyFly.app"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
-          gunzip -f mihomo.gz && cp mihomo "$APP/Contents/MacOS/mihomo" && chmod +x "$APP/Contents/MacOS/mihomo"
+          cp build/mihomo/mihomo "$APP/Contents/MacOS/mihomo"
+          chmod +x "$APP/Contents/MacOS/mihomo"
           lipo "$APP/Contents/MacOS/mihomo" -verify_arch x86_64
       - name: 打包 x64 DMG
         run: |
@@ -345,6 +388,7 @@ jobs:
   macos-universal:
     name: macOS universal（Flutter 原生双架构）
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -352,6 +396,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('macos/Podfile') }}
+          restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
       - name: 下载离线分流数据
@@ -367,11 +416,12 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 测试（含真实内核 e2e）
+      # 只跑 e2e 组：全量测试由 arm64 job 覆盖，这里再跑一遍没有新信号
+      - name: 测试（仅真实内核 e2e，串行）
         run: |
           export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
           flutter analyze
-          flutter test --concurrency=1
+          flutter test --tags e2e --concurrency=1
       # Flutter 在 macOS release 直接产出 universal（arm64+x86_64 双架构），
       # 与 2.0.2 老办法一致
       - name: 构建 macOS release（universal）
@@ -423,6 +473,7 @@ jobs:
   ios:
     name: iOS (unsigned IPA, sideload)
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -430,6 +481,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('macos/Podfile') }}
+          restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
       - name: 下载离线分流数据（iOS 随扩展 bundle 分发）
@@ -517,6 +573,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [android, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

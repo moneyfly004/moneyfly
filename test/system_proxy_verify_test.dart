@@ -1,3 +1,6 @@
+@Tags(['e2e'])
+library;
+
 // 真实系统代理验证（macOS / Windows 真机）。
 //
 // ⚠️ 这三个用例会**真实读写**宿主机的系统代理（macOS 走 networksetup +

@@ -1,3 +1,6 @@
+@Tags(['e2e'])
+library;
+
 // 端到端：真实内核 + 系统代理管理（macOS 上验证「连接改变系统代理、断开恢复」）
 import 'dart:io';
 
