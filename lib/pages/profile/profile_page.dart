@@ -6,6 +6,7 @@ import '../../core/models/models.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/update_service.dart';
 import '../../core/services/user_service.dart';
+import '../../widgets/update_prompt.dart';
 import '../../main.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
@@ -362,16 +363,22 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildMenu(BuildContext context, int online, int total) {
-    final rows = <(String, String, String?, VoidCallback)>[
-      ('📱', AppStrings.t('profile_devices'), '$online/$total', () => _push(context, const DevicesPage())),
-      ('🧾', AppStrings.t('profile_orders'), null, () => _push(context, const OrdersPage())),
-      ('🔔', AppStrings.t('profile_notifications'), null, () => _push(context, const NotificationsPage())),
-      ('⚙️', AppStrings.t('settings'), null, () => _push(context, const SettingsPage())),
-      ('ℹ️', AppStrings.t('profile_about'), 'v${UpdateInfo.currentVersion}', () => _showAbout(context)),
-    ];
-    return Column(
+    // 「检查更新」放在这里（原先设置页里那份已移除）：与版本号同处，且有新版时
+    // 直接显示红点，不需要用户在「我的 → 关于」与「设置 → 检查更新」之间二选一。
+    return ValueListenableBuilder<bool>(
+      valueListenable: UpdateService.hasUpdate,
+      builder: (context, hasUpdate, _) {
+        final rows = <(String, String, String?, bool, VoidCallback)>[
+          ('📱', AppStrings.t('profile_devices'), '$online/$total', false, () => _push(context, const DevicesPage())),
+          ('🧾', AppStrings.t('profile_orders'), null, false, () => _push(context, const OrdersPage())),
+          ('🔔', AppStrings.t('profile_notifications'), null, false, () => _push(context, const NotificationsPage())),
+          ('⚙️', AppStrings.t('settings'), null, false, () => _push(context, const SettingsPage())),
+          ('🔄', AppStrings.t('settings_check_update'), 'v${UpdateInfo.currentVersion}', hasUpdate,
+              () => UpdatePrompt.checkManually(context)),
+        ];
+        return Column(
       children: [
-        for (final (icon, title, badge, onTap) in rows)
+        for (final (icon, title, badge, showDot, onTap) in rows)
           Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
@@ -392,13 +399,24 @@ class _ProfilePageState extends State<ProfilePage> {
                       decoration: BoxDecoration(color: MFColors.card2, borderRadius: BorderRadius.circular(12)),
                       child: Text(badge, style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
                     ),
+                  if (showDot) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                          color: MFColors.red, shape: BoxShape.circle),
+                    ),
+                  ],
                   const SizedBox(width: 4),
                   Icon(Icons.chevron_right, size: 18, color: MFColors.txt3),
                 ],
               ),
             ),
           ),
-      ],
+        ],
+      );
+      },
     );
   }
 
@@ -445,19 +463,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void _push(BuildContext context, Widget page) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
 
-  void _showAbout(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('profile_about')),
-        content: Text('MoneyFly v${UpdateInfo.currentVersion}\n\n${AppStrings.t('slogan')}\ndy.moneyfly.top',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(AppStrings.t('ok_btn')))],
-      ),
-    );
-  }
+
 }
 
 class _SubItem extends StatelessWidget {

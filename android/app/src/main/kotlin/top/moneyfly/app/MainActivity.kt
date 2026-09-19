@@ -11,7 +11,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import java.io.File
 import top.moneyfly.app.vpn.MoneyFlyVpnService
@@ -22,7 +21,6 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "top.moneyfly/vpn_permissions"
         private const val CORE_CHANNEL = "top.moneyfly/vpn_core"
-        private const val INSTALL_CHANNEL = "top.moneyfly/installer"
         private const val REQ_VPN = 1001
         private const val REQ_NOTIFY = 1002
         private const val REQ_BATTERY = 1003
@@ -143,18 +141,6 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
-        // 应用内更新：把已下载的 APK 交给系统包安装器。
-        // 不走第三方插件：app_installer 的 Android 侧自带 AGP 3.6.2 + jcenter()，
-        // 与现代工具链不兼容（CI 实测 assembleRelease 失败）。这里只用
-        // Flutter 自带的 androidx.core 的 FileProvider，零额外 Gradle 依赖。
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALL_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "installApk" -> installApk(call.argument<String>("path"), result)
-                    else -> result.notImplemented()
-                }
-            }
-
     }
 
     // ---------- VPN ----------
@@ -278,34 +264,6 @@ class MainActivity : FlutterActivity() {
         return if (VpnService.prepare(this) == null) "prepared" else "not_prepared"
     }
 
-    /// 把已下载的安装包交给系统安装器。
-    /// Android 不允许用 file:// 触发安装，必须经 FileProvider 给 content:// URI；
-    /// 同时需要 REQUEST_INSTALL_PACKAGES（Manifest 已声明），首次会弹
-    /// 「允许安装未知应用」。用户拒绝或系统无安装器时通过 result.error 明确失败，
-    /// Dart 侧据此退化为「打开下载页」，不会静默什么都不发生。
-    private fun installApk(path: String?, result: MethodChannel.Result) {
-        if (path.isNullOrEmpty()) {
-            result.error("invalid_path", "安装包路径为空", null)
-            return
-        }
-        try {
-            val file = File(path)
-            if (!file.exists()) {
-                result.error("not_found", "安装包不存在：$path", null)
-                return
-            }
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(intent)
-            result.success(true)
-        } catch (e: Exception) {
-            result.error("install_failed", e.message ?: e.toString(), null)
-        }
-    }
 }
 
 // ================= 内核日志增量读取（「内核日志」实时页） =================

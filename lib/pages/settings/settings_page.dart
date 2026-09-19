@@ -14,7 +14,6 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/mf_input.dart';
-import '../../widgets/update_prompt.dart';
 import '../auth/change_password_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
@@ -247,16 +246,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: _clearLocalData),
             // ⑦ 关于与诊断
             _section(AppStrings.t('group_about')),
-            ValueListenableBuilder<bool>(
-              valueListenable: UpdateService.hasUpdate,
-              builder: (_, hasUpdate, _) => _row(
-                icon: '🔄',
-                title: AppStrings.t('settings_check_update'),
-                value: 'v${UpdateInfo.currentVersion}',
-                showDot: hasUpdate,
-                onTap: _checkUpdate,
-              ),
-            ),
             if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS)
               _row(icon: '⬇️', title: AppStrings.t('settings_auto_download_update'),
                   desc: AppStrings.t('settings_auto_download_update_desc'),
@@ -975,7 +964,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  bool _checkingUpdate = false;
 
   /// 清除本地数据（订阅配置缓存 / 节点 / 运行日志）：
   /// 断开连接 → 清内存与磁盘订阅缓存 → 清日志。保留登录状态，
@@ -1023,18 +1011,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 软件升级：读后端软件库 → 比对版本 → 弹更新对话框
-  /// 检查更新：统一走 [UpdatePrompt]（弹窗 + 一键更新 + 后台下载进度），
-  /// 不再只是打开浏览器下载页。
-  Future<void> _checkUpdate() async {
-    if (_checkingUpdate) return;
-    setState(() => _checkingUpdate = true);
-    try {
-      await UpdatePrompt.checkManually(context);
-    } finally {
-      if (mounted) setState(() => _checkingUpdate = false);
-    }
-  }
-
   String _closeActionLabel() {
     return switch (_s['closeAction']?.toString()) {
       'hide' => AppStrings.t('close_action_hide'),
