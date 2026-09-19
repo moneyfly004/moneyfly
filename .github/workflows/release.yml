@@ -185,6 +185,49 @@ jobs:
           flutter test --exclude-tags e2e
           flutter test --tags e2e --concurrency=1
 
+  # ================= macOS x64 校验（Rosetta + amd64-compatible 内核） ==========
+  # 这个 job 提供两个别处都没有的信号：
+  #   1) amd64 compatible 内核能在 Rosetta 下真的跑起来（历史上正是这里翻过车）；
+  #   2) x86_64 产物链路的真实内核 e2e。
+  # 只跑 e2e 组：全量 Dart 测试已由 verify-macos（arm64）与 verify（ubuntu）覆盖，
+  # 在 Rosetta 下再串行跑一遍全量要多花约 157s 而没有新信号。
+  verify-macos-x64:
+    name: 校验 (macOS x64/Rosetta, 真实内核)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 安装 Rosetta 2
+        run: |
+          if ! arch -x86_64 true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license || true
+          fi
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+      - name: 下载 mihomo 内核（compatible 版：Rosetta 不支持 AMD64 v3）
+        run: |
+          mkdir -p build/mihomo
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
+          gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
+      - name: 校验（真实内核 e2e，串行）
+        run: |
+          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
+          flutter analyze
+          flutter test --tags e2e --concurrency=1
+
   # ================= Android：多 ABI 分版本 =================
   android:
     name: Android APK (armeabi-v7a / arm64-v8a / x86_64)
@@ -498,14 +541,7 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
           gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      # 本 job 只跑 e2e 组：它是唯一提供「amd64 compatible 内核能在 Rosetta 下真跑
-      # 起来」这个信号的 job（历史上正是这里翻过车）；全量 Dart 测试已由 arm64 job
-      # 覆盖，在 Rosetta 下再串行跑一遍要多花约 157s 却没有新信号。
-      - name: 测试（仅真实内核 e2e，串行）
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
-          flutter analyze
-          flutter test --tags e2e --concurrency=1
+      # 测试已移到 verify-macos-x64 job（并行跑）。本 job 只下载内核用于「内嵌」。
       - name: 构建 macOS（x64，Rosetta 整链）
         run: arch -x86_64 flutter build macos --release
       - name: 校验架构
@@ -721,7 +757,7 @@ jobs:
   release:
     name: 发布到 GitHub Releases
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [verify, verify-macos, verify-windows, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
+    needs: [verify, verify-macos, verify-macos-x64, verify-windows, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
