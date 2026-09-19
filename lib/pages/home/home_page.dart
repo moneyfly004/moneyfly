@@ -101,36 +101,49 @@ class _HomePageState extends State<HomePage>
   /// 都能基于真实状态拦截——不会出现「拉订阅之前就放行」的窗口。
   Future<void> _ensureNodes({bool force = false}) async {
     final conn = context.read<ConnectionController>();
-    // 首次进入 / 下拉刷新时刷新账号状态（登录成功时已判定过一次，这里幂等）
-    if (force || !AccountService.instance.loaded) {
-      await AccountService.instance.refresh(force: force);
-    }
-    if (!mounted) return;
-    // 冷启动即时展示：账号**正常**（非受限）且当前无节点时，先读本地磁盘缓存
-    // 秒显上次的线路（不发网络请求），避免弱网下干等订阅拉取 → 首页转圈或
-    // 「切换主页空白」。放在门禁判定之后：受限账号（到期/禁用/设备满）绝不
-    // 秒显旧线路误导用户，仍走下方 fetchNodes → applySubscriptionNodes([])
-    // 清空展示的既有链路。断开态才注入，避免覆盖已连接会话。
-    if (conn.nodes.isEmpty &&
-        conn.status == ConnStatus.disconnected &&
-        !AccountService.instance.isBlocked) {
-      final cached = await SubscriptionService.instance.loadCachedNodes();
-      if (!mounted) return;
-      if (cached.isNotEmpty && conn.nodes.isEmpty) {
-        await conn.loadNodes(cached);
-      }
-    }
-    if (conn.nodes.isNotEmpty && !force) return;
-    setState(() => _loadingNodes = true);
-    // 订阅同步状态由 SubscriptionService 自行维护（见 syncing）；同步开始时
-    // ConnectionController 会清掉残留错误，UI 显示「正在同步订阅…」而非报错
+    final hadNodes = conn.nodes.isNotEmpty;
+    // 一进页面立刻进入「正在更新订阅」态。
+    //
+    // 旧实现把 `_loadingNodes = true` 放在账号刷新**之后**，于是冷启动那一瞬间
+    // nodes 仍为空、loading 仍为 false → 首页先闪出一句
+    // 「节点加载失败，请检查网络后重试」+ 重试按钮（用户实测反馈）：明明只是订阅
+    // 还在路上，却看起来像出错了。现在这一整段都算「更新订阅中」。
+    if (mounted) setState(() => _loadingNodes = true);
     try {
+      // 首次进入 / 下拉刷新时刷新账号状态（登录成功时已判定过一次，这里幂等）。
+      // 状态判定先于节点拉取完成：任何自动连接/手动连接都能基于真实状态拦截，
+      // 不会出现「拉订阅之前就放行」的窗口。
+      if (force || !AccountService.instance.loaded) {
+        await AccountService.instance.refresh(force: force);
+      }
+      if (!mounted) return;
+      // 冷启动即时展示：账号**正常**（非受限）且当前无节点时，先读本地磁盘缓存
+      // 秒显上次的线路（不发网络请求），避免弱网下干等订阅拉取 → 首页转圈或
+      // 「切换主页空白」。放在门禁判定之后：受限账号（到期/禁用/设备满）绝不
+      // 秒显旧线路误导用户，仍走下方 fetchNodes → applySubscriptionNodes([])
+      // 清空展示的既有链路。断开态才注入，避免覆盖已连接会话。
+      if (conn.nodes.isEmpty &&
+          conn.status == ConnStatus.disconnected &&
+          !AccountService.instance.isBlocked) {
+        final cached = await SubscriptionService.instance.loadCachedNodes();
+        if (!mounted) return;
+        if (cached.isNotEmpty && conn.nodes.isEmpty) {
+          await conn.loadNodes(cached);
+        }
+      }
+      if (conn.nodes.isNotEmpty && !force) return;
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
+      if (!mounted) return;
       // 用受保护的合并入口:已连接且当前线路不在新订阅时保持现状(不打断),
       // 受限账号空列表清空展示 —— 与首页直接 loadNodes(无条件替换)区分
       await conn.applySubscriptionNodes(nodes);
       // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次；默认关闭）
       unawaited(conn.autoConnectIfEnabled());
+      // 刚才用户是对着「正在更新订阅，请稍等」在等 → 更新完必须告诉他下一步
+      // （旧实现更新完什么都不说，用户以为还卡着）
+      if (!hadNodes && conn.nodes.isNotEmpty && mounted) {
+        _toast(AppStrings.t('sub_updated_click_connect'));
+      }
     } catch (e) {
       if (mounted) {
         final msg = ApiClient.errorMsg(e);
@@ -889,7 +902,7 @@ class _HomePageState extends State<HomePage>
                   acc.isBlocked
                       ? AppStrings.t('no_nodes')
                       : (_loadingNodes
-                          ? AppStrings.t('loading')
+                          ? AppStrings.t('sub_updating_wait')
                           : AppStrings.t('nodes_empty_retry')),
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: MFColors.txt3, height: 1.5),
