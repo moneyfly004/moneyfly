@@ -5,7 +5,6 @@
 import FlutterMacOS
 import Foundation
 
-import app_installer
 import connectivity_plus
 import device_info_plus
 import flutter_local_notifications
@@ -19,7 +18,6 @@ import wakelock_plus
 import window_manager
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
-  AppInstallerPlugin.register(with: registry.registrar(forPlugin: "AppInstallerPlugin"))
   ConnectivityPlusPlugin.register(with: registry.registrar(forPlugin: "ConnectivityPlusPlugin"))
   DeviceInfoPlusMacosPlugin.register(with: registry.registrar(forPlugin: "DeviceInfoPlusMacosPlugin"))
   FlutterLocalNotificationsPlugin.register(with: registry.registrar(forPlugin: "FlutterLocalNotificationsPlugin"))

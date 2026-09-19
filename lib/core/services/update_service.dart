@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:app_installer/app_installer.dart';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -422,11 +422,21 @@ class UpdateService {
   @visibleForTesting
   static Future<void> Function(String path)? apkInstaller;
 
-  static Future<void> _apkInstaller(String path) {
+  /// Android 安装通道：由 android/.../MainActivity.kt 实现
+  /// （Intent.ACTION_VIEW + FileProvider，见 Manifest 里的 provider）。
+  ///
+  /// 为什么不用 app_installer 插件：它的 Android 侧自带 `classpath
+  /// 'com.android.tools.build:gradle:3.6.2'` + `jcenter()`，与现代 AGP 不兼容，
+  /// CI 实测 `Gradle task assembleRelease failed`（`:app_installer` 配置失败）。
+  /// 自建通道只依赖 Flutter 自带的 androidx.core，不再引入 Gradle 风险。
+  static const MethodChannel _installerChannel =
+      MethodChannel('top.moneyfly/installer');
+
+  static Future<void> _apkInstaller(String path) async {
     final fn = apkInstaller;
     if (fn != null) return fn(path);
-    // 只在 Android 分支被调用（见 [launchInstaller]），桌面/iOS 不会走到这里
-    return AppInstaller.installApk(path);
+    // 只在 Android 分支被调用（见 [launchInstaller]）
+    await _installerChannel.invokeMethod<void>('installApk', {'path': path});
   }
 
   /// macOS：清掉下载文件的隔离属性，否则 Gatekeeper 会拦下安装包
