@@ -8,6 +8,7 @@ import '../../core/services/app_log.dart';
 import '../../core/services/settings_store.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_skeleton.dart';
 import '../../widgets/mf_input.dart';
 
 /// 按 App 分流/排除（Android AccessControl）：
@@ -278,7 +279,8 @@ class _AccessPageState extends State<AccessPage> {
   /// 列表区：加载中 / 读取失败（可重试）/ 空（无应用或搜索无结果）/ 应用列表
   Widget _listArea() {
     if (_loading) {
-      return Center(child: CircularProgressIndicator(color: MFColors.brand));
+      // 骨架屏而不是裸转圈：转圈→内容的跳变比骨架明显得多（与其它列表页统一）
+      return const MFListSkeleton(rows: 4);
     }
     final err = _loadError;
     if (err != null) {
