@@ -12,6 +12,7 @@ import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_chip.dart';
 import '../../widgets/mf_input.dart';
 import '../../widgets/country_flag.dart';
 import '../devices/devices_page.dart';
@@ -270,47 +271,27 @@ class _NodesPageState extends State<NodesPage> {
                 children: [
                   Text(AppStrings.t('nodes_title'), style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
                   const Spacer(),
-                  // 排序切换(默认国家/延迟/名称)
-                  GestureDetector(
+                  // 排序切换(默认国家/延迟/名称) + 刷新订阅。
+                  // 都用 MFChip：命中区 ≥40px 且有按压反馈（旧实现是 24~26px 的
+                  // 裸 GestureDetector，触屏上很难点准）
+                  MFChip(
+                    dense: true,
+                    icon: Icons.sort,
+                    label: switch (_sort) {
+                      'latency' => AppStrings.t('sort_latency'),
+                      'name' => AppStrings.t('sort_name'),
+                      _ => AppStrings.t('sort_default'),
+                    },
                     onTap: _pickSort,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: MFColors.card2,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: MFColors.line),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.sort, size: 13, color: MFColors.txt3),
-                          const SizedBox(width: 3),
-                          Text(
-                            switch (_sort) {
-                              'latency' => AppStrings.t('sort_latency'),
-                              'name' => AppStrings.t('sort_name'),
-                              _ => AppStrings.t('sort_default'),
-                            },
-                            style: TextStyle(fontSize: 11, color: MFColors.txt3, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
                   ),
                   const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _refreshing ? null : () => _load(force: true),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: MFColors.brand.withValues(alpha: .1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: MFColors.brand.withValues(alpha: .3)),
-                      ),
-                      child: _refreshing
-                          ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: MFColors.brandLight))
-                          : Text('🔄 ${AppStrings.t('refresh_sub')}', style: TextStyle(fontSize: 12, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
-                    ),
+                  MFChip(
+                    dense: true,
+                    icon: Icons.refresh,
+                    busy: _refreshing,
+                    enabled: !_refreshing,
+                    label: AppStrings.t('refresh_sub'),
+                    onTap: () => _load(force: true),
                   ),
                 ],
               ),
@@ -380,28 +361,35 @@ class _NodesPageState extends State<NodesPage> {
                 ],
               ),
             ),
-            // 节点列表
+            // 节点列表：与其它列表页一致的**下拉刷新**（旧实现只有右上角一个小
+            // chip，触屏上很难发现）。空态/无匹配分支也保持可滚动，长文案
+            // （如服务端下发的禁用原因）在 620 高窗口下能滚不溢出。
             Expanded(
-              child: conn.nodes.isEmpty
-                  ? _EmptyNodesView(
-                      refreshing: _refreshing,
-                      onRefresh: () => _load(force: true),
-                    )
-                  : groups.isEmpty
-                      ? Center(
-                          child: Text(
-                            AppStrings.t('no_match_nodes'),
-                            style: TextStyle(
-                                fontSize: 13, color: MFColors.txt3),
+              child: RefreshIndicator(
+                onRefresh: () => _load(force: true),
+                color: MFColors.brand,
+                child: conn.nodes.isEmpty
+                    ? _EmptyNodesView(
+                        refreshing: _refreshing,
+                        onRefresh: () => _load(force: true),
+                      )
+                    : groups.isEmpty
+                        ? _ScrollableCenter(
+                            child: Text(
+                              AppStrings.t('no_match_nodes'),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 13, color: MFColors.txt3),
+                            ),
+                          )
+                        : _NodeListView(
+                            conn: conn,
+                            groups: groups,
+                            sortedCodes: sortedCodes,
+                            buildNodeRow: _buildNodeRow,
+                            searching: q.isNotEmpty,
                           ),
-                        )
-                      : _NodeListView(
-                      conn: conn,
-                      groups: groups,
-                      sortedCodes: sortedCodes,
-                      buildNodeRow: _buildNodeRow,
-                      searching: q.isNotEmpty,
-                    ),
+              ),
             ),
           ],
         ),
@@ -466,10 +454,20 @@ class _NodesPageState extends State<NodesPage> {
                 ],
               ),
             ),
-            // 延迟胶囊:点击=单点测速(测速中显示小环)
-            GestureDetector(
+            // 延迟胶囊:点击=单点测速(测速中显示小环)。
+            // 用 InkWell + 命中区 ≥40：这是「给单个节点测速」的唯一入口，
+            // 旧实现只有 ~20px 高的裸 GestureDetector，触屏上几乎点不中。
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+              borderRadius: _latencyRadius,
               onTap: _testing ? null : () => _testOne(n),
-              child: Container(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 40),
+                child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                 decoration: BoxDecoration(
                   color: latencyColor.withValues(alpha: .1),
@@ -491,6 +489,9 @@ class _NodesPageState extends State<NodesPage> {
                                 ? kNumFont
                                 : null,
                             fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ),
               ),
             ),
             if (isCurrent) ...[
@@ -568,6 +569,8 @@ class _NodeListViewState extends State<_NodeListView> {
       }
     }
     return ListView.builder(
+      // 内容不足一屏也能下拉（否则短列表在桌面上无法触发下拉刷新）
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 12),
       itemCount: entries.length,
       itemBuilder: (context, i) {
@@ -640,6 +643,34 @@ class _CountryHeader extends StatelessWidget {
   }
 }
 
+/// 居中但**可滚动**的内容容器：最小窗口（380×620）或超长文案（服务端下发的
+/// 禁用原因等）时，用 SingleChildScrollView + minHeight 撑满视口 —— 内容居中
+/// 不变，但不再抛 RenderFlex overflow，也仍然能下拉刷新。
+class _ScrollableCenter extends StatelessWidget {
+  const _ScrollableCenter({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: c.maxHeight.isFinite ? c.maxHeight : 0,
+          ),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 16),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 节点空态：受限账号给出对应引导（到期续费 / 设备满管理·升级 / 禁用提示），
 /// 正常账号给出「刷新订阅」重试。不再让到期/禁用用户看到干巴巴的「暂无节点」。
 class _EmptyNodesView extends StatelessWidget {
@@ -651,8 +682,9 @@ class _EmptyNodesView extends StatelessWidget {
   Widget build(BuildContext context) {
     final acc = context.watch<AccountService>();
     if (!acc.isBlocked) {
-      return Center(
+      return _ScrollableCenter(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(AppStrings.t('no_nodes'),
@@ -687,47 +719,45 @@ class _EmptyNodesView extends StatelessWidget {
         status == AccountStatus.expired ||
         status == AccountStatus.noSubscription ||
         status == AccountStatus.deviceFull;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('⛔', style: const TextStyle(fontSize: 30)),
-            const SizedBox(height: 10),
-            Text(acc.blockText,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
-            const SizedBox(height: 16),
-            if (isManageable)
-              GestureDetector(
-                onTap: () {
-                  if (status == AccountStatus.deviceFull) {
-                    Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const DevicesPage()));
-                  } else {
-                    mainTabIndex.value = 2; // 购买套餐
-                  }
-                },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-                  decoration: BoxDecoration(
-                      gradient: MFColors.brandGradient,
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Text(
-                    status == AccountStatus.deviceFull
-                        ? AppStrings.t('manage_devices')
-                        : AppStrings.t('go_purchase'),
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600),
-                  ),
+    return _ScrollableCenter(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text('⛔', style: const TextStyle(fontSize: 30)),
+          const SizedBox(height: 10),
+          Text(acc.blockText,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+          const SizedBox(height: 16),
+          if (isManageable)
+            GestureDetector(
+              onTap: () {
+                if (status == AccountStatus.deviceFull) {
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const DevicesPage()));
+                } else {
+                  mainTabIndex.value = 2; // 购买套餐
+                }
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+                decoration: BoxDecoration(
+                    gradient: MFColors.brandGradient,
+                    borderRadius: BorderRadius.circular(12)),
+                child: Text(
+                  status == AccountStatus.deviceFull
+                      ? AppStrings.t('manage_devices')
+                      : AppStrings.t('go_purchase'),
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

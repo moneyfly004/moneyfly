@@ -6,6 +6,8 @@ import '../../core/models/models.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_skeleton.dart';
+import '../../widgets/mf_chip.dart';
 import '../../widgets/mf_empty.dart';
 import '../payment/payment_dialog.dart';
 
@@ -29,10 +31,14 @@ class _OrdersPageState extends State<OrdersPage> {
     _load();
   }
 
-  Future<void> _load() async {
+  /// 拉取列表。[spinner] = true 时整页转圈（首屏 / 用户主动刷新）；
+  /// 取消订单、继续支付等 mutation 之后用 `spinner: false` 静默刷新：
+  /// 旧实现每次都把列表换成居中 CircularProgressIndicator → 操作一次整页闪白、
+  /// 滚动位置丢失、看着像卡死。
+  Future<void> _load({bool spinner = true}) async {
     if (!mounted) return;
     setState(() {
-      _loading = true;
+      if (spinner) _loading = true;
       _error = null;
     });
     try {
@@ -40,9 +46,15 @@ class _OrdersPageState extends State<OrdersPage> {
       if (mounted) setState(() => _orders = list);
     } catch (e) {
       // 加载失败 → 显示「加载失败+重试」,不要把网络错误误当「暂无订单」
-      if (mounted) setState(() => _error = ApiClient.errorMsg(e));
+      if (!mounted) return;
+      // 静默刷新失败：列表原样保留，只弹提示（不要用错误页顶掉已有内容）
+      if (spinner) {
+        setState(() => _error = ApiClient.errorMsg(e));
+      } else {
+        _toast(ApiClient.errorMsg(e));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _loading) setState(() => _loading = false);
     }
   }
 
@@ -85,7 +97,7 @@ class _OrdersPageState extends State<OrdersPage> {
           onPaid: () {},
         ),
       );
-      await _load();
+      await _load(spinner: false);
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
@@ -112,7 +124,7 @@ class _OrdersPageState extends State<OrdersPage> {
     if (ok != true) return;
     try {
       await OrderService.instance.cancel(o.orderNo);
-      await _load();
+      await _load(spinner: false);
       if (mounted) _toast(AppStrings.t('order_cancelled'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
@@ -124,6 +136,51 @@ class _OrdersPageState extends State<OrdersPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  /// 错误态（失败 ≠ 没订单）：外层可滚动 + 错误文本限行，
+  /// 后端原始错误再长也不会在 380×620 的最小窗口里顶破布局。
+  Widget _buildError() => LayoutBuilder(
+        builder: (_, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                minHeight: box.maxHeight.isFinite ? box.maxHeight : 0),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
+                    const SizedBox(height: 10),
+                    Text(AppStrings.t('load_failed'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 13.5, color: MFColors.txt2, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    Text(_error!,
+                        textAlign: TextAlign.center,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12.5, color: MFColors.txt3, height: 1.5)),
+                    const SizedBox(height: 14),
+                    GestureDetector(
+                      onTap: () => _load(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                        decoration: BoxDecoration(
+                            gradient: MFColors.brandGradient,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Text(AppStrings.t('retry'),
+                            style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -134,32 +191,10 @@ class _OrdersPageState extends State<OrdersPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
+            // 首屏用骨架屏而不是裸转圈：转圈→内容的跳变比骨架明显得多
+            ? const MFListSkeleton()
             : _error != null
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
-                        const SizedBox(height: 10),
-                        Text(_error!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
-                        const SizedBox(height: 14),
-                        GestureDetector(
-                          onTap: _load,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                            decoration: BoxDecoration(
-                                gradient: MFColors.brandGradient,
-                                borderRadius: BorderRadius.circular(12)),
-                            child: Text(AppStrings.t('retry'),
-                                style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                ? _buildError()
                 : _orders.isEmpty
                 ? MFEmpty(
                     title: AppStrings.t('no_orders'),
@@ -227,27 +262,18 @@ class _OrdersPageState extends State<OrdersPage> {
             Row(
               children: [
                 const Spacer(),
-                GestureDetector(
+                // 命中区 ≥40（旧实现是 height: 32 的裸 GestureDetector：触屏上
+                // 「取消订单」这种动作很难点准，而且没有按压反馈）
+                MFActionButton(
+                  label: AppStrings.t('cancel_order'),
+                  color: MFColors.red,
                   onTap: () => _cancelOrder(o),
-                  child: Container(
-                    height: 32, padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                        color: MFColors.red.withValues(alpha: .08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: MFColors.red.withValues(alpha: .3))),
-                    alignment: Alignment.center,
-                    child: Text(AppStrings.t('cancel_order'), style: TextStyle(fontSize: 11.5, color: MFColors.red, fontWeight: FontWeight.w600)),
-                  ),
                 ),
                 const SizedBox(width: 10),
-                GestureDetector(
+                MFActionButton(
+                  label: AppStrings.t('pay_again'),
+                  filled: true,
                   onTap: () => _payOrder(o),
-                  child: Container(
-                    height: 32, padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-                    alignment: Alignment.center,
-                    child: Text(AppStrings.t('pay_again'), style: TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600)),
-                  ),
                 ),
               ],
             ),

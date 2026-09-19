@@ -5,6 +5,7 @@ import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/notification_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/mf_skeleton.dart';
 import '../../widgets/mf_empty.dart';
 
 /// 通知中心：列表 / 已读 / 全部已读 / 删除
@@ -26,19 +27,28 @@ class _NotificationsPageState extends State<NotificationsPage> {
     _load();
   }
 
-  Future<void> _load() async {
+  /// 拉取列表。[spinner] = true 时整页转圈（首屏 / 用户主动刷新）；
+  /// mutation 之后用 `spinner: false` 静默刷新：旧实现每次都把列表换成居中
+  /// CircularProgressIndicator → 改一条就整页闪白、滚动位置丢失、看着像卡死。
+  Future<void> _load({bool spinner = true}) async {
     if (!mounted) return;
     setState(() {
-      _loading = true;
+      if (spinner) _loading = true;
       _error = null;
     });
     try {
       final list = await NotificationService.instance.list();
       if (mounted) setState(() => _items = list);
     } catch (e) {
-      if (mounted) setState(() => _error = ApiClient.errorMsg(e));
+      if (!mounted) return;
+      // 静默刷新失败：列表原样保留，只弹提示（不要用错误页顶掉已有内容）
+      if (spinner) {
+        setState(() => _error = ApiClient.errorMsg(e));
+      } else {
+        _toast(ApiClient.errorMsg(e));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _loading) setState(() => _loading = false);
     }
   }
 
@@ -46,7 +56,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     if (n.isRead) return;
     try {
       await NotificationService.instance.markRead(n.id);
-      await _load();
+      await _load(spinner: false);
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     }
@@ -55,7 +65,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
   Future<void> _markAll() async {
     try {
       await NotificationService.instance.markAllRead();
-      await _load();
+      await _load(spinner: false);
       if (mounted) _toast(AppStrings.t('marked_read'));
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
@@ -81,7 +91,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     if (ok != true) return;
     try {
       await NotificationService.instance.delete(n.id);
-      await _load();
+      await _load(spinner: false);
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     }
@@ -108,6 +118,51 @@ class _NotificationsPageState extends State<NotificationsPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  /// 错误态（失败 ≠ 没通知）：外层可滚动 + 错误文本限行，
+  /// 后端原始错误再长也不会在 380×620 的最小窗口里顶破布局。
+  Widget _buildError() => LayoutBuilder(
+        builder: (_, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                minHeight: box.maxHeight.isFinite ? box.maxHeight : 0),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
+                    const SizedBox(height: 10),
+                    Text(AppStrings.t('load_failed'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 13.5, color: MFColors.txt2, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    Text(_error!,
+                        textAlign: TextAlign.center,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12.5, color: MFColors.txt3, height: 1.5)),
+                    const SizedBox(height: 14),
+                    GestureDetector(
+                      onTap: () => _load(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                        decoration: BoxDecoration(
+                            gradient: MFColors.brandGradient,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Text(AppStrings.t('retry'),
+                            style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,32 +176,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
       ),
       body: SafeArea(
         child: _loading
-            ? Center(child: CircularProgressIndicator(color: MFColors.brand))
+            // 首屏用骨架屏而不是裸转圈：转圈→内容的跳变比骨架明显得多
+            ? const MFListSkeleton()
             : _error != null
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cloud_off, size: 40, color: MFColors.txt3),
-                        const SizedBox(height: 10),
-                        Text(_error!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
-                        const SizedBox(height: 14),
-                        GestureDetector(
-                          onTap: _load,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                            decoration: BoxDecoration(
-                                gradient: MFColors.brandGradient,
-                                borderRadius: BorderRadius.circular(12)),
-                            child: Text(AppStrings.t('retry'),
-                                style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                ? _buildError()
                 : _items.isEmpty
                 ? MFEmpty(title: AppStrings.t('no_notifications'))
                 : ListView.separated(
@@ -157,7 +190,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       final n = _items[i];
                       return GestureDetector(
                         onTap: () => _markRead(n),
-                        onLongPress: () => _delete(n),
+                        onLongPress: () => _delete(n), // 长按保留为快捷方式
                         child: Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -185,6 +218,22 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   ),
                                   Text(_formatTime(n.createdAt),
                                       style:  TextStyle(fontSize: 10, color: MFColors.txt3, fontFamily: kNumFont)),
+                                  // 可见的删除入口：桌面端没有长按手势，
+                                  // 只靠 onLongPress 等于藏起来（长按仍可用）。
+                                  // 点击区做到 ~35×35，触屏仍可长按。
+                                  Tooltip(
+                                    message: AppStrings.t('delete_notify'),
+                                    child: GestureDetector(
+                                      // 内层接管点击 → 外层的「标记已读」不会连带触发
+                                      onTap: () => _delete(n),
+                                      behavior: HitTestBehavior.opaque,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                            left: 12, top: 9, bottom: 9, right: 6),
+                                        child: Icon(Icons.delete_outline, size: 17, color: MFColors.txt3),
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
                               if (n.content.isNotEmpty) ...[

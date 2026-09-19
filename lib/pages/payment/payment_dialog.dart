@@ -52,7 +52,6 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
   bool _launching = false; // 跳转按钮防连点
   Timer? _timer;
   bool _pollInFlight = false;
-  late DateTime _startAt;
 
   @override
   void initState() {
@@ -95,7 +94,6 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
   /// 启动/重启后台静默轮询：立即查一次（不等首个间隔），再周期节流轮询。
   void _startPolling({bool notify = true}) {
     _timer?.cancel();
-    _startAt = DateTime.now();
     _pollInFlight = false;
     _polling = true;
     _timedOut = false;
@@ -216,6 +214,11 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
     );
   }
 
+  /// 底部两个操作按钮的统一高度。
+  /// 旧实现左侧 OutlinedButton 靠 padding 撑出 ~42 高、右侧容器写死 height:50，
+  /// 并排看两个按钮明显不等高。
+  static const double _actionBtnHeight = 48;
+
   @override
   Widget build(BuildContext context) {
     final showLaunch = _isMobile && _launchable;
@@ -231,132 +234,146 @@ class _PaymentQrDialogState extends State<PaymentQrDialog> with WidgetsBindingOb
               colors: [Color(0xFF171E2E), Color(0xFF10141F)]),
           border: Border.all(color: MFColors.line2),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(AppStrings.t('pay_with_method', {'method': widget.methodName}),
-                style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700, color: Colors.white)),
-            const SizedBox(height: 3),
-            Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
-                style: const TextStyle(fontSize: 10, color: Colors.white60, letterSpacing: 1.4)),
-            const SizedBox(height: 16),
-            GestureDetector(
-              onTap: () => setState(() => _zoom = !_zoom),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: _zoom ? 250 : 196,
-                height: _zoom ? 250 : 196,
-                padding: const EdgeInsets.all(11),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(17),
-                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .5), blurRadius: 30)],
-                ),
-                child: QrImageView(
-                  data: widget.qrContent,
-                  version: QrVersions.auto,
-                  size: _zoom ? 228 : 174,
-                  backgroundColor: Colors.white,
-                  eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF111111)),
-                  dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Color(0xFF111111)),
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(AppStrings.t('qr_tap_zoom'),
-                style: const TextStyle(fontSize: 10, color: Colors.white60)),
-            const SizedBox(height: 10),
-            _statusRow(),
-            const SizedBox(height: 8),
-            Text.rich(TextSpan(children: [
-              TextSpan(text: '¥',
-                  style: const TextStyle(fontSize: 15, color: Colors.white)),
-              TextSpan(text: formatPrice(widget.amount),
-                  style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont, color: Colors.white)),
-            ])),
-            const SizedBox(height: 5),
-            GestureDetector(
-              onTap: () {
-                // 剪贴板无需等待，直接提示
-                Clipboard.setData(ClipboardData(text: widget.orderNo));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(AppStrings.t('order_copied')), duration: Duration(seconds: 1)),
-                );
-              },
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text('${AppStrings.t('order_no')} ${widget.orderNo}',
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: kNumFont, letterSpacing: .5)),
-                  ),
-                  const SizedBox(width: 5),
-                  const Icon(Icons.copy, size: 12, color: Colors.white70),
-                ],
-              ),
-            ),
-            // 手机端一键拉起支付 App
-            if (showLaunch) ...[
+        // 窄窗口（最小 380×620）下「二维码 196 + 金额 + 跳转按钮 + 底部按钮」
+        // 可能超过可视高度：内容整体可滚动，绝不抛 RenderFlex overflow。
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(AppStrings.t('pay_with_method', {'method': widget.methodName}),
+                  style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700, color: Colors.white)),
+              const SizedBox(height: 3),
+              Text('${widget.methodName.toUpperCase()} · SECURE PAYMENT',
+                  style: const TextStyle(fontSize: 10, color: Colors.white60, letterSpacing: 1.4)),
               const SizedBox(height: 16),
               GestureDetector(
-                onTap: _launching ? null : _openPayApp,
-                child: Container(
-                  height: 48,
-                  decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
-                  alignment: Alignment.center,
-                  child: _launching
-                      ? const SizedBox(width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.open_in_new, size: 16, color: Colors.white),
-                            const SizedBox(width: 7),
-                            Text(AppStrings.t('open_pay_app', {'method': widget.methodName}),
-                                style: const TextStyle(fontSize: 14.5, color: Colors.white, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white70,
-                      side: const BorderSide(color: Colors.white24),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(AppStrings.t('cancel')),
+                onTap: () => setState(() => _zoom = !_zoom),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: _zoom ? 250 : 196,
+                  height: _zoom ? 250 : 196,
+                  padding: const EdgeInsets.all(11),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(17),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .5), blurRadius: 30)],
+                  ),
+                  child: QrImageView(
+                    data: widget.qrContent,
+                    version: QrVersions.auto,
+                    size: _zoom ? 228 : 174,
+                    backgroundColor: Colors.white,
+                    eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF111111)),
+                    dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Color(0xFF111111)),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      // 立即确认一次：重启轮询（首查不等间隔），超时后也能靠它救回
-                      _startPolling();
-                      _snack(AppStrings.t('confirming_pay'));
-                    },
-                    child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
-                      alignment: Alignment.center,
-                      child: Text(AppStrings.t('i_paid'), style: TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 6),
+              Text(AppStrings.t('qr_tap_zoom'),
+                  style: const TextStyle(fontSize: 10, color: Colors.white60)),
+              const SizedBox(height: 10),
+              _statusRow(),
+              const SizedBox(height: 8),
+              Text.rich(TextSpan(children: [
+                TextSpan(text: '¥',
+                    style: const TextStyle(fontSize: 15, color: Colors.white)),
+                TextSpan(text: formatPrice(widget.amount),
+                    style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, fontFamily: kNumFont, color: Colors.white)),
+              ])),
+              const SizedBox(height: 5),
+              GestureDetector(
+                onTap: () {
+                  // 剪贴板无需等待，直接提示
+                  Clipboard.setData(ClipboardData(text: widget.orderNo));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(AppStrings.t('order_copied')), duration: Duration(seconds: 1)),
+                  );
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text('${AppStrings.t('order_no')} ${widget.orderNo}',
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: kNumFont, letterSpacing: .5)),
                     ),
+                    const SizedBox(width: 5),
+                    const Icon(Icons.copy, size: 12, color: Colors.white70),
+                  ],
+                ),
+              ),
+              // 手机端一键拉起支付 App
+              if (showLaunch) ...[
+                const SizedBox(height: 16),
+                GestureDetector(
+                  onTap: _launching ? null : _openPayApp,
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
+                    alignment: Alignment.center,
+                    child: _launching
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.open_in_new, size: 16, color: Colors.white),
+                              const SizedBox(width: 7),
+                              Text(AppStrings.t('open_pay_app', {'method': widget.methodName}),
+                                  style: const TextStyle(fontSize: 14.5, color: Colors.white, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
                   ),
                 ),
               ],
-            ),
-          ],
+              const SizedBox(height: 18),
+              // 两个按钮等高（统一的 _actionBtnHeight）：左「取消」右「我已支付」
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: _actionBtnHeight,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          side: const BorderSide(color: Colors.white24),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, _actionBtnHeight),
+                        ),
+                        onPressed: () => Navigator.of(context).pop(false),
+                        child: Text(AppStrings.t('cancel'),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        // 立即确认一次：重启轮询（首查不等间隔），超时后也能靠它救回
+                        _startPolling();
+                        _snack(AppStrings.t('confirming_pay'));
+                      },
+                      child: Container(
+                        height: _actionBtnHeight,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(14)),
+                        alignment: Alignment.center,
+                        child: Text(AppStrings.t('i_paid'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

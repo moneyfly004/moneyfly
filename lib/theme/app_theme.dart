@@ -149,6 +149,18 @@ class MFColors {
 /// 数字字体（Chakra Petch 在桌面端可用；移动端回退 monospace）
 const kNumFont = 'Chakra Petch';
 
+// ── 输入框令牌（主题与 lib/widgets/mf_input.dart 共用一处）──────────────
+// 历史问题：主题里写一套（fill=card2 / 圆角 14 / 内边距 16 / hint 14），
+// mfInput 里写另一套（fill=card / 圆角 12 / 内边距 14,13 / hint 12.5），
+// 于是「同一种输入框」在登录页和设置弹窗里填充色、圆角、内边距都不一样。
+// 现在两边都引用这里的常量，只有「紧凑」尺寸为弹窗保留了更小的内边距。
+const double kInputRadius = 14;
+const double kInputHintFontSize = 13;
+const EdgeInsets kInputPadding =
+    EdgeInsets.symmetric(horizontal: 16, vertical: 16);
+const EdgeInsets kInputPaddingDense =
+    EdgeInsets.symmetric(horizontal: 14, vertical: 14);
+
 ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
   // 关键：颜色必须跟 brightness 参数绑定（MaterialApp 同时构建 light/dark 两套主题）。
   // 若选中深色外观，light 主题回退到默认浅色配色；反之亦然 —— 保证任意模式下
@@ -213,19 +225,32 @@ ThemeData buildMoneyFlyTheme({Brightness brightness = Brightness.dark}) {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: t.card2,
-      hintStyle: TextStyle(color: t.txt3, fontSize: 14),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      hintStyle: TextStyle(color: t.txt3, fontSize: kInputHintFontSize),
+      errorStyle: TextStyle(color: t.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438), fontSize: 11),
+      contentPadding: kInputPadding,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(kInputRadius),
         borderSide: BorderSide(color: t.line2),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(kInputRadius),
         borderSide: BorderSide(color: t.line2),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(kInputRadius),
         borderSide: BorderSide(color: t.brand, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kInputRadius),
+        borderSide: BorderSide(
+            color: t.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438),
+            width: 1.2),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kInputRadius),
+        borderSide: BorderSide(
+            color: t.isDark ? const Color(0xFFFF5A5F) : const Color(0xFFF04438),
+            width: 1.4),
       ),
     ),
     dividerTheme: DividerThemeData(color: t.line, thickness: 1, space: 1),
@@ -274,16 +299,25 @@ class MFPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 禁用态必须有明显不同的视觉：旧实现 onPressed == null 时仍然是完整渐变 +
+    // 白字 + 光晕，看起来完全可点 —— 用户点了没反应，会以为「按钮坏了」。
+    // （loading 不算禁用：请求在飞，进度圈本身就是反馈，保留品牌渐变。）
+    final disabled = onPressed == null && !loading;
+    final labelColor = disabled ? MFColors.txt3 : Colors.white;
     return SizedBox(
       height: height,
       width: double.infinity,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          gradient: MFColors.brandGradient,
+          gradient: disabled ? null : MFColors.brandGradient,
+          color: disabled ? MFColors.card2 : null,
+          border: disabled ? Border.all(color: MFColors.line) : null,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 24, offset: Offset(0, 10)),
-          ],
+          boxShadow: disabled
+              ? const []
+              : [
+                  BoxShadow(color: MFColors.brand.withValues(alpha: .35), blurRadius: 24, offset: const Offset(0, 10)),
+                ],
         ),
         child: Material(
           color: Colors.transparent,
@@ -297,7 +331,7 @@ class MFPrimaryButton extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (icon != null) ...[icon!, const SizedBox(width: 8)],
-                        Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                        Text(label, style: TextStyle(color: labelColor, fontSize: 16, fontWeight: FontWeight.w600)),
                       ],
                     ),
             ),
@@ -317,6 +351,14 @@ Color mfLatencyColor(int latencyMs, bool online) {
   if (latencyMs < 300) return MFColors.amber;
   return MFColors.red;
 }
+
+/// 日期显示（统一口径）：`2026-09-19`。
+/// 设备页/升级设备页/订单页各自手写过一遍，容易出现「2026/9/9」和「2026-09-09」
+/// 两种格式并存。
+String formatDateYmd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
 
 /// 金额显示：去掉无意义的尾零。
 /// 0.02 → "0.02"；200 → "200"；200.5 → "200.5"；0 → "0"。

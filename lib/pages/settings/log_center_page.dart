@@ -52,6 +52,34 @@ class LogCenterPage extends StatelessWidget {
   }
 }
 
+/// 清空日志的确认弹窗 —— **两个 Tab 共用同一份实现**。
+///
+/// 旧实现里 App 日志 tab 有确认框，内核日志 tab 却是
+/// `onPressed: () => setState(_lines.clear)`：一次误点就把内核现场日志清光，
+/// 而那正是客服排障最需要的东西（且页面每 1.2s 只增量拉取，清掉就再也回不来）。
+Future<bool> _confirmClearLog(BuildContext context, String message) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: MFColors.card2,
+      title:
+          Text(AppStrings.t('clear_log'), style: const TextStyle(fontSize: 15)),
+      content: Text(message, style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(AppStrings.t('cancel_text'))),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(AppStrings.t('clear_log'),
+              style: TextStyle(color: MFColors.red)),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
+}
+
 // ================= 内核日志（实时）Tab =================
 
 class _KernelLogTab extends StatefulWidget {
@@ -193,17 +221,65 @@ class _KernelLogTabState extends State<_KernelLogTab>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(AppStrings.t('log_level_need_reconnect'),
             style: const TextStyle(fontSize: 13)),
-        backgroundColor: MFColors.card2,
-        behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ));
     }
   }
 
+  /// 清空内核日志：与 App 日志 tab 一样**先确认**再清
+  Future<void> _clear() async {
+    final ok = await _confirmClearLog(
+        context, AppStrings.t('kernel_log_clear_confirm'));
+    if (!ok || !mounted) return;
+    setState(_lines.clear);
+  }
+
+  /// 等级筛选 chip：整块 40 高命中区 + InkWell 按压反馈
+  /// （旧实现是 GestureDetector + ~23px 的 Container：没有按压反馈、命中区偏小）
+  Widget _levelChip(String lv) {
+    final active = _level == lv;
+    final radius = BorderRadius.circular(8);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: active ? MFColors.brandGradient : null,
+            color: active ? null : MFColors.card,
+            borderRadius: radius,
+            border: Border.all(
+                color: active ? Colors.transparent : MFColors.line),
+          ),
+          child: InkWell(
+            onTap: () => _setLevel(lv),
+            borderRadius: radius,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 40),
+              child: Center(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  child: Text(
+                    lv.toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: active ? Colors.white : MFColors.txt2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final running = ConnectionController.instance.status == ConnStatus.connected;
     return Column(
       children: [
         // 工具栏：级别切换 + 连接状态 + 复制/清空
@@ -219,54 +295,39 @@ class _KernelLogTabState extends State<_KernelLogTab>
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      for (final lv in _levels)
-                        GestureDetector(
-                          onTap: () => _setLevel(lv),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            margin: const EdgeInsets.only(right: 6),
-                            decoration: BoxDecoration(
-                              gradient: _level == lv
-                                  ? MFColors.brandGradient
-                                  : null,
-                              color: _level == lv ? null : MFColors.card,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                  color: _level == lv
-                                      ? Colors.transparent
-                                      : MFColors.line),
-                            ),
-                            child: Text(
-                              lv.toUpperCase(),
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w700,
-                                color: _level == lv
-                                    ? Colors.white
-                                    : MFColors.txt2,
-                              ),
-                            ),
-                          ),
-                        ),
+                      for (final lv in _levels) _levelChip(lv),
                     ],
                   ),
                 ),
               ),
               const SizedBox(width: 8),
-              Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: running ? MFColors.green : MFColors.txt3,
-                ),
+              // 连接状态随控制器刷新（旧实现直接读单例快照，连上/断开后
+              // 这里的小圆点和「未连接」文案不会更新）
+              ListenableBuilder(
+                listenable: ConnectionController.instance,
+                builder: (context, _) {
+                  final running = ConnectionController.instance.status ==
+                      ConnStatus.connected;
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: running ? MFColors.green : MFColors.txt3,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(running ? '' : AppStrings.t('kernel_stopped'),
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: running ? MFColors.green : MFColors.txt3)),
+                    ],
+                  );
+                },
               ),
-              const SizedBox(width: 4),
-              Text(running ? '' : AppStrings.t('kernel_stopped'),
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: running ? MFColors.green : MFColors.txt3)),
               IconButton(
                 icon: const Icon(Icons.copy, size: 17),
                 tooltip: AppStrings.t('copy'),
@@ -277,7 +338,9 @@ class _KernelLogTabState extends State<_KernelLogTab>
                 icon: const Icon(Icons.delete_outline, size: 18),
                 tooltip: AppStrings.t('clear_log'),
                 visualDensity: VisualDensity.compact,
-                onPressed: () => setState(_lines.clear),
+                // 清空必须确认（与 App 日志 tab 同一实现）：内核现场日志
+                // 是排障证据，不能一次误点就没了
+                onPressed: _clear,
               ),
             ],
           ),
@@ -293,6 +356,10 @@ class _KernelLogTabState extends State<_KernelLogTab>
         // 原实现用 reverse:true 让最新贴底，但日志条数少于视口高度时，内容会全部
         // 堆在底部、顶部留出一大片空白（真机反馈「上半截一片空白」）。
         // 改为从上往下、最新在前：无论日志多少都从顶部开始排，且最新一条无需滚动。
+        //
+        // 行本身用普通 Text：旧实现每行一个 SelectableText（最多 600 个，各自
+        // 带一套选区状态），低端机上明显卡顿；整块套一个 SelectionArea，
+        // 仍然可以跨行选择/复制（顶部另有「复制」按钮）。
         Expanded(
           child: _visibleLines.isEmpty
               ? Center(
@@ -304,26 +371,27 @@ class _KernelLogTabState extends State<_KernelLogTab>
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 12, color: MFColors.txt3, height: 1.7)))
-              : ListView.builder(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  itemCount: _visibleLines.length,
-                  itemBuilder: (context, i) {
-                    final line = _visibleLines[_visibleLines.length - 1 - i];
-                    final lc = _lineColor(line);
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: SelectableText(
-                        line,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          height: 1.55,
-                          color: lc,
-                          fontFamily: kNumFont,
+              : SelectionArea(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    itemCount: _visibleLines.length,
+                    itemBuilder: (context, i) {
+                      final line = _visibleLines[_visibleLines.length - 1 - i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 1),
+                        child: Text(
+                          line,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            height: 1.55,
+                            color: _lineColor(line),
+                            fontFamily: kNumFont,
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
         ),
       ],
@@ -375,8 +443,6 @@ class _KernelLogTabState extends State<_KernelLogTab>
     messenger.showSnackBar(SnackBar(
       content: Text(AppStrings.t('kernel_log_copied'),
           style: const TextStyle(fontSize: 13)),
-      backgroundColor: MFColors.card2,
-      behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 1),
     ));
   }
@@ -434,27 +500,9 @@ class _AppLogTabState extends State<_AppLogTab>
   }
 
   Future<void> _clear() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('clear_log'),
-            style: const TextStyle(fontSize: 15)),
-        content: Text(AppStrings.t('log_clear_confirm'),
-            style: TextStyle(fontSize: 13, color: MFColors.txt2)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(AppStrings.t('cancel_text'))),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(AppStrings.t('clear_log'),
-                style: TextStyle(color: MFColors.red)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
+    // 与内核日志 tab 共用同一份确认实现
+    final ok = await _confirmClearLog(context, AppStrings.t('log_clear_confirm'));
+    if (!ok) return;
     await AppLog.clear();
     await _load();
   }
@@ -498,10 +546,7 @@ class _AppLogTabState extends State<_AppLogTab>
                   await Clipboard.setData(
                       ClipboardData(text: visible.join('\n')));
                   messenger.showSnackBar(SnackBar(
-                    content: Text(AppStrings.t('kernel_log_copied'),
-                        style: const TextStyle(fontSize: 13)),
-                    backgroundColor: MFColors.card2,
-                    behavior: SnackBarBehavior.floating,
+                    content: Text(AppStrings.t('kernel_log_copied')),
                     duration: const Duration(seconds: 1),
                   ));
                 },
@@ -532,25 +577,29 @@ class _AppLogTabState extends State<_AppLogTab>
                                   fontSize: 12, color: MFColors.txt3)))
                       // 不用 reverse：日志条数少时 reverse 会把内容全堆在底部，
                       // 顶部留一大片空白（真机反馈）；改为最新在最上方。
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          itemCount: _visible.length,
-                          itemBuilder: (context, i) {
-                            final line = _visible[_visible.length - 1 - i];
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 1),
-                              child: SelectableText(
-                                line,
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  height: 1.6,
-                                  color: _lineColor(line),
-                                  fontFamily: kNumFont,
+                      // 行用普通 Text + 外层单个 SelectionArea（理由同内核日志 tab）。
+                      : SelectionArea(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            itemCount: _visible.length,
+                            itemBuilder: (context, i) {
+                              final line = _visible[_visible.length - 1 - i];
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 1),
+                                child: Text(
+                                  line,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    height: 1.6,
+                                    color: _lineColor(line),
+                                    fontFamily: kNumFont,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
         ),
       ],

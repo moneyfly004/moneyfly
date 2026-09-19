@@ -346,16 +346,13 @@ class _KernelPageState extends State<KernelPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: MFColors.card2,
-    ));
+    // 只留文案：背景/圆角/浮动样式统一由 ThemeData.snackBarTheme 提供
+    // （旧实现这里自己又写了一套 floating + card2，和主题重复且容易走偏）
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final running = ConnectionController.instance.status == ConnStatus.connected;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -375,12 +372,23 @@ class _KernelPageState extends State<KernelPage> {
                   ? AppStrings.t('kernel_version_unknown')
                   : 'v$_current',
             ),
-            _row(
-              icon: '⚡',
-              title: AppStrings.t('kernel_running_state'),
-              value: running
-                  ? AppStrings.t('kernel_running')
-                  : AppStrings.t('kernel_stopped'),
+            // 「运行中 / 未连接」必须跟随连接状态刷新：旧实现直接读
+            // ConnectionController.instance.status 的快照，连上或断开后
+            // 这一行不会更新（只有这一行需要重建，所以只包这一行，
+            // 不让整页跟着通知抖动）
+            ListenableBuilder(
+              listenable: ConnectionController.instance,
+              builder: (context, _) {
+                final running = ConnectionController.instance.status ==
+                    ConnStatus.connected;
+                return _row(
+                  icon: '⚡',
+                  title: AppStrings.t('kernel_running_state'),
+                  value: running
+                      ? AppStrings.t('kernel_running')
+                      : AppStrings.t('kernel_stopped'),
+                );
+              },
             ),
             if (KernelManager.isDesktop) ...[
               _section('mihomo'),
@@ -470,7 +478,9 @@ class _KernelPageState extends State<KernelPage> {
                   icon: '🔀',
                   title: AppStrings.t('kernel_variant_title'),
                   desc: AppStrings.t('kernel_variant_desc'),
-                  value: '${_variantLabel(_variant)} ▾',
+                  // 行尾本来就由 MFRow 追加 chevron_right 箭头；
+                  // 以前值里再拼一个 ' ▾'，同一行出现两个互相打架的指示符
+                  value: _variantLabel(_variant),
                   onTap: _downloading ? null : _pickVariant,
                 ),
             ] else ...[

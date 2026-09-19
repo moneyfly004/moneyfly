@@ -108,7 +108,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
                 )
               else if (_loadFailed && _dashboard == null)
-                // 加载失败:给"错误+重试"占位,避免全零/占位误读为无套餐
+                // 加载失败:给"错误+重试"占位,避免全零/占位误读为无套餐。
+                // 这一段本身在 ListView 里（可滚动、不会 RenderFlex overflow）；
+                // 文案仍然限行 + 省略号，防止超长本地化/服务端文案把卡片撑变形。
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 30),
                   child: Column(
@@ -116,17 +118,26 @@ class _ProfilePageState extends State<ProfilePage> {
                       Icon(Icons.cloud_off_outlined, size: 40, color: MFColors.txt3),
                       const SizedBox(height: 10),
                       Text(AppStrings.t('profile_load_fail'),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
                       const SizedBox(height: 14),
-                      GestureDetector(
+                      // 审计 P2：小控件一律 InkWell（有按压反馈）+ 命中区够大
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
                         onTap: _load,
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                          constraints: const BoxConstraints(minHeight: 44),
                           decoration: BoxDecoration(
                               gradient: MFColors.brandGradient,
                               borderRadius: BorderRadius.circular(12)),
                           child: Text(AppStrings.t('retry'),
                               style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                        ),
                         ),
                       ),
                     ],
@@ -178,7 +189,9 @@ class _ProfilePageState extends State<ProfilePage> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text('¥${balance.toStringAsFixed(2)}',
+            // 金额口径与套餐页/支付弹窗统一走 formatPrice()：200 显示「¥200」
+            // 而不是「¥200.00」，0.02 也不会被凑整成 0。
+            Text('¥${formatPrice(balance)}',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: MFColors.brandLight, fontFamily: kNumFont)),
             Text(AppStrings.t('balance'), style: TextStyle(fontSize: 9.5, color: MFColors.txt3)),
           ],
@@ -204,12 +217,18 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Text(AppStrings.t('expiring_days', {'days': '$remaining'}),
                 style: TextStyle(fontSize: 12, color: MFColors.txt)),
           ),
-          GestureDetector(
-            onTap: () => mainTabIndex.value = 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-              decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
-              child: Text(AppStrings.t('renew'), style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => mainTabIndex.value = 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                constraints: const BoxConstraints(minHeight: 40),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(gradient: MFColors.brandGradient, borderRadius: BorderRadius.circular(10)),
+                child: Text(AppStrings.t('renew'), style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
             ),
           ),
         ],
@@ -297,16 +316,22 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           if (buttonLabel != null && onTap != null) ...[
             const SizedBox(width: 6),
-            GestureDetector(
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+              borderRadius: BorderRadius.circular(10),
               onTap: onTap,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                constraints: const BoxConstraints(minHeight: 40),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                     gradient: MFColors.brandGradient,
                     borderRadius: BorderRadius.circular(10)),
                 child: Text(buttonLabel,
                     style: const TextStyle(
                         fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
               ),
             ),
           ],
@@ -430,7 +455,10 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildLogout(BuildContext context) {
-    return GestureDetector(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+      borderRadius: BorderRadius.circular(15),
       onTap: () async {
         final ok = await showDialog<bool>(
           context: context,
@@ -465,6 +493,7 @@ class _ProfilePageState extends State<ProfilePage> {
           border: Border.all(color: MFColors.red.withValues(alpha: .35)),
         ),
         child: Text(AppStrings.t('logout'), style: TextStyle(fontSize: 14.5, color: MFColors.red, fontWeight: FontWeight.w600)),
+      ),
       ),
     );
   }

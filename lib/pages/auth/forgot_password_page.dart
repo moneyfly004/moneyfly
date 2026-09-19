@@ -151,16 +151,36 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 步骤条
+              // 步骤条：反映真实进度 —— 验证码**真的发出去之前**第 1 步不算完成
+              // （旧实现把第 1 步硬编码 done:true，一进页面就打绿勾，用户在还
+              // 没收到验证码时被误导成「这步已经过了」）。当前所处步骤高亮，
+              // 未开始的步骤置灰（三态可分辨）。
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _Step(done: true, no: '✓', label: AppStrings.t('step_verify')),
+                  _Step(
+                    key: const ValueKey('fp_step_verify'),
+                    done: _codeSent,
+                    current: !_codeSent,
+                    no: _codeSent ? '✓' : '1',
+                    label: AppStrings.t('step_verify'),
+                  ),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 10),
-                    child: SizedBox(width: 26, height: 1, child: ColoredBox(color: MFColors.line2)),
+                    // 连接线跟随第 1 步的完成状态（绿 = 已通过验证码这一步）
+                    child: SizedBox(
+                        width: 26,
+                        height: 1,
+                        child: ColoredBox(
+                            color: _codeSent ? MFColors.green : MFColors.line2)),
                   ),
-                  _Step(done: false, no: '2', label: AppStrings.t('step_new_pwd')),
+                  _Step(
+                    key: const ValueKey('fp_step_pwd'),
+                    done: false,
+                    current: _codeSent,
+                    no: '2',
+                    label: AppStrings.t('step_new_pwd'),
+                  ),
                 ],
               ),
               SizedBox(height: compact ? 16 : 26),
@@ -263,25 +283,42 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 }
 
+/// 步骤条单元格：三态 —— 已完成（绿✓）/ 当前步骤（品牌色高亮）/ 未开始（置灰）。
 class _Step extends StatelessWidget {
-  const _Step({required this.done, required this.no, required this.label});
+  const _Step({
+    super.key,
+    required this.done,
+    required this.no,
+    required this.label,
+    this.current = false,
+  });
   final bool done;
+  final bool current;
   final String no;
   final String label;
 
   @override
   Widget build(BuildContext context) {
-    final color = done ? MFColors.green : MFColors.brandLight;
+    final Color color;
+    final Color bg;
+    if (done) {
+      color = MFColors.green;
+      bg = MFColors.green.withValues(alpha: .18);
+    } else if (current) {
+      color = MFColors.brandLight;
+      bg = MFColors.brand.withValues(alpha: .18);
+    } else {
+      // 未开始：弱化，与「当前步骤」一眼可分
+      color = MFColors.txt3;
+      bg = MFColors.txt3.withValues(alpha: .12);
+    }
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 20,
           height: 20,
-          decoration: BoxDecoration(
-            color: done ? MFColors.green.withValues(alpha: .18) : MFColors.brand.withValues(alpha: .18),
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
           alignment: Alignment.center,
           child: Text(no, style: TextStyle(fontSize: 10.5, color: color, fontFamily: kNumFont, fontWeight: FontWeight.w700)),
         ),

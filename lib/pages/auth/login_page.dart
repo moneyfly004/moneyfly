@@ -183,10 +183,12 @@ class _LoginPageState extends State<LoginPage> {
               SizedBox(height: compact ? 10 : 16),
               MFPrimaryButton(label: AppStrings.t('login_button'), loading: _loading, onPressed: _loading ? null : _login),
               SizedBox(height: compact ? 16 : 26),
+              // 两个入口（注册 / 忘记密码）的命中区撑到 44px：旧实现只有一行
+              // 13.5px 的文字（实际可点高度 ≈18px），手机端很难点中
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  GestureDetector(
+                  _LinkTap(
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const RegisterPage())),
                     child: Text.rich(TextSpan(children: [
@@ -195,7 +197,7 @@ class _LoginPageState extends State<LoginPage> {
                     ])),
                   ),
                   Container(width: 1, height: 12, margin: const EdgeInsets.symmetric(horizontal: 18), color: MFColors.line2),
-                  GestureDetector(
+                  _LinkTap(
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const ForgotPasswordPage())),
                     child: Text(AppStrings.t('forgot_password'), style: TextStyle(fontSize: 13.5, color: MFColors.txt2)),
@@ -249,6 +251,28 @@ class _Field extends StatelessWidget {
           decoration: InputDecoration(hintText: hint, suffixIcon: trailing),
         ),
       ],
+    );
+  }
+}
+
+/// 登录页底部文字入口：视觉不变，但保证 ≥44px 的命中高度 + 按压反馈。
+class _LinkTap extends StatelessWidget {
+  const _LinkTap({required this.onTap, required this.child});
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Center(widthFactor: 1, heightFactor: 1, child: child),
+        ),
+      ),
     );
   }
 }

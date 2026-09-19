@@ -190,8 +190,16 @@ abstract final class UpdatePrompt {
     required UpdateInfo? info,
   }) async {
     var path = await UpdateService.instance.downloadedInstaller(info);
+    var cancelled = false;
     if (path == null && context.mounted) {
-      path = await _downloadWithProgress(context, info);
+      final r = await _downloadWithProgress(context, info);
+      path = r.path;
+      cancelled = r.cancelled;
+    }
+    if (cancelled) {
+      // 用户主动取消：不再等待下载（下载本身在后台继续，见弹窗里的说明），
+      // 也**不能**当成「下载失败」去弹「是否打开下载页」——那是在反着用户的意思。
+      return;
     }
     if (path == null) {
       // 不支持应用内安装（iOS）或下载失败 → 给下载页兜底
@@ -237,32 +245,63 @@ abstract final class UpdatePrompt {
     (debugExitOverride ?? exit)(0);
   }
 
-  /// 显示进度弹窗并等待下载完成；超时或失败返回 null。
-  static Future<String?> _downloadWithProgress(
+  /// 显示进度弹窗并等待下载完成；超时或失败返回 path=null（cancelled=false）。
+  ///
+  /// 用户点「取消」时立即返回 `cancelled: true` 并关掉弹窗 —— 旧实现在这里
+  /// `barrierDismissible: false` + `PopScope(canPop: false)` 且**没有取消按钮**，
+  /// 一个可能持续几分钟的下载完全无法中止（连「不想装了」都表达不了）。
+  /// 注意：底层下载是 UpdateService 里与「后台预下载」共享的同一份任务，
+  /// 无法从 UI 侧 abort（服务层没有暴露 CancelToken），所以取消的语义是
+  /// **停止等待 + 不安装**，弹窗文案已明确说明，不再有「关不掉」的死锁感。
+  static Future<({String? path, bool cancelled})> _downloadWithProgress(
       BuildContext context, UpdateInfo? info) async {
-    if (info?.downloadUrl == null || info!.downloadUrl!.isEmpty) return null;
-    if (!context.mounted) return null;
+    if (info?.downloadUrl == null || info!.downloadUrl!.isEmpty) {
+      return (path: null, cancelled: false);
+    }
+    if (!context.mounted) return (path: null, cancelled: false);
     final progress = ValueNotifier<double?>(0);
     // 进度以全局 notifier 为准：后台预下载与用户点击可能共用同一份下载，
     // 谁在真正下载都会更新它。
-    void onTick() => progress.value = UpdateService.downloadProgress.value;
+    //
+    // alive 闸门：取消/超时后我们会 dispose 上面这个 notifier，而底层下载
+    // **还在继续**并不断回调 onProgress —— 直接写已 dispose 的 notifier 会在
+    // debug 下抛「used after being disposed」。取消让它成为常见路径。
+    var alive = true;
+    void onTick() {
+      if (alive) progress.value = UpdateService.downloadProgress.value;
+    }
+
     UpdateService.downloadProgress.addListener(onTick);
-    final dialog = _showProgressDialog(context, progress);
+    var cancelled = false;
+    final cancelSignal = Completer<void>();
+    final dialog = _showProgressDialog(context, progress, onCancel: () {
+      if (cancelled) return;
+      cancelled = true;
+      if (!cancelSignal.isCompleted) cancelSignal.complete();
+    });
     final download = UpdateService.instance.downloadInstaller(
       info: info,
-      onProgress: (p) => progress.value = p,
+      onProgress: (p) {
+        if (alive) progress.value = p;
+      },
     );
     String? path;
     try {
-      path = await download.timeout(debugWaitInstallerLimit);
+      // 下载与「取消」赛跑：取消后不再卡在等待上（Future.any 会吞掉落败分支
+      // 之后才到达的错误，不会产生 unhandled async error）
+      path = await Future.any<String?>([
+        download.timeout(debugWaitInstallerLimit),
+        cancelSignal.future.then((_) => null),
+      ]);
     } catch (e) {
       AppLog.error('download installer failed: $e');
     } finally {
+      alive = false;
       UpdateService.downloadProgress.removeListener(onTick);
       progress.dispose();
       dialog.close();
     }
-    return path;
+    return (path: path, cancelled: cancelled && path == null);
   }
 
   /// 打开下载页（直链 = GitHub 上与本机平台/架构匹配的那个安装包）
@@ -310,7 +349,8 @@ abstract final class UpdatePrompt {
   }
 
   static _DialogHandle _showProgressDialog(
-      BuildContext context, ValueListenable<double?> progress) {
+      BuildContext context, ValueListenable<double?> progress,
+      {VoidCallback? onCancel}) {
     final nav = Navigator.of(context, rootNavigator: true);
     var closed = false;
     showDialog<void>(
@@ -335,9 +375,22 @@ abstract final class UpdatePrompt {
                   v == null ? '' : '${(v * 100).clamp(0, 100).toStringAsFixed(0)}%',
                   style: TextStyle(fontSize: 12, color: MFColors.txt3),
                 ),
+                const SizedBox(height: 8),
+                // 取消的真实语义写清楚：不再等待、不会安装；底层下载（与后台
+                // 预下载共享）无法从 UI 侧 abort，所以如实说明而不是假装停掉
+                Text(AppStrings.t('update_cancel_hint'),
+                    style: TextStyle(
+                        fontSize: 11, color: MFColors.txt3, height: 1.5)),
               ],
             ),
           ),
+          actions: [
+            if (onCancel != null)
+              TextButton(
+                onPressed: onCancel,
+                child: Text(AppStrings.t('cancel')),
+              ),
+          ],
         ),
       ),
     );

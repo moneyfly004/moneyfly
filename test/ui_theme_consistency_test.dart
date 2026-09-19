@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:moneyfly/l10n/app_strings.dart';
 import 'package:moneyfly/pages/auth/register_page.dart';
 import 'package:moneyfly/theme/app_theme.dart';
+import 'package:moneyfly/widgets/mf_input.dart';
 import 'package:moneyfly/theme/theme_controller.dart';
 
 void main() {
@@ -72,6 +73,47 @@ void main() {
     }
     expect(offenders, isEmpty,
         reason: '品牌色请用 MFColors.brand.withValues(alpha: ...)，否则 6 套外观里只有 1 套是对的');
+  });
+
+  testWidgets('主按钮禁用态必须看得出来（旧实现和启用态长得一样）', (tester) async {
+    // 启用态：品牌渐变 + 白字
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMoneyFlyTheme(brightness: Brightness.light),
+      home: Scaffold(
+          body: MFPrimaryButton(label: 'GO', onPressed: () {})),
+    ));
+    final on = tester
+        .widget<DecoratedBox>(find.descendant(
+            of: find.byType(MFPrimaryButton), matching: find.byType(DecoratedBox)).first)
+        .decoration as BoxDecoration;
+    expect(on.gradient, isNotNull);
+
+    // 禁用态：无渐变、卡片底色、文字用弱化色 —— 用户一眼能看出不可点
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMoneyFlyTheme(brightness: Brightness.light),
+      home: const Scaffold(body: MFPrimaryButton(label: 'GO')),
+    ));
+    final off = tester
+        .widget<DecoratedBox>(find.descendant(
+            of: find.byType(MFPrimaryButton), matching: find.byType(DecoratedBox)).first)
+        .decoration as BoxDecoration;
+    expect(off.gradient, isNull, reason: '禁用态仍是完整渐变 = 看起来可点，点了没反应');
+    expect(off.color, MFColors.card2);
+    final label = tester.widget<Text>(find.text('GO'));
+    expect(label.style!.color, MFColors.txt3);
+  });
+
+  test('输入框只有一套样式：mfInput 与全局 inputDecorationTheme 一致', () {
+    final deco = mfInput(hint: 'hint', errorText: 'bad');
+    final theme = buildMoneyFlyTheme(brightness: Brightness.light);
+    final t = theme.inputDecorationTheme;
+    expect(deco.fillColor, t.fillColor, reason: '两处填充色不同 = 同一种输入框两个样子');
+    expect(deco.hintStyle!.fontSize, t.hintStyle!.fontSize);
+    expect((deco.enabledBorder! as OutlineInputBorder).borderRadius,
+        (t.enabledBorder! as OutlineInputBorder).borderRadius);
+    // 错误态有专门的样式（旧实现定义了 errorStyle 但没人用）
+    expect(deco.errorText, 'bad');
+    expect(deco.errorStyle, isNotNull);
   });
 
   testWidgets('注册页同意条款：随语言本地化、链接可点、整行可点', (tester) async {
