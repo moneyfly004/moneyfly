@@ -43,6 +43,9 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     // 桌面：内核自己建 TUN 接口 + 推路由（无人注入 fd）；Android：路由由
     // VpnService 全量下发，必须 auto-route:false（见 MihomoConfigBuilder）
     tunAutoRoute: args['tunAutoRoute'] == true,
+    // iOS：fd 由 PacketTunnel 扩展注入（socketpair 用户态桥）→ 生成器要关掉
+    // Darwin 专属的 recvmsgx，否则内核建 TUN 时 setsockopt 失败、直接起不来
+    tunFdInjected: args['tunFdInjected'] == true,
     udpSkipCertVerify: args['udpSkipCertVerify'] != false,
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
     dnsNameservers: (args['dnsNameservers'] as List?)?.cast<String>() ?? const [],
@@ -701,6 +704,9 @@ class ConnectionController extends ChangeNotifier {
         'dnsMode': settings['dnsMode']?.toString() ?? 'auto',
         'tunStack': settings['tunStack']?.toString() ?? 'gvisor',
         'tunAutoRoute': !(Platform.isAndroid || Platform.isIOS),
+        // iOS 走「扩展注入 fd + socketpair 桥」，必须关 recvmsgx（见生成器注释）；
+        // Android 是 Linux 侧 tun 实现、桌面由内核自建接口，都不需要
+        'tunFdInjected': Platform.isIOS,
         'udpSkipCertVerify': settings['udpSkipCertVerify'] != false,
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
         'dnsNameservers': (settings['dnsNameservers'] as List?)?.cast<String>() ?? const [],

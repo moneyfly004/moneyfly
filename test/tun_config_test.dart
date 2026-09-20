@@ -22,6 +22,7 @@ Map<String, dynamic> _build({
   String tunMode = 'off',
   bool bypassLan = true,
   bool tunAutoRoute = false,
+  bool tunFdInjected = false,
 }) =>
     MihomoConfigBuilder.build(
       nodes: [_node()],
@@ -30,6 +31,7 @@ Map<String, dynamic> _build({
       tunMode: tunMode,
       bypassLan: bypassLan,
       tunAutoRoute: tunAutoRoute,
+      tunFdInjected: tunFdInjected,
     );
 
 void main() {
@@ -70,6 +72,30 @@ void main() {
       expect(f['enable'], a['enable']);
       expect(f['auto-route'], a['auto-route']);
       expect(f['route-exclude-address'], a['route-exclude-address']);
+    });
+  });
+
+  group('fd 注入（iOS socketpair 桥）的 Darwin 专属开关', () {
+    // 真机根因：iOS 16.4+ 的 NEPacketTunnelFlow 不再暴露 utun fd，客户端只能用
+    // socketpair 自己造一个；而 mihomo 在 Darwin 上默认 recvmsgx=true，建 TUN 时
+    // 会对 fd 做 utun 专属 setsockopt(UTUN_OPT_MAX_PENDING_PACKETS) → 非 utun fd
+    // 直接失败：「Start TUN listening error: ... operation not supported on socket」。
+    // 表现就是扩展日志停在「调用 MihomelibStart…」之后再无下文、内核永远起不来。
+    test('fd 注入时关掉 recvmsgx，并把 MTU 与扩展下发的 1500 对齐', () {
+      final cfg = _build(tunMode: 'auto', tunFdInjected: true);
+      final tun = cfg['tun'] as Map<String, dynamic>;
+      expect(tun['recvmsgx'], false,
+          reason: '开着 recvmsgx 内核会在建 TUN 时对非 utun fd 做 setsockopt 而启动失败');
+      expect(tun['mtu'], 1500,
+          reason: '不写 MTU 内核按默认 9000 生成报文，超过隧道 MTU 的包会被丢弃');
+    });
+
+    test('非 fd 注入（Android / 桌面）不写这些 Darwin 专属键', () {
+      final cfg = _build(tunMode: 'auto', tunFdInjected: false);
+      final tun = cfg['tun'] as Map<String, dynamic>;
+      expect(tun.containsKey('recvmsgx'), isFalse,
+          reason: 'Android 是 Linux 侧实现、桌面由内核自建接口，都该用内核默认值');
+      expect(tun.containsKey('mtu'), isFalse);
     });
   });
 }

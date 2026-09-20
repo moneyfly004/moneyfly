@@ -1,0 +1,1 @@
+20b92e473c89b92efaa11ff5a9b1774174b982c9aa3b13ef1e64ad5e35d1e7c0  dist-ios/MoneyFly-ios-test.ipa

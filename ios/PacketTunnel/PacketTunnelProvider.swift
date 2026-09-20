@@ -456,9 +456,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// - 桥：iOS 16.4+ 的 `NEVirtualInterface` 后端不再暴露 fd（本机实测），
     ///   用 socketpair 自己搬运数据包。
     private func acquireKernelFd() throws -> (fd: Int32, bridge: PacketBridge?) {
-        // 直连只等 1.5s：真机实测这个版本上 `_socket` 恒为 nil，等久了只是白拖慢连接；
-        // 但其它 iOS 版本上它可能一次就成（省掉一次用户态拷贝），所以仍值得一试
-        if let fd = try? tunnelFileDescriptor(timeout: 1.5) {
+        // 直连只做一次短探测（0.5s）：真机实测 iOS 16.6.1 上 `_socket` 恒为 nil，
+        // 等久了只是白拖慢连接；但其它 iOS 版本上它可能一次就成（省掉一次用户态拷贝）
+        if let fd = try? tunnelFileDescriptor(timeout: 0.5) {
             return (fd, nil)
         }
         TunnelDiag.log("直连 fd 不可得 → 改用 socketpair 用户态桥（只用文档 API）")

@@ -66,6 +66,20 @@ class MihomoConfigBuilder {
     /// 原生 VpnService 全量下发，非 root 不改路由表）。由调用方按平台传入，
     /// 生成器保持纯函数、便于测试。
     bool tunAutoRoute = false,
+    /// TUN 的 fd 是否由**外部注入**（Android VpnService / iOS PacketTunnel 扩展）。
+    ///
+    /// iOS 上必须为 true：那边的 fd 是我们用 `socketpair` 做用户态桥造的
+    /// （iOS 16.4+ 的 `NEPacketTunnelFlow` 不再暴露 utun fd，详见
+    /// ios/PacketTunnel/PacketTunnelProvider.swift 的 PacketBridge 说明）。
+    /// 而 mihomo 在 Darwin 上**默认 `recvmsgx: true`**，它会在建 TUN 时对 fd 做
+    /// utun 专属的 `setsockopt(UTUN_OPT_MAX_PENDING_PACKETS)`，非 utun fd 会直接
+    /// 失败 —— 实测（本地同版本内核复现）：
+    ///   Start TUN listening error: configure tun interface:
+    ///   SetsockoptInt UTUN_OPT_MAX_PENDING_PACKETS: operation not supported on socket
+    /// 真机表现就是扩展日志停在「调用 MihomelibStart…」之后、内核永远起不来。
+    /// 关掉它（`recvmsgx: false`）后本地端到端验证通过：灌进去的 DNS 查询被内核
+    /// 劫持并原样回包。
+    bool tunFdInjected = false,
   }) {
     final secret = clashApiSecret ?? generateSecret();
     final mode = smartMode ? 'rule' : 'global';
@@ -289,6 +303,12 @@ class MihomoConfigBuilder {
         'auto-route': tunAutoRoute,
         'auto-detect-interface': true,
         'dns-hijack': ['any:53'],
+        // fd 注入场景（iOS 的 socketpair 桥）：关掉 Darwin 专属的 recvmsgx。
+        // 见 tunFdInjected 的说明 —— 开着它内核会做 utun 专属 setsockopt 而启动失败。
+        if (tunFdInjected) 'recvmsgx': false,
+        // MTU 与 PacketTunnel 扩展下发的网络参数（1500）对齐：不写的话内核按默认
+        // 9000 生成/重组报文，超过隧道 MTU 的包会被丢弃（大流量场景表现怪异）
+        if (tunFdInjected) 'mtu': 1500,
         // 局域网在**路由层**就排除，与下面 bypassLan 的直连规则保持同一语义。
         // 只在规则层直连（旧行为）时，局域网包仍要先被 TUN 抓进去再靠规则绕回，
         // 对 NAS / 网络打印机 / mDNS、SSDP 局域网发现、局域网联机这类场景会变慢
