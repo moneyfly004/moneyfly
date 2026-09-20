@@ -99,6 +99,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       # 与 ci.yml 同一套命令（本 job 无内核二进制，e2e 组本来就会 skip；真实内核
       # e2e 由 Windows / macOS arm64 / macOS x64 job 负责，那些平台才有内核）
       - name: 校验
@@ -131,6 +133,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（真实内核 e2e 用）
         run: |
           mkdir -p build/mihomo
@@ -168,6 +172,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（真实内核 e2e 用）
         shell: bash
         run: |
@@ -216,6 +222,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（compatible 版：Rosetta 不支持 AMD64 v3）
         run: |
           mkdir -p build/mihomo
@@ -257,6 +265,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
           ls -lh assets/rules/
 
       # ---- libmihomo.aar：从 mihomo-lib 发布仓库下载（官方源码预编译，无需每次现编）。
@@ -326,6 +336,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
         run: |
           mkdir -p android/app/libs
@@ -377,6 +389,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
           ls -lh assets/rules/
 
       # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
@@ -469,6 +483,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（测试与内嵌共用同一份 arm64 内核）
         run: |
           mkdir -p build/mihomo
@@ -538,6 +554,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（测试与内嵌共用同一份 compatible 内核）
         run: |
           mkdir -p build/mihomo
@@ -602,6 +620,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
       - name: 下载 mihomo 内核（测试用，arm64）
         run: |
           mkdir -p build/mihomo
@@ -690,6 +710,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
           ls -lh assets/rules/
       - name: 下载 iOS 内核框架（Mihomelib.xcframework）
         run: bash tool/fetch_mihomo_ios.sh "$MIHOMO_VERSION"

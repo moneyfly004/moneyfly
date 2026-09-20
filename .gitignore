@@ -54,6 +54,8 @@ mihomo-bin/
 # 本地开发用 tool/fetch_geodata.sh 获取）
 assets/rules/*.dat
 assets/rules/*.mmdb
+# .mrs 规则集（iOS 扩展用；同样构建期下载，见 tool/fetch_geodata.sh）
+assets/rules/*.mrs
 
 # ---- iOS ----
 # 内核框架 418MB，不入库（构建前由 tool/fetch_mihomo_ios.sh 下载）

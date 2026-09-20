@@ -10,6 +10,7 @@
 		04868DD02653FC657A6B5802 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 166DC5986D71C0C7A3F9469B /* Pods_Runner.framework */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		1CBF6E13E7A9F091707FB9EB /* geosite.dat in Resources */ = {isa = PBXBuildFile; fileRef = 08730C43AE745910B370A019 /* geosite.dat */; };
+		617397071FF04104B29794B4 /* cn.mrs in Resources */ = {isa = PBXBuildFile; fileRef = 2CAE2461BF76F127ADC9DD8B /* cn.mrs */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3892CA1D508932053D842EC3 /* country.mmdb in Resources */ = {isa = PBXBuildFile; fileRef = 520A696CBC62475E03BF4AB4 /* country.mmdb */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
@@ -71,6 +72,7 @@
 /* Begin PBXFileReference section */
 		045F2B0B9F54757013672196 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		08730C43AE745910B370A019 /* geosite.dat */ = {isa = PBXFileReference; includeInIndex = 1; path = geosite.dat; sourceTree = "<group>"; };
+		2CAE2461BF76F127ADC9DD8B /* cn.mrs */ = {isa = PBXFileReference; includeInIndex = 1; path = cn.mrs; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		1591EF3DD4D8C6BE08899DE1 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 			children = (
 				520A696CBC62475E03BF4AB4 /* country.mmdb */,
 				08730C43AE745910B370A019 /* geosite.dat */,
+				2CAE2461BF76F127ADC9DD8B /* cn.mrs */,
 			);
 			name = GeoData;
 			path = ../assets/rules;
@@ -386,6 +389,7 @@
 			files = (
 				3892CA1D508932053D842EC3 /* country.mmdb in Resources */,
 				1CBF6E13E7A9F091707FB9EB /* geosite.dat in Resources */,
+				617397071FF04104B29794B4 /* cn.mrs in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

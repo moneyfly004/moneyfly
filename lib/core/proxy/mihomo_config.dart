@@ -68,6 +68,20 @@ class MihomoConfigBuilder {
     bool tunAutoRoute = false,
     /// TUN 的 fd 是否由**外部注入**（Android VpnService / iOS PacketTunnel 扩展）。
     ///
+    /// iOS 专用：用 `.mrs` 规则集（`RULE-SET,cn`）替代 `GEOSITE,cn`。
+    ///
+    /// 为什么必须换：mihomo 加载 `GEOSITE,cn` 会用 succinct 匹配器把 11 万条域名
+    /// 建成内存索引，**启动期一次申请约 74MB 堆**（本机实测：HeapAlloc 峰值 74MB、
+    /// 进程 RSS 167MB、耗时 146ms）。iOS 的 PacketTunnel 扩展内存上限只有几十 MB
+    /// —— 真机表现就是内核刚起 ~200ms 被系统直接杀掉，一行日志都没有（连
+    /// stderr 都是空的），App 侧只能看到「内核启动超时」。
+    ///
+    /// `.mrs` 是 mihomo 自己的规则集格式（zstd + 可直接查表，无需建索引）：
+    /// 同样 11 万条域名，实测堆 +2MB、启动 15ms、RSS 50MB（规则数 111021，与
+    /// GEOSITE,cn 的 110984 条等价）。文件缺失时该规则不匹配 → 退化为全代理，
+    /// 内核照常启动（已实测），不会把连接搞挂。
+    bool useMrsRuleSet = false,
+
     /// iOS 上必须为 true：那边的 fd 是我们用 `socketpair` 做用户态桥造的
     /// （iOS 16.4+ 的 `NEPacketTunnelFlow` 不再暴露 utun fd，详见
     /// ios/PacketTunnel/PacketTunnelProvider.swift 的 PacketBridge 说明）。
@@ -196,9 +210,10 @@ class MihomoConfigBuilder {
         'IP-CIDR,172.16.0.0/12,DIRECT',
         'IP-CIDR,192.168.0.0/16,DIRECT',
       ],
-      // 智能模式：国内直连（离线 country.mmdb / geosite.dat；缺失则降级全代理）
+      // 智能模式：国内直连（离线 country.mmdb / geosite.dat / cn.mrs；缺失则降级全代理）
+      // iOS 走 RULE-SET,cn（.mrs 规则集）而不是 GEOSITE,cn —— 见 useMrsRuleSet
       if (geoReady) ...[
-        'GEOSITE,cn,DIRECT',
+        if (useMrsRuleSet) 'RULE-SET,cn,DIRECT' else 'GEOSITE,cn,DIRECT',
         'GEOIP,CN,DIRECT',
       ],
       // 其余走代理（select 组，App 通过 Clash API 热切换选中）
@@ -270,6 +285,18 @@ class MihomoConfigBuilder {
           'enhanced-mode': 'redir-host',
         'nameserver': nameservers,
       },
+
+      // ===== 规则集（iOS：.mrs，避免 GEOSITE 的 74MB 建索引开销）=====
+      if (useMrsRuleSet && geoReady)
+        'rule-providers': {
+          'cn': {
+            'type': 'file',
+            'behavior': 'domain',
+            'format': 'mrs',
+            // 相对路径由内核按 homeDir 解析（扩展启动时把 cn.mrs 放到自己的 homeDir）
+            'path': 'cn.mrs',
+          },
+        },
 
       // ===== 节点 =====
       'proxies': proxies,

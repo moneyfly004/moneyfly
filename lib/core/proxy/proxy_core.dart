@@ -46,6 +46,8 @@ Map<String, dynamic> _buildConfigInIsolate(Map<String, dynamic> args) {
     // iOS：fd 由 PacketTunnel 扩展注入（socketpair 用户态桥）→ 生成器要关掉
     // Darwin 专属的 recvmsgx，否则内核建 TUN 时 setsockopt 失败、直接起不来
     tunFdInjected: args['tunFdInjected'] == true,
+    // iOS：GEOSITE,cn 的建索引要 ~74MB 堆 → 换 .mrs 规则集（实测 +2MB）
+    useMrsRuleSet: args['useMrsRuleSet'] == true,
     udpSkipCertVerify: args['udpSkipCertVerify'] != false,
     bypassDomains: (args['bypassDomains'] as List?)?.cast<String>() ?? const [],
     dnsNameservers: (args['dnsNameservers'] as List?)?.cast<String>() ?? const [],
@@ -707,6 +709,9 @@ class ConnectionController extends ChangeNotifier {
         // iOS 走「扩展注入 fd + socketpair 桥」，必须关 recvmsgx（见生成器注释）；
         // Android 是 Linux 侧 tun 实现、桌面由内核自建接口，都不需要
         'tunFdInjected': Platform.isIOS,
+        // iOS：用 .mrs 规则集替代 GEOSITE,cn —— 后者启动期要 ~74MB 堆，
+        // 超过 iOS 扩展内存上限会被系统直接杀掉（见 useMrsRuleSet 注释）
+        'useMrsRuleSet': Platform.isIOS,
         'udpSkipCertVerify': settings['udpSkipCertVerify'] != false,
         'bypassDomains': (settings['bypassDomains'] as List?)?.cast<String>() ?? const [],
         'dnsNameservers': (settings['dnsNameservers'] as List?)?.cast<String>() ?? const [],

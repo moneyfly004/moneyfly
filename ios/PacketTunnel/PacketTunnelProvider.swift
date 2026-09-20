@@ -1072,15 +1072,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// 把随扩展 bundle 分发的 geo 数据复制进工作目录（仅缺失时，幂等）。
     /// 内核配置里 geo-auto-update=false，必须本地就位，否则 GEOSITE/GEOIP
     /// 规则会让内核对 GitHub 发起下载（国内直连被墙 → 启动卡死）。
+    /// 内核启动前把离线数据落到它自己的 homeDir（仅缺文件或大小变化时才复制）。
+    ///
+    /// cn.mrs 是 iOS 智能分流的**关键**：GEOSITE,cn 的 succinct 匹配器启动期要
+    /// 申请约 74MB 堆（本机实测 HeapAlloc 峰值 74MB / RSS 167MB），而 iOS 网络扩展
+    /// 的内存上限只有几十 MB —— 真机表现就是内核刚起 200ms 就被系统杀掉，且日志一
+    /// 行都没有。.mrs 是 zstd+可直接查表的格式（实测规则数 111021、堆 +2MB），
+    /// 用 RULE-SET,cn 替代 GEOSITE,cn 后启动从 146ms/167MB 降到 15ms/50MB。
     private func seedGeoFiles(into home: String) {
         let fm = FileManager.default
-        for name in ["country.mmdb", "geosite.dat"] {
+        for name in ["country.mmdb", "geosite.dat", "cn.mrs"] {
             let dest = (home as NSString).appendingPathComponent(name)
             if fm.fileExists(atPath: dest),
                let attrs = try? fm.attributesOfItem(atPath: dest),
                let size = attrs[.size] as? Int, size > 0 {
-                TunnelDiag.log("geo \(name) 已在位（\(size)B）")
-                continue
+                let srcSize = Bundle.main.path(forResource: name, ofType: nil)
+                    .flatMap { (try? fm.attributesOfItem(atPath: $0))?[.size] as? Int }
+                if srcSize == nil || srcSize == size {
+                    TunnelDiag.log("geo \(name) 已在位（\(size)B）")
+                    continue
+                }
+                TunnelDiag.log("geo \(name) 版本变化（\(size)B → \(srcSize!)B），覆盖")
             }
             guard let src = Bundle.main.path(forResource: name, ofType: nil) else {
                 TunnelDiag.log("✗ geo 缺失于扩展 bundle: \(name)（规则将降级）")
