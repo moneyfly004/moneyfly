@@ -1,5 +1,7 @@
 import Foundation
 import NetworkExtension
+import ObjectiveC
+import UIKit
 import os.log
 
 #if canImport(Mihomelib)
@@ -104,6 +106,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?,
                               completionHandler: @escaping (Error?) -> Void) {
         TunnelDiag.log("=== startTunnel 进入 ===")
+        TunnelDiag.log("系统=\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)"
+            + " 机型=\(Self.hardwareModel())")
         TunnelDiag.log("App Group 容器: \(TunnelDiag.appGroupPath ?? "<不可用>")")
 
         // 立刻把「扩展已被系统拉起」这件事写进共享文件：即使后面任何一步失败，
@@ -289,31 +293,258 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         #endif
     }
 
-    /// 取隧道 fd。
+    private struct FdHit {
+        let fd: Int32
+        let source: String
+    }
+
+    /// `packetFlow` 上可能挂着底层 socket fd 的 keyPath（按历史/版本从常用到冷门）
+    private static let flowFdPaths = [
+        "socket.fileDescriptor",
+        "socket.fd",
+        "socket._fileDescriptor",
+        "socket.fileDescriptor.fileDescriptor",
+        "_socket.fileDescriptor",
+        "_socket.fd",
+        "socket.socket.fileDescriptor",
+        "tunnelFlow.socket.fileDescriptor",
+        "socket.fileDescriptor.fileDescriptor.fileDescriptor",
+    ]
+
+    /// 少数版本把 fd 挂在 provider 自己身上
+    private static let providerFdPaths = [
+        "tunnelFileDescriptor",
+        "_tunnelFileDescriptor",
+        "socket.fileDescriptor",
+        "packetFlow.socket.fileDescriptor",
+    ]
+
+    /// 取隧道 fd：**轮询 + 多路径 + 运行时兜底 + 失败时打印真实结构**。
     ///
-    /// `NEPacketTunnelFlow` 没有公开的 fd 访问器，业界（mihomo/sing-box 系 iOS
-    /// 客户端）统一用 KVC 取底层 socket 的 fd。不同 iOS 版本可用的 keyPath 不完全
-    /// 一致，这里逐个尝试并**记录哪一个成功**，全失败则给出可诊断错误。
-    /// 注：用私有 API，因此仅适用于侧载（TrollStore / 自签），不上 App Store。
-    private func tunnelFileDescriptor() throws -> Int32 {
-        let paths = [
-            "socket.fileDescriptor",
-            "socket.fd",
-            "socket.fileDescriptor.fileDescriptor",
-        ]
-        for p in paths {
-            let value = packetFlow.value(forKeyPath: p)
-            if let n = value as? NSNumber, n.int32Value > 0 {
-                TunnelDiag.log("fd 来源 keyPath=\(p) 值=\(n.int32Value)")
-                return n.int32Value
+    /// 为什么不能像旧版那样「取一次、三条 KVC、失败就报错」：
+    /// 真机日志（TrollStore / iOS，v2.2.10）显示
+    ///     [320ms] setTunnelNetworkSettings 成功
+    ///     [321ms] socket.fileDescriptor / socket.fd / socket.fileDescriptor.fileDescriptor 全 nil
+    ///     [322ms] ✗ 内核启动失败: 无法获取隧道 fd
+    /// 三条路径都返回 nil 而**没有抛 NSUnknownKeyException**，说明 `_socket` 这个
+    /// ivar 是存在的、只是**值为 nil** —— `NEPacketTunnelFlow` 内部那个 socket 由
+    /// 系统在隧道真正 up 之后才**懒创建**，而我们比它早了 1ms 去取。
+    ///
+    /// 现在：轮询重试（默认 6s）→ 仍取不到就 kick 一次 `readPackets`（**文档 API**，
+    /// 会迫使内部 socket 建立）→ 再取不到就把 packetFlow / provider 的**真实 ivar
+    /// 结构**写进诊断轨迹，下一版可按图索骥，而不是继续猜。
+    ///
+    /// 注：取 fd 本身用私有 KVC，因此仅适用于侧载（TrollStore / 自签），不上 App Store。
+    private func tunnelFileDescriptor(timeout: TimeInterval = 6) throws -> Int32 {
+        let started = Date()
+        var attempt = 0
+        var kicked = false
+        while Date().timeIntervalSince(started) < timeout {
+            attempt += 1
+            if let hit = probeTunnelFd() {
+                TunnelDiag.log("取得隧道 fd=\(hit.fd)（来源=\(hit.source)，第 \(attempt) 次尝试，"
+                    + "耗时 \(Int(Date().timeIntervalSince(started) * 1000))ms）")
+                return hit.fd
             }
-            if let i = value as? Int32, i > 0 {
-                TunnelDiag.log("fd 来源 keyPath=\(p) 值=\(i)")
-                return i
+            if !kicked && attempt >= 3 {
+                kicked = true
+                TunnelDiag.log("fd 仍为空 → kick packetFlow.readPackets 强制建立内部 socket")
+                kickPacketFlow()
             }
-            TunnelDiag.log("keyPath=\(p) 未取到 fd（值=\(String(describing: value))）")
+            Thread.sleep(forTimeInterval: 0.12)
         }
-        throw tunnelError("无法获取隧道 fd（packetFlow KVC 全部失败）")
+        dumpTunnelStructure()
+        throw tunnelError("无法获取隧道 fd（已轮询 \(attempt) 次 / \(Int(timeout))s；"
+            + "packetFlow 与 provider 的真实结构已写入诊断轨迹）")
+    }
+
+    /// 单次探测：先试已知 keyPath，再用 Objective-C runtime 兜底找 fd 形状的 ivar
+    private func probeTunnelFd() -> FdHit? {
+        for p in Self.flowFdPaths {
+            if let fd = Self.intValue(of: packetFlow, keyPath: p), fd > 2 {
+                return FdHit(fd: fd, source: "packetFlow.\(p)")
+            }
+        }
+        for p in Self.providerFdPaths {
+            if let fd = Self.intValue(of: self, keyPath: p), fd > 2 {
+                return FdHit(fd: fd, source: "provider.\(p)")
+            }
+        }
+        if let fd = Self.runtimeFindFd(in: packetFlow, depth: 0) {
+            return FdHit(fd: fd, source: "runtime(packetFlow)")
+        }
+        if let fd = Self.runtimeFindFd(in: self, depth: 0) {
+            return FdHit(fd: fd, source: "runtime(provider)")
+        }
+        return nil
+    }
+
+    /// 用**文档 API** `readPackets` 踢一脚：内部 socket 只有在第一次读包时才会
+    /// 真正建立（这就是我们 1ms 取不到 fd 的原因）。
+    /// 代价：这一下可能吃掉极少量「刚进隧道」的包（TCP 会重传、DNS 会重试），
+    /// 属于一次性代价，且只在轮询 3 次仍失败时才做。
+    private func kickPacketFlow() {
+        packetFlow.readPackets { _, _ in
+            TunnelDiag.log("kick 完成（readPackets 返回，socket 应已建立）")
+        }
+    }
+
+    // MARK: - 安全取属性（绝不因为 key 不存在而崩扩展）
+
+    /// 该 ivar 是否适合走 KVC（对象 / 数字 / 布尔）。
+    ///
+    /// struct（类型编码 `{...}`）、数组 `[...]`、联合与位域 `(...)` 走 KVC 会抛
+    /// `NSUnknownKeyException` —— Swift 捕获不到，会**直接把扩展干崩**。
+    /// 结构 dump 会遍历所有 ivar，所以必须先按类型编码过滤。
+    private static func isKvcSafeIvar(_ ivar: Ivar) -> Bool {
+        guard let encPtr = ivar_getTypeEncoding(ivar),
+              let first = String(cString: encPtr).first else { return false }
+        return "@cislqCISLQfdB".contains(first)
+    }
+
+    /// 是否存在该 ivar（含沿父类链查找 `_name` / `name` 两种写法）
+    private static func hasIvar(_ obj: AnyObject, _ name: String) -> Bool {
+        var cls: AnyClass? = object_getClass(obj)
+        while let c = cls {
+            var count: UInt32 = 0
+            if let ivars = class_copyIvarList(c, &count) {
+                for i in 0..<Int(count) {
+                    if let n = ivar_getName(ivars[i]), String(cString: n) == name {
+                        free(ivars)
+                        return true
+                    }
+                }
+                free(ivars)
+            }
+            cls = class_getSuperclass(c)
+        }
+        return false
+    }
+
+    /// 读一段属性路径：逐段检查「有 getter 或有同名 ivar」后再取值。
+    /// `value(forKeyPath:)` 对完全不存在的 key 会抛 NSUnknownKeyException（Swift
+    /// 捕获不到，直接把扩展干崩），所以这里必须自己逐段检查。
+    private static func safeGet(_ obj: AnyObject, _ segment: String) -> Any? {
+        if obj.responds(to: NSSelectorFromString(segment)) {
+            return obj.value(forKey: segment)
+        }
+        let candidates = ["_\(segment)", segment]
+        if candidates.contains(where: { hasIvar(obj, $0) }) {
+            return obj.value(forKey: segment)
+        }
+        return nil
+    }
+
+    /// 取整型属性（支持 a.b.c 路径）
+    private static func intValue(of obj: AnyObject, keyPath: String) -> Int32? {
+        var current: AnyObject? = obj
+        for seg in keyPath.split(separator: ".") {
+            guard let cur = current else { return nil }
+            guard let next = safeGet(cur, String(seg)) else { return nil }
+            current = next as AnyObject
+        }
+        guard let v = current else { return nil }
+        if let n = v as? NSNumber { return n.int32Value }
+        if let i = v as? Int { return Int32(i) }
+        if let i = v as? Int32 { return i }
+        if let i = v as? Int64 { return Int32(i) }
+        if let i = v as? UInt32 { return Int32(i) }
+        return nil
+    }
+
+    /// runtime 兜底：递归找「名字像 fd、值也像 fd」的 ivar（跨 iOS 版本自适应）。
+    /// 名字优先匹配 fd/fileDescriptor/socket，避免误取无关整型。
+    private static func runtimeFindFd(in obj: AnyObject, depth: Int) -> Int32? {
+        guard depth <= 3 else { return nil }
+        var cls: AnyClass? = object_getClass(obj)
+        var visited = 0
+        while let c = cls, visited < 6 {
+            visited += 1
+            var count: UInt32 = 0
+            if let ivars = class_copyIvarList(c, &count) {
+                for i in 0..<Int(count) {
+                    guard let namePtr = ivar_getName(ivars[i]) else { continue }
+                    let name = String(cString: namePtr)
+                    let lower = name.lowercased()
+                    let looksLikeFd = lower.contains("fd") || lower.contains("filedescriptor")
+                        || lower.contains("socket") || lower.contains("tunnel")
+                    guard looksLikeFd, isKvcSafeIvar(ivars[i]) else { continue }
+                    if let v = safeGet(obj, name.hasPrefix("_") ? String(name.dropFirst()) : name) {
+                        if let n = v as? NSNumber, n.int32Value > 2 { free(ivars); return n.int32Value }
+                        if let n = v as? Int, n > 2 { free(ivars); return Int32(n) }
+                        let child = v as AnyObject
+                        if String(describing: type(of: child)).hasPrefix("NS") == false
+                            || String(describing: type(of: child)).hasPrefix("NE") {
+                            if let fd = runtimeFindFd(in: child, depth: depth + 1) {
+                                free(ivars)
+                                return fd
+                            }
+                        }
+                    }
+                }
+                free(ivars)
+            }
+            cls = class_getSuperclass(c)
+        }
+        return nil
+    }
+
+    /// 全部策略失败时，把真实结构写进诊断轨迹（下一版据此精确取 fd）
+    private func dumpTunnelStructure() {
+        TunnelDiag.log("—— packetFlow 结构（取不到 fd 时供定位）——")
+        TunnelDiag.log(Self.describe(packetFlow, depth: 0))
+        TunnelDiag.log("—— provider 结构 ——")
+        TunnelDiag.log(Self.describe(self, depth: 0))
+    }
+
+    private static func describe(_ obj: AnyObject, depth: Int) -> String {
+        guard depth <= 2 else { return "…" }
+        let indent = String(repeating: "  ", count: depth)
+        var lines = ["\(indent)\(type(of: obj)) {"]
+        var cls: AnyClass? = object_getClass(obj)
+        var visited = 0
+        while let c = cls, visited < 4 {
+            visited += 1
+            var count: UInt32 = 0
+            if let ivars = class_copyIvarList(c, &count) {
+                for i in 0..<Int(count) {
+                    guard let namePtr = ivar_getName(ivars[i]) else { continue }
+                    let name = String(cString: namePtr)
+                    let type = ivar_getTypeEncoding(ivars[i]).map { String(cString: $0) } ?? "?"
+                    let plain = name.hasPrefix("_") ? String(name.dropFirst()) : name
+                    var valueDesc = "<非 KVC 类型，跳过取值>"
+                    if isKvcSafeIvar(ivars[i]), let v = safeGet(obj, plain) {
+                        valueDesc = "<取不到>"
+                        if let n = v as? NSNumber {
+                            valueDesc = "\(n)"
+                        } else {
+                            valueDesc = String(describing: v)
+                            if valueDesc.count > 80 { valueDesc = String(valueDesc.prefix(80)) + "…" }
+                            lines.append("\(indent)  \(name): \(type) = \(valueDesc)")
+                            lines.append(describe(v as AnyObject, depth: depth + 1))
+                            continue
+                        }
+                    } else if isKvcSafeIvar(ivars[i]) {
+                        valueDesc = "<取不到>"
+                    }
+                    lines.append("\(indent)  \(name): \(type) = \(valueDesc)")
+                }
+                free(ivars)
+            }
+            cls = class_getSuperclass(c)
+        }
+        lines.append("\(indent)}")
+        return lines.joined(separator: "\n")
+    }
+
+    /// 机型标识（诊断用：不同机型/系统版本的私有结构可能不同）
+    private static func hardwareModel() -> String {
+        var info = utsname()
+        uname(&info)
+        let mirror = Mirror(reflecting: info.machine)
+        return mirror.children.reduce(into: "") { acc, el in
+            if let v = el.value as? Int8, v != 0 { acc.append(Character(UnicodeScalar(UInt8(v)))) }
+        }
     }
 
     /// 排除本机/内网段，避免 TUN 接管本机与局域网流量
