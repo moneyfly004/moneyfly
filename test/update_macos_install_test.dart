@@ -114,6 +114,8 @@ void main() {
 
   group('macOS 就地安装（挂载 → 复制 → 替换 → 起新版）', () {
     test('挂载失败 = 安装包损坏（半截下载最常见的形态）', () async {
+      // 只在 macOS 有意义：installMacDmg 在别的平台直接返回 failed（不是 damaged）
+      if (!Platform.isMacOS) return;
       final dmg = File('${tmp.path}/broken.dmg')..writeAsStringSync('not a dmg');
       UpdateService.debugAppBundlePath = '${tmp.path}/Apps/MoneyFly.app';
       UpdateService.debugRunProcess = (exe, args) async {
@@ -128,6 +130,7 @@ void main() {
     });
 
     test('正常流程：新的 .app 就位、旧的让位、并启动新版本', () async {
+      if (!Platform.isMacOS) return; // 同上：这条验证的是 macOS 就地安装
       final calls = <String>[];
       final appDir = Directory('${tmp.path}/Apps/MoneyFly.app')
         ..createSync(recursive: true);
