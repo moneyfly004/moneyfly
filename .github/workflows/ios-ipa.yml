@@ -1,0 +1,88 @@
+name: iOS IPA (测试包)
+
+# 只构建 iOS IPA，用于真机（TrollStore）调试迭代：
+#   · 不碰 Android / Windows / macOS，几分钟出包；
+#   · 产物覆盖发布到固定的 `ios-test` 预发布，手机浏览器可直接下载安装：
+#     https://github.com/moneyfly004/moneyfly/releases/download/ios-test/MoneyFly-ios-test.ipa
+#   · 正式版本仍走 release.yml（tag 触发，全平台 + Releases）。
+#
+# 触发：Actions 页面手动 Run workflow（workflow_dispatch）。
+
+on:
+  workflow_dispatch:
+
+# 连续触发时只保留最新一次
+concurrency:
+  group: ios-ipa-test
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+  MIHOMO_VERSION: '1.19.30'
+
+jobs:
+  ios:
+    name: iOS IPA (测试)
+    runs-on: macos-14
+    timeout-minutes: 25
+    permissions:
+      contents: write # 需要写 ios-test 这个预发布来放测试包
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 下载离线分流数据（iOS 随扩展 bundle 分发）
+        run: |
+          mkdir -p assets/rules
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
+            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
+          ls -lh assets/rules/
+      - name: 下载 iOS 内核框架（Mihomelib.xcframework）
+        run: bash tool/fetch_mihomo_ios.sh "$MIHOMO_VERSION"
+      - name: 自检扩展 target 已就位
+        run: |
+          grep -q "PacketTunnel" ios/Runner.xcodeproj/project.pbxproj \
+            || { echo "error: 缺少 PacketTunnel 扩展 target"; exit 1; }
+      - name: 构建 iOS release（不签名）
+        run: flutter build ios --release --no-codesign
+      - name: 组装 IPA（ad-hoc 签名 + 内嵌 entitlements；装到 ios-test）
+        run: |
+          set -e
+          APP="build/ios/iphoneos/Runner.app"
+          [ -d "$APP/PlugIns/PacketTunnel.appex" ] || {
+            echo "error: Runner.app 内未嵌入 PacketTunnel.appex"; ls -la "$APP"; exit 1; }
+          rm -rf Payload dist; mkdir -p Payload dist
+          cp -R "$APP" Payload/
+          codesign --force -s - \
+            --entitlements ios/PacketTunnel/PacketTunnel.entitlements \
+            Payload/Runner.app/PlugIns/PacketTunnel.appex
+          codesign --force -s - \
+            --entitlements ios/Runner/Runner.entitlements \
+            Payload/Runner.app
+          # 固定文件名：手机上永远用同一个 URL 下载，省得每次找新版号
+          zip -qry "dist/MoneyFly-ios-test.ipa" Payload
+          # 版本号写进随包的一份说明，便于确认装的是哪一版
+          V=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "pubspec version: $V" > dist/VERSION.txt
+          echo "commit: $(git rev-parse --short HEAD)" >> dist/VERSION.txt
+          (cd dist && shasum -a 256 MoneyFly-ios-test.ipa > SHA256SUMS-ios-test.txt && cat VERSION.txt && ls -lh)
+      - name: 覆盖发布到 ios-test（预发布，仅供调试）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ios-test >/dev/null 2>&1 || gh release create ios-test \
+            --prerelease --title "iOS 测试包（TrollStore 调试用）" \
+            --notes "每次手动触发覆盖同名 IPA，仅供真机调试，勿分发给用户。"
+          gh release upload ios-test dist/MoneyFly-ios-test.ipa dist/SHA256SUMS-ios-test.txt dist/VERSION.txt --clobber
+          echo "下载地址：https://github.com/moneyfly004/moneyfly/releases/download/ios-test/MoneyFly-ios-test.ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moneyfly-ios-test
+          path: dist/
