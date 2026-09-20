@@ -81,6 +81,109 @@ enum TunnelDiag {
     }
 }
 
+/// **用户态桥**：把 `packetFlow`（文档 API）与内核要读写的 fd 对接起来。
+///
+/// 为什么需要它（真机实测结论，v2.2.13 / iOS 16.6.1 / iPhone14,3）：
+///   `NEPacketTunnelFlow` 的 `_socket` ivar 类型是 `NSFileHandle` 且**恒为 nil**，
+///   也就是说这个 iOS 版本上 flow 走的是新的 `NEVirtualInterface` 后端，
+///   **根本不暴露 utun 的 fd** —— 社区常见的
+///   `packetFlow.value(forKeyPath: "socket.fileDescriptor")` 在这里无解
+///   （我们把 keyPath 扩到 13 条、轮询 49 次、还 kick 了 readPackets，全是 nil）。
+///
+/// 桥的做法：`socketpair(AF_UNIX, SOCK_DGRAM)` 造一对 fd，把其中一端交给内核，
+/// 另一端由本类在两个方向上搬运数据包：
+///   App → 隧道：`packetFlow.readPackets` → 加 4 字节地址族头 → `send()` 给内核
+///   内核 → App：`recv()` 到 4 字节头 + IP 包 → 去头 → `packetFlow.writePackets`
+/// 4 字节头是 sing-tun 在 Darwin 上的既定格式（`tun_darwin.go`：
+/// `packetHeader4 = {0,0,0,AF_INET}`、`PacketOffset = 4`），已核对源码。
+///
+/// 好处：只用**文档 API + BSD socket**，不再依赖任何会随 iOS 版本变化的私有结构。
+/// 代价：多一次用户态拷贝（实测吞吐仍远高于隧道本身带宽需求）。
+final class PacketBridge {
+    private let flow: NEPacketTunnelFlow
+    /// 交给内核读写的那一端
+    let kernelFd: Int32
+    /// 桥自己这一端
+    private let bridgeFd: Int32
+    private var running = true
+    private let queue = DispatchQueue(label: "top.moneyfly.tunnel.bridge")
+    private var outPackets = 0   // App → 内核
+    private var inPackets = 0    // 内核 → App
+    private var dropped = 0
+
+    init?(flow: NEPacketTunnelFlow) {
+        var fds: [Int32] = [0, 0]
+        guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &fds) == 0 else {
+            TunnelDiag.log("✗ socketpair 创建失败 errno=\(errno)")
+            return nil
+        }
+        self.flow = flow
+        self.bridgeFd = fds[0]
+        self.kernelFd = fds[1]
+        // 桥这侧用 poll 等数据，非阻塞写；内核侧由 sing-tun 自己 SetNonblock(false)
+        _ = fcntl(bridgeFd, F_SETFL, O_NONBLOCK)
+        TunnelDiag.log("✓ 用户态桥就绪：内核 fd=\(kernelFd) 桥 fd=\(bridgeFd)")
+    }
+
+    func start() {
+        queue.async { [weak self] in self?.bridgeLoop() }
+        pumpFromFlow()
+    }
+
+    func stop() {
+        running = false
+        close(bridgeFd)
+        close(kernelFd)
+    }
+
+    var stats: String {
+        "桥统计：App→内核 \(outPackets) 包 / 内核→App \(inPackets) 包 / 丢弃 \(dropped)"
+    }
+
+    /// 内核 → App：从桥这一端读「4 字节头 + IP 包」，去头后写回隧道
+    private func bridgeLoop() {
+        var buf = [UInt8](repeating: 0, count: 65_536)
+        while running {
+            var pfd = pollfd(fd: bridgeFd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, 200)
+            if ready <= 0 { continue }
+            let n = recv(bridgeFd, &buf, buf.count, 0)
+            if n > PacketBridge.headerLength {
+                let af = Int32(buf[3])
+                let packet = Data(buf[PacketBridge.headerLength..<Int(n)])
+                inPackets += 1
+                flow.writePackets([packet], withProtocols: [NSNumber(value: af)])
+                if inPackets % 50 == 0 { TunnelDiag.log(stats) }
+            } else if n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR {
+                TunnelDiag.log("✗ 桥 recv 失败 errno=\(errno)")
+                break
+            }
+        }
+    }
+
+    /// App → 内核：读隧道里的包，加 4 字节地址族头后交给内核
+    private func pumpFromFlow() {
+        flow.readPackets { [weak self] packets, protocols in
+            guard let self, self.running else { return }
+            for (i, packet) in packets.enumerated() {
+                let af: Int32 = i < protocols.count ? protocols[i].int32Value : AF_INET
+                var framed = Data([0, 0, 0, UInt8(truncatingIfNeeded: af)])
+                framed.append(packet)
+                let sent = framed.withUnsafeBytes { raw -> Int in
+                    guard let base = raw.baseAddress else { return -1 }
+                    return send(self.bridgeFd, base, framed.count, 0)
+                }
+                if sent < 0 { self.dropped += 1 } else { self.outPackets += 1 }
+                if self.outPackets % 50 == 0 { TunnelDiag.log(self.stats) }
+            }
+            if self.running { self.pumpFromFlow() }
+        }
+    }
+
+    /// sing-tun 在 Darwin 上每个包前面都带 4 字节地址族头
+    static let headerLength = 4
+}
+
 /// iOS 上的 mihomo 宿主：Packet Tunnel Provider 扩展。
 ///
 /// 为什么必须在这里跑内核：iOS 沙箱禁止 App 建 utun 接口，只有拥有
@@ -96,6 +199,9 @@ enum TunnelDiag {
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let log = OSLog(subsystem: "top.moneyfly.app.tunnel", category: "tunnel")
+
+    /// 用户态桥（直连 fd 拿不到时启用；stopTunnel 时要关掉，否则 fd 泄漏）
+    private var bridge: PacketBridge?
     private let appGroupId = "group.top.moneyfly.app"
 
     private var logPump: DispatchSourceTimer?
@@ -188,8 +294,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self else { return }
                 do {
-                    let fd = try self.tunnelFileDescriptor()
-                    TunnelDiag.log("取得隧道 fd=\(fd)")
+                    let acquired = try self.acquireKernelFd()
+                    let fd = acquired.fd
+                    self.bridge = acquired.bridge
+                    TunnelDiag.log("取得隧道 fd=\(fd)"
+                        + (acquired.bridge == nil ? "（直连）" : "（用户态桥）"))
                     // 先起日志抽取：mihomo 的 Logs() 用的是独立锁，
                     // Start 卡住/失败期间也能读到启动日志（含它卡在哪一步）
                     self.startLogPump()
@@ -232,6 +341,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         #if canImport(Mihomelib)
         MihomelibStop()
         #endif
+        // 用户态桥必须显式关掉：否则 socketpair 的两个 fd 会留在扩展进程里
+        if let bridge {
+            TunnelDiag.log(bridge.stats)
+            bridge.stop()
+            self.bridge = nil
+        }
         completionHandler()
     }
 
@@ -335,6 +450,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// 结构**写进诊断轨迹，下一版可按图索骥，而不是继续猜。
     ///
     /// 注：取 fd 本身用私有 KVC，因此仅适用于侧载（TrollStore / 自签），不上 App Store。
+    /// 取得给内核用的 fd：**先试直连，再退回用户态桥**。
+    ///
+    /// - 直连：老 iOS / 某些机型上 `packetFlow` 会暴露 utun fd（省掉一次拷贝）；
+    /// - 桥：iOS 16.4+ 的 `NEVirtualInterface` 后端不再暴露 fd（本机实测），
+    ///   用 socketpair 自己搬运数据包。
+    private func acquireKernelFd() throws -> (fd: Int32, bridge: PacketBridge?) {
+        // 直连只等 1.5s：真机实测这个版本上 `_socket` 恒为 nil，等久了只是白拖慢连接；
+        // 但其它 iOS 版本上它可能一次就成（省掉一次用户态拷贝），所以仍值得一试
+        if let fd = try? tunnelFileDescriptor(timeout: 1.5) {
+            return (fd, nil)
+        }
+        TunnelDiag.log("直连 fd 不可得 → 改用 socketpair 用户态桥（只用文档 API）")
+        guard let bridge = PacketBridge(flow: packetFlow) else {
+            throw tunnelError("无法建立隧道 fd，且用户态桥创建失败")
+        }
+        bridge.start()
+        return (bridge.kernelFd, bridge)
+    }
+
     private func tunnelFileDescriptor(timeout: TimeInterval = 6) throws -> Int32 {
         let started = Date()
         var attempt = 0
