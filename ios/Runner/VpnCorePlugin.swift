@@ -75,6 +75,10 @@ class VpnCorePlugin {
                 handleFetchTunnelDiag(result)
             case "fetchVpnDiag":
                 reply(result, diagNotes.joined(separator: "\n"))
+            case "fetchKernelStderr":
+                // 内核（Go）的 stdout/stderr：崩溃转储、fatal error、panic 全在这里。
+                // 扩展被系统杀掉时这是唯一的现场，必须让 App 能读到。
+                reply(result, Self.kernelStderrTail(lines: 120))
             default:
                 result(FlutterMethodNotImplemented)
             }
@@ -240,6 +244,18 @@ class VpnCorePlugin {
     /// App 读不到），这里沿用与 Android 相同的两种语义：
     /// - `incremental == true`：返回增量（游标推进）
     /// - 无参：返回全文（不动游标）
+    /// App Group 里 go-stderr.log 的尾部（内核崩溃/致命错误现场）。
+    private static func kernelStderrTail(lines: Int) -> String {
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else { return "" }
+        let url = container.appendingPathComponent("go-stderr.log")
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return "" }
+        let text = String(decoding: data, as: UTF8.self)
+        let all = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if all.count <= lines { return text }
+        return all.suffix(lines).joined(separator: "\n")
+    }
+
     private static func handleFetchLogs(_ call: FlutterMethodCall,
                                        _ result: @escaping FlutterResult) {
         guard let container = FileManager.default

@@ -62,3 +62,7 @@ ios/Mihomelib.xcframework/
 ios/PacketTunnel/country.mmdb
 ios/PacketTunnel/geosite.dat
 ios/build/
+
+# iOS 打包产物（IPA/Payload 是构建输出，不入库：上一次误提交把 ~150MB 二进制带进了仓库）
+Payload/
+dist-ios/

@@ -237,6 +237,17 @@ class ProxyCoreEmbedded extends ProxyCore {
         final brief = _lastLines(diag, 6);
         detail = detail.isEmpty ? brief : '$detail | $brief';
       }
+      // 4) iOS：内核（Go）的 stdout/stderr —— 崩溃转储 / fatal error / panic
+      // 全在这里。扩展被系统静默杀掉时，这是唯一能带回现场的通道。
+      try {
+        final stderr =
+            await _channel.invokeMethod<String>('fetchKernelStderr') ?? '';
+        if (stderr.trim().isNotEmpty) {
+          AppLog.kernel('内核 stderr（含崩溃转储）:\n${_lastLines(stderr, 60)}');
+          final brief = _lastLines(stderr, 8);
+          detail = detail.isEmpty ? brief : '$detail | $brief';
+        }
+      } catch (_) {}
     }
     _lastError = AppStrings.t('kernel_timeout');
     try {

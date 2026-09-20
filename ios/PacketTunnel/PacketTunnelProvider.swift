@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import Network
 import NetworkExtension
 import ObjectiveC
 import UIKit
@@ -8,76 +10,169 @@ import os.log
 import Mihomelib
 #endif
 
+/// 直写 fd 的原始输出：不经 stdio / FileHandle 缓冲。
+///
+/// 为什么必须这样：内核静默死亡时（进程被 jetsam 杀掉 / Go fatal error 直接
+/// abort），任何「排队等会儿再写」的日志都留在内存里一起消失 —— 真机踩到的
+/// 现象就是轨迹永远停在最后一条、后面什么都没有。这里每次都是 write()，
+/// 写进内核页缓存，别的进程（App）立刻能读到。
+enum RawIO {
+    static func write(_ fd: Int32, _ text: String) {
+        guard fd >= 0 else { return }
+        let bytes = Array(text.utf8)
+        guard !bytes.isEmpty else { return }
+        bytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            var off = 0
+            while off < buf.count {
+                let n = Darwin.write(fd, base + off, buf.count - off)
+                if n > 0 {
+                    off += n
+                    continue
+                }
+                if n < 0 && errno == EINTR { continue }
+                break
+            }
+        }
+    }
+}
+
 /// 隧道启动诊断轨迹。
 ///
 /// 为什么需要：扩展跑在独立进程里，它的 os_log 用户看不到；而「内核日志」
 /// 只有在 mihomo 成功启动之后才会产出。一旦失败（扩展没起来 / 配置没拿到 /
-/// fd 取不到 / 内核启动报错），App 侧只能看到一个干巴巴的「内核启动超时」，
-/// 完全无法定位。这里把启动过程的每一步都记下来，两处落地：
+/// fd 取不到 / 内核启动报错 / 进程被杀），App 侧只能看到一个干巴巴的
+/// 「内核启动超时」，完全无法定位。这里把启动过程的每一步都记下来：
 ///   1) 内存环形缓冲 → App 通过 sendProviderMessage("diag") 实时取（扩展活着时）
-///   2) App Group 的 tunnel.log → 扩展被杀后仍可事后读取
+///   2) App Group 的 tunnel.log → **每条同步直写**，扩展被杀也留得住
+///   3) App Group 的 go-stderr.log → 内核（Go）的 stdout/stderr 全接管到这里，
+///      Go 的 fatal error / panic 崩溃转储、logrus 输出都在里面
+///   4) 心跳 → 死亡时间点（配合 RSS：能直接区分「被内存杀掉」与「卡死」）
 enum TunnelDiag {
-    private static let queue = DispatchQueue(label: "top.moneyfly.tunnel.diag")
+    private static let lock = NSLock()
     private static var memory: [String] = []
-    private static let maxMemory = 200
+    private static let maxMemory = 400
     private static let appGroupId = "group.top.moneyfly.app"
     private static let start = Date()
 
+    private static let diagFd = openShared("tunnel.log")
+    private static let kernelFd = openShared("kernel.log")
+
+    private static func openShared(_ name: String) -> Int32 {
+        guard let container = sharedContainer() else { return -1 }
+        return open(container.appendingPathComponent(name).path,
+                    O_WRONLY | O_CREAT | O_APPEND, 0o644)
+    }
+
+    private static func sharedContainer() -> URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
+    }
+
     static func log(_ message: String) {
-        queue.async {
-            let ms = Int(Date().timeIntervalSince(start) * 1000)
-            let line = "[\(ms)ms] \(message)"
-            memory.append(line)
-            if memory.count > maxMemory { memory.removeFirst(memory.count - maxMemory) }
-            appendToFile(line)
-        }
+        let ms = Int(Date().timeIntervalSince(start) * 1000)
+        let line = "[\(ms)ms] \(message)"
+        lock.lock()
+        memory.append(line)
+        if memory.count > maxMemory { memory.removeFirst(memory.count - maxMemory) }
+        lock.unlock()
+        RawIO.write(diagFd, line + "\n")
+    }
+
+    /// 心跳：只在启动窗口内落盘（20 次 ≈ 10s），之后只进内存环 ——
+    /// 足够覆盖「内核启动期被杀」这个场景，又不会把轨迹文件撑爆。
+    private static var beatsOnDisk = 0
+
+    static func heartbeat(seq: Int, rssMB: Double) {
+        let ms = Int(Date().timeIntervalSince(start) * 1000)
+        let line = "[\(ms)ms] ♥ 心跳 #\(seq) 进程存活 RSS=\(String(format: "%.1f", rssMB))MB"
+        lock.lock()
+        memory.append(line)
+        if memory.count > maxMemory { memory.removeFirst(memory.count - maxMemory) }
+        let onDisk = beatsOnDisk < 20
+        if onDisk { beatsOnDisk += 1 }
+        lock.unlock()
+        if onDisk { RawIO.write(diagFd, line + "\n") }
     }
 
     /// 当前轨迹（供 App 查询）。附上内核日志尾部 —— App Group 若失效，
     /// 内核日志文件写不进去，这是唯一的获取途径。
     static var trace: String {
-        queue.sync {
-            var out = memory.joined(separator: "\n")
-            if !kernelRing.isEmpty {
-                out += "\n[内核日志尾部]\n" + kernelRing.joined(separator: "\n")
-            }
-            return out
+        lock.lock()
+        defer { lock.unlock() }
+        var out = memory.joined(separator: "\n")
+        if !kernelRing.isEmpty {
+            out += "\n[内核日志尾部]\n" + kernelRing.joined(separator: "\n")
         }
+        return out
     }
 
     /// 内核日志尾部（内存保留，避免 App Group 失效时完全看不到内核输出）
     private static var kernelRing: [String] = []
-    private static let maxKernelRing = 60
+    private static let maxKernelRing = 120
+    private static var kernelBytes = 0
+    private static let maxKernelBytes = 1024 * 1024
 
     static func appendKernel(_ text: String) {
-        queue.async {
-            for line in text.split(separator: "\n") where !line.isEmpty {
-                kernelRing.append(String(line))
-            }
-            if kernelRing.count > maxKernelRing {
-                kernelRing.removeFirst(kernelRing.count - maxKernelRing)
-            }
+        let lines = text.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return }
+        lock.lock()
+        kernelRing.append(contentsOf: lines)
+        if kernelRing.count > maxKernelRing {
+            kernelRing.removeFirst(kernelRing.count - maxKernelRing)
         }
+        kernelBytes += text.utf8.count
+        let rotate = kernelBytes > maxKernelBytes
+        if rotate { kernelBytes = 0 }
+        lock.unlock()
+        if rotate { _ = ftruncate(kernelFd, 0) }
+        RawIO.write(kernelFd, text.hasSuffix("\n") ? text : text + "\n")
     }
 
     /// App Group 容器是否可用（不可用意味着共享配置/kernel.log 都拿不到）
-    static var appGroupPath: String? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)?.path
+    static var appGroupPath: String? { sharedContainer()?.path }
+
+    /// 内核（Go）stdout/stderr 的落盘路径（供 App 事后读取崩溃转储）
+    static var stderrPath: String? {
+        sharedContainer()?.appendingPathComponent("go-stderr.log").path
     }
 
-    private static func appendToFile(_ line: String) {
-        guard let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else { return }
-        let url = container.appendingPathComponent("tunnel.log")
-        let data = Data((line + "\n").utf8)
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: url)
+    /// 把本进程的 stdout/stderr 接管到 App Group 文件。
+    ///
+    /// Go 的 fatal error（runtime throw / OOM / 建线程失败）、goroutine panic、
+    /// logrus 输出**全部走 fd 2**，在扩展进程里没人接 → 现场直接蒸发。
+    /// 接管后这些内容会落盘，App 侧可读；顺带把「内核往 stdout 写」这件事
+    /// 变成写普通文件（永不阻塞），排除日志通道卡死的可能。
+    private static var stdioCaptured = false
+
+    static func captureStdio() {
+        guard !stdioCaptured else { return }
+        stdioCaptured = true
+        guard let container = sharedContainer() else { return }
+        let path = container.appendingPathComponent("go-stderr.log").path
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? Int, size > 512 * 1024 {
+            try? FileManager.default.removeItem(atPath: path)
         }
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+        guard fd >= 0 else { return }
+        dup2(fd, 1)
+        dup2(fd, 2)
+        if fd > 2 { close(fd) }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        RawIO.write(2, "\n=== 隧道进程启动 pid=\(getpid()) \(stamp) ===\n")
+        log("内核 stdout/stderr 已接管 → go-stderr.log（Go 崩溃转储也会落这里）")
+    }
+
+    /// 内核 stderr 文件尾部（崩溃转储 / 致命错误现场）
+    static func stderrTail(lines: Int = 80) -> String {
+        guard let path = stderrPath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              !data.isEmpty else { return "" }
+        let text = String(decoding: data, as: UTF8.self)
+        let all = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if all.count <= lines { return text }
+        return all.suffix(lines).joined(separator: "\n")
     }
 }
 
@@ -110,6 +205,15 @@ final class PacketBridge {
     private var outPackets = 0   // App → 内核
     private var inPackets = 0    // 内核 → App
     private var dropped = 0
+    /// 内核就绪前只排空 packetFlow、不投喂数据包。
+    ///
+    /// 两个目的：
+    /// 1) 内核起来之前它自己的收发环还没跑，投进去只是白占 socketpair 缓冲；
+    /// 2) 关键：**内核第一条数据包必须发生在「出站已绑定物理接口」的配置生效之后**，
+    ///    否则内核可能对着自己的隧道发起出站连接 → 自环（真机实测过静默暴毙）。
+    private var gateOpen = false
+
+    func openGate() { gateOpen = true }
 
     init?(flow: NEPacketTunnelFlow) {
         var fds: [Int32] = [0, 0]
@@ -166,6 +270,12 @@ final class PacketBridge {
         flow.readPackets { [weak self] packets, protocols in
             guard let self, self.running else { return }
             for (i, packet) in packets.enumerated() {
+                // 内核还没起来：照样把 flow 排空（不排空会让隧道看起来僵死），
+                // 但不投喂内核 —— 见 gateOpen 的说明
+                if !self.gateOpen {
+                    self.dropped += 1
+                    continue
+                }
                 let af: Int32 = i < protocols.count ? protocols[i].int32Value : AF_INET
                 var framed = Data([0, 0, 0, UInt8(truncatingIfNeeded: af)])
                 framed.append(packet)
@@ -207,14 +317,28 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var logPump: DispatchSourceTimer?
     private let logQueue = DispatchQueue(label: "top.moneyfly.tunnel.logpump")
 
+    /// 网络路径监控：换网（WiFi↔蜂窝）时热更新内核的出站绑定接口。
+    /// 不做这件事的话，绑定会停留在旧网卡上，换网后内核直接连不出去。
+    private var pathMonitor: NWPathMonitor?
+    private var boundInterface: String?
+    private var apiPort = 9090
+    private var apiSecret = ""
+
     // MARK: - 生命周期
 
     override func startTunnel(options: [String: NSObject]?,
                               completionHandler: @escaping (Error?) -> Void) {
+        // 第一件事：接管 stdout/stderr。Go 的致命错误/崩溃转储全在 fd 2 上，
+        // 扩展进程里没人接就永远查不到（真机「内核静默暴毙」只有这一条取证路）。
+        TunnelDiag.captureStdio()
         TunnelDiag.log("=== startTunnel 进入 ===")
         TunnelDiag.log("系统=\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)"
             + " 机型=\(Self.hardwareModel())")
         TunnelDiag.log("App Group 容器: \(TunnelDiag.appGroupPath ?? "<不可用>")")
+        TunnelDiag.log("启动前 RSS=\(Self.rssText())")
+        TunnelDiag.log("系统物理路径: status=\(defaultPath?.status.rawValue ?? -1)")
+        TunnelDiag.log("物理接口候选: \(Self.interfaceCandidates().joined(separator: ","))")
+        startHeartbeat()
 
         // 立刻把「扩展已被系统拉起」这件事写进共享文件：即使后面任何一步失败，
         // App 侧也能凭这条区分「扩展根本没起来」和「扩展起来了但某步失败」。
@@ -225,8 +349,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         let conf = proto.providerConfiguration ?? [:]
         TunnelDiag.log("providerConfiguration keys: \(conf.keys.sorted())")
-        let apiPort = (conf["apiPort"] as? NSNumber)?.intValue ?? 9090
-        TunnelDiag.log("apiPort=\(apiPort)")
+        let apiPortValue = (conf["apiPort"] as? NSNumber)?.intValue ?? 9090
+        TunnelDiag.log("apiPort=\(apiPortValue)")
 
         // 配置正文：优先 App Group 共享文件（订阅可能很大，不适合塞进
         // providerConfiguration），回退内联字符串。
@@ -250,6 +374,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         TunnelDiag.log("配置来源=\(configSource) 字节=\(yaml.utf8.count)")
+
+        // 关键修复：把内核出站流量**钉在物理接口上**。
+        //
+        // iOS 上隧道一起来，系统的默认路由就指向我们自己的隧道；mihomo 的
+        // `auto-detect-interface` 会探到「默认接口 = 我们的隧道」，于是把自己
+        // 的出站 socket 绑到隧道上 → 出站包被自己的隧道抓回来 → 内核再把它们
+        // 转出去 → 无限自环。真机表现：内核刚起就静默死亡（内存/CPU 爆掉被系统
+        // 杀掉），没有任何日志。
+        //
+        // 而 mihomo 里「同名才拦」的自环守卫（default interface == tun name）
+        // 在 fd 注入场景下永远不会命中：socketpair 没有 utun 名字，tunName 只能
+        // 是兜底值 "Meta"，和真实的隧道接口名对不上。
+        //
+        //        `interface-name` 的优先级高于 auto-detect（dialer.go：先看
+        // DefaultInterface，为空才问 finder），所以这里显式写入物理接口名即可。
+        apiPort = apiPortValue
+        apiSecret = Self.extractSecret(from: yaml)
+        var effectiveYaml = yaml
+        if let iface = Self.pickPhysicalInterface() {
+            effectiveYaml = Self.injectingInterfaceName(yaml, iface)
+            boundInterface = iface
+            TunnelDiag.log("内核出站绑定 interface-name=\(iface)（防自环）")
+        } else {
+            TunnelDiag.log("⚠ 取不到物理接口名（defaultPath.availableInterfaces 为空）"
+                + " → 内核出站不绑定接口，存在自环风险")
+        }
+        TunnelDiag.log("内核关键配置: \(Self.summarizeConfig(effectiveYaml))")
 
         // 工作目录（可写）：扩展自己的 Application Support。
         let home = ensureHomeDir()
@@ -302,16 +453,226 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     // 先起日志抽取：mihomo 的 Logs() 用的是独立锁，
                     // Start 卡住/失败期间也能读到启动日志（含它卡在哪一步）
                     self.startLogPump()
-                    try self.startEngine(home: home, yaml: yaml, fd: fd)
-                    self.probeApi(port: apiPort)
-                    TunnelDiag.log("✓ 内核启动完成")
+                    TunnelDiag.log("调用内核前 RSS=\(Self.rssText())")
+                    let t0 = Date()
+                    try self.startEngine(home: home, yaml: effectiveYaml, fd: fd)
+                    TunnelDiag.log("✓ 内核启动完成（耗时 "
+                        + "\(Int(Date().timeIntervalSince(t0) * 1000))ms）RSS=\(Self.rssText())")
+                    // 内核已按配置起好（出站绑定已在解析阶段生效）→ 放行数据包
+                    self.bridge?.openGate()
+                    self.probeApi(port: apiPortValue)
+                    self.startPathWatch()
                 } catch {
                     TunnelDiag.log("✗ 内核启动失败: \(error.localizedDescription)")
+                    self.attachCrashContext()
                     // 拿掉隧道，让 App 侧立刻看到 disconnected + 本次轨迹
                     self.cancelTunnelWithError(error)
                 }
             }
         }
+    }
+
+    /// 失败时把「内核 stderr（含 Go 崩溃转储）」与内存数据接进轨迹 ——
+    /// App 侧只能读到轨迹文件，这是把内核现场带出去的唯一途径。
+    private func attachCrashContext() {
+        TunnelDiag.log("失败时 RSS=\(Self.rssText())")
+        let tail = TunnelDiag.stderrTail(lines: 80)
+        if tail.isEmpty {
+            TunnelDiag.log("内核 stderr: 空（内核没来得及输出任何东西 —— "
+                + "更像进程被系统直接杀掉，而不是内核自己报错）")
+        } else {
+            TunnelDiag.log("内核 stderr 尾部（含 Go 崩溃转储）:\n\(tail)")
+        }
+    }
+
+    // MARK: - 进程自检（内存 / 心跳 / 物理接口）
+
+    /// 本进程常驻内存（MB）。这是 jetsam（iOS 的内存杀手）唯一看的东西：
+    /// 扩展的内存上限远低于 App，内核几个大分配就能顶上去 → 静默被杀。
+    static func residentMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) { ptr -> kern_return_t in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return -1 }
+        return Double(info.resident_size) / (1024 * 1024)
+    }
+
+    static func rssText() -> String {
+        String(format: "%.1fMB", residentMB())
+    }
+
+    private var heartbeatThread: Thread?
+    private var heartbeatStop = false
+
+    /// 心跳线程：进程还活着就每 0.5s 往轨迹里写一条（带内存）。
+    /// 一旦轨迹里心跳断了，就是「进程在那一刻消失」的铁证 —— 死因再看 RSS
+    /// 是涨上去的（内存被杀）还是平的（崩溃/被系统判定无响应）。
+    private func startHeartbeat() {
+        guard heartbeatThread == nil else { return }
+        heartbeatStop = false
+        let t = Thread { [weak self] in
+            var seq = 0
+            while let self, !self.heartbeatStop {
+                seq += 1
+                let rss = Self.residentMB()
+                if seq % 2 == 0 { TunnelDiag.heartbeat(seq: seq / 2, rssMB: rss) }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+        t.name = "moneyfly-heartbeat"
+        t.stackSize = 256 * 1024
+        heartbeatThread = t
+        t.start()
+    }
+
+    private func stopHeartbeat() {
+        heartbeatStop = true
+        heartbeatThread = nil
+    }
+
+    /// 物理接口候选：UP、有 IP 地址、且不是隧道/回环/虚拟网卡。
+    ///
+    /// 为什么必须自己找：iOS 扩展里系统默认路由指向**我们自己的隧道**，
+    /// 内核（以及任何「连一下公网再看本地地址」的探测）都会认为自己该走隧道，
+    /// 于是把出站绑到隧道上 → 自环。只有把真实网卡枚举出来才能知道该绑谁。
+    /// 顺序：en*（WiFi/以太网）→ pdp_ip*（蜂窝）→ 其余。
+    static func interfaceCandidates() -> [String] {
+        var names: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return names }
+        defer { freeifaddrs(ifaddr) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let cur = ptr {
+            defer { ptr = cur.pointee.ifa_next }
+            let flags = Int32(cur.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0 else { continue }
+            guard let addr = cur.pointee.ifa_addr else { continue }
+            let family = addr.pointee.sa_family
+            guard family == UInt8(AF_INET) || family == UInt8(AF_INET6) else { continue }
+            let name = String(cString: cur.pointee.ifa_name)
+            guard !Self.isVirtualInterface(name), !names.contains(name) else { continue }
+            names.append(name)
+        }
+        let en = names.filter { $0.hasPrefix("en") }.sorted()
+        let cell = names.filter { $0.hasPrefix("pdp_ip") }.sorted()
+        let rest = names.filter { !en.contains($0) && !cell.contains($0) }.sorted()
+        return en + cell + rest
+    }
+
+    static func isVirtualInterface(_ name: String) -> Bool {
+        let banned = ["utun", "ipsec", "lo", "gif", "stf", "awdl", "llw",
+                      "bridge", "nan", "p2p", "vmenet"]
+        return banned.contains { name.hasPrefix($0) }
+    }
+
+    /// 内核出站要绑定的**物理**接口名（en0 / pdp_ip0 …）。
+    /// 先看 Network.framework 当前路径，再用 getifaddrs 兜底。
+    static func pickPhysicalInterface() -> String? {
+        let monitor = NWPathMonitor()
+        let fromPath = monitor.currentPath.availableInterfaces
+            .map(\.name)
+            .first { !isVirtualInterface($0) }
+        monitor.cancel()
+        return fromPath ?? interfaceCandidates().first
+    }
+
+    /// 在配置顶层写入/覆盖 `interface-name`（追加在末尾：顶层键顺序无所谓，
+    /// 也避开首行的 YAML 文档标记或注释）。
+    static func injectingInterfaceName(_ yaml: String, _ name: String) -> String {
+        var lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        if let idx = lines.firstIndex(where: { $0.hasPrefix("interface-name:") }) {
+            lines[idx] = "interface-name: \(name)"
+            return lines.joined(separator: "\n")
+        }
+        if lines.last?.isEmpty == false { lines.append("") }
+        lines.append("interface-name: \(name)")
+        return lines.joined(separator: "\n")
+    }
+
+    /// 只挑关键几行记进轨迹：出问题时能一眼看出内核到底吃到了什么配置
+    /// （fd 注入 / recvmsgx / mtu / 出站接口 / 栈），不用去猜。
+    static func summarizeConfig(_ yaml: String) -> String {
+        let keys = ["mode:", "log-level:", "log-level:", "interface-name:",
+                    "auto-detect-interface:", "recvmsgx:", "mtu:", "stack:",
+                    "file-descriptor:", "enable:", "auto-route:"]
+        var picked: [String] = []
+        var inTun = false
+        for raw in yaml.split(separator: "\n") {
+            let line = String(raw)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("tun:") { inTun = true; picked.append("tun:"); continue }
+            if !line.hasPrefix(" ") { inTun = false }
+            if keys.contains(where: { trimmed.hasPrefix($0) }) {
+                if line.hasPrefix(" ") && !inTun { continue }
+                picked.append(trimmed)
+            }
+            if picked.count > 24 { break }
+        }
+        return picked.joined(separator: " ")
+    }
+
+    /// 从配置里抠出 Clash API 的 secret（网络切换时要带鉴权 PATCH /configs）
+    static func extractSecret(from yaml: String) -> String {
+        for raw in yaml.split(separator: "\n") {
+            let line = String(raw)
+            guard line.hasPrefix("secret:") else { continue }
+            return line.dropFirst("secret:".count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+        }
+        return ""
+    }
+
+    /// 盯住网络路径：物理出口换了就热更新内核绑定（Clash API PATCH /configs，
+    /// mihomo 侧直接写 dialer.DefaultInterface，不断流、不重启内核）。
+    private func startPathWatch() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            guard self.pathMonitor != nil else { return }
+            let next = path.availableInterfaces
+                .map(\.name)
+                .first { !Self.isVirtualInterface($0) }
+                ?? Self.interfaceCandidates().first
+            guard let next, next != self.boundInterface else { return }
+            TunnelDiag.log("网络切换：物理接口 \(self.boundInterface ?? "-") → \(next)，热更新内核出站绑定")
+            self.boundInterface = next
+            self.patchInterfaceName(next)
+        }
+        monitor.start(queue: DispatchQueue(label: "top.moneyfly.tunnel.pathwatch"))
+        pathMonitor = monitor
+        TunnelDiag.log("网络路径监控已启动（当前绑定 \(boundInterface ?? "-")）")
+    }
+
+    private func stopPathWatch() {
+        pathMonitor?.cancel()
+        pathMonitor = nil
+    }
+
+    private func patchInterfaceName(_ name: String) {
+        guard let url = URL(string: "http://127.0.0.1:\(apiPort)/configs") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "PATCH"
+        req.timeoutInterval = 5
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !apiSecret.isEmpty {
+            req.setValue("Bearer \(apiSecret)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["interface-name": name])
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            if let err {
+                TunnelDiag.log("接口热更新失败: \(err.localizedDescription)")
+            } else {
+                TunnelDiag.log("接口热更新 → \(name) HTTP "
+                    + "\((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+            }
+        }.resume()
     }
 
     /// 从**扩展进程内**访问内核 Clash API —— 决定性自检：
@@ -335,8 +696,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason,
                              completionHandler: @escaping () -> Void) {
-        TunnelDiag.log("=== stopTunnel reason=\(reason.rawValue) ===")
+        TunnelDiag.log("=== stopTunnel reason=\(reason.rawValue) === RSS=\(Self.rssText())")
         os_log("stopTunnel reason=%d", log: log, type: .info, reason.rawValue)
+        stopHeartbeat()
+        stopPathWatch()
         stopLogPump()
         #if canImport(Mihomelib)
         MihomelibStop()
@@ -740,18 +1103,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// 文件，App 侧「内核日志」页沿用 Android 的同一套读取逻辑。
     private func startLogPump() {
         stopLogPump()
-        let file = sharedLogURL()
-        if file == nil {
+        if TunnelDiag.appGroupPath == nil {
             TunnelDiag.log("App Group 不可用：内核日志只保留在内存轨迹里")
         }
         let timer = DispatchSource.makeTimerSource(queue: logQueue)
-        timer.schedule(deadline: .now(), repeating: .seconds(1))
+        // 500ms：内核启动期一旦被系统杀掉，抽得越勤，留下的内核日志越完整
+        timer.schedule(deadline: .now(), repeating: .milliseconds(500))
         timer.setEventHandler {
             #if canImport(Mihomelib)
             let delta = MihomelibLogs()
             guard !delta.isEmpty else { return }
+            // appendKernel 自己同步写 kernel.log（+ 内存环），别再写第二遍
             TunnelDiag.appendKernel(delta)
-            if let file { Self.append(delta, to: file) }
             #endif
         }
         timer.resume()
@@ -761,37 +1124,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private func stopLogPump() {
         logPump?.cancel()
         logPump = nil
-    }
-
-    private func sharedLogURL() -> URL? {
-        guard let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
-            return nil
-        }
-        return container.appendingPathComponent("kernel.log")
-    }
-
-    private static let maxLogBytes = 512 * 1024
-
-    private static func append(_ text: String, to url: URL) {
-        let fm = FileManager.default
-        guard let data = text.data(using: .utf8) else { return }
-        if !fm.fileExists(atPath: url.path) {
-            try? data.write(to: url)
-            return
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: data)
-        // 大小上限：超限则保留后半段（与桌面端日志轮转口径一致）
-        if let size = try? handle.offset(), size > UInt64(maxLogBytes) {
-            try? handle.close()
-            if let content = try? String(contentsOf: url, encoding: .utf8) {
-                let half = String(content.suffix(content.count / 2))
-                try? half.write(to: url, atomically: true, encoding: .utf8)
-            }
-        }
     }
 
     // MARK: - 错误

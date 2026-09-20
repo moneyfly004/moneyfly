@@ -117,9 +117,12 @@ class _KernelLogTabState extends State<_KernelLogTab>
       final lv = s['kernelLogLevel']?.toString() ?? 'warning';
       setState(() => _level = _levels.contains(lv) ? lv : 'warning');
     });
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       // 原生侧自上次读取位置起只回传增量行，且返回内容经 hasMore 分片追平，
       // 因此轮询间隔可放宽到 1200ms 而不丢日志。
+      // iOS 同样走这条路：内核日志由 PacketTunnel 扩展抽到 App Group 的
+      // kernel.log，原生侧同一套增量语义（原先 iOS 落到桌面 CLI 分支 →
+      // 这个页面在 iOS 上永远是空的，出问题时看不到任何内核输出）。
       _pollTimer = Timer.periodic(
           const Duration(milliseconds: 1200), (_) => _pollAndroid());
     } else {

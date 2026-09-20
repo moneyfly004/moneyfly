@@ -1,3 +1,0 @@
-pubspec version: 2.2.15+174
-commit: 20d4de8
-build: 本地构建（非 CI）
