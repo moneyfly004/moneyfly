@@ -17,13 +17,15 @@ import 'package:moneyfly/core/services/update_service.dart';
 import 'package:moneyfly/widgets/update_prompt.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-UpdateInfo _info(String version, {String sha256 = '', String? url, String? name}) =>
+UpdateInfo _info(String version,
+        {String sha256 = '', String? url, String? name, int sizeBytes = 0}) =>
     UpdateInfo(
       latestVersion: version,
       downloadUrl: url ?? 'https://example.com/$version.pkg',
       sizeText: '1 MB',
       assetName: name ?? 'MoneyFly-macos-arm64-$version.dmg',
       sha256: sha256,
+      sizeBytes: sizeBytes,
     );
 
 void main() {
@@ -213,6 +215,15 @@ void main() {
         launched = path;
         return true;
       };
+      // macOS 走的是「就地安装」（挂 DMG → 替换 /Applications 里的 App），
+      // 不再是 open <dmg>；两条分支都注入，用例在 macOS 与 Linux CI 上都能跑
+      String? macInstalled;
+      UpdateService.debugInstallMacOverride = (dmg) async {
+        macInstalled = dmg;
+        return Platform.isMacOS
+            ? MacInstallResult.installed
+            : MacInstallResult.openedExternally;
+      };
       var exited = -1;
       UpdatePrompt.debugExitOverride = (code) => exited = code;
 
@@ -223,8 +234,13 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(launched, isNotNull, reason: '应调起系统安装器');
-      expect(find.textContaining('安装程序已启动'), findsOneWidget);
+      if (Platform.isMacOS) {
+        expect(macInstalled, isNotNull, reason: 'macOS 应走就地安装');
+        expect(find.textContaining('已更新到'), findsOneWidget);
+      } else {
+        expect(launched, isNotNull, reason: '应调起系统安装器');
+        expect(find.textContaining('安装程序已启动'), findsOneWidget);
+      }
 
       await tester.tap(find.text('确定'));
       await tester.pumpAndSettle();

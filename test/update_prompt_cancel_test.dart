@@ -162,6 +162,12 @@ void main() {
       launched = path;
       return true;
     };
+    // macOS 现在走「就地安装」（挂 DMG → 替换 App），不再只是 open <dmg>；
+    // 两条分支都注入，用例在 macOS 与 Linux CI 上都能跑
+    UpdateService.debugInstallMacOverride = (dmg) async {
+      launched = dmg;
+      return MacInstallResult.openedExternally;
+    };
     var exited = -1;
     UpdatePrompt.debugExitOverride = (code) => exited = code;
 
@@ -182,8 +188,13 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(launched, isNotEmpty, reason: '下载完成后必须调起安装器');
-    expect(find.textContaining(AppStrings.t('update_installing_exit')),
+    expect(launched, isNotEmpty, reason: '下载完成后必须调起安装器（或 macOS 的就地安装）');
+    // macOS 走就地安装时是「安装包已打开」提示（只有非 .app 运行 / 权限不足才会退到
+    // open <dmg>），其它平台仍是「安装程序已启动」
+    expect(
+        find.textContaining(Platform.isMacOS
+            ? AppStrings.t('update_manual_open_hint')
+            : AppStrings.t('update_installing_exit')),
         findsOneWidget);
     await tester.tap(find.text(AppStrings.t('confirm')));
     await tester.pumpAndSettle();

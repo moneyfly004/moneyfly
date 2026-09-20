@@ -9,6 +9,23 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../api/user_agent.dart';
+import 'app_log.dart';
+import 'single_instance.dart';
+
+/// macOS 就地安装的结果
+enum MacInstallResult {
+  /// 已替换 /Applications 里的 App 并拉起新版本
+  installed,
+
+  /// 只能把安装包交给用户手动装（开发模式运行、或权限不足时的降级）
+  openedExternally,
+
+  /// 安装包损坏（挂载失败 / 卷里没有 .app）—— 多半是下载不完整
+  damaged,
+
+  /// 其它失败（复制失败、替换失败、权限不足……）
+  failed,
+}
 
 /// 软件升级信息
 class UpdateInfo {
@@ -23,6 +40,10 @@ class UpdateInfo {
   /// 该安装包在 `SHA256SUMS*.txt` 里的校验值（拿不到则为空）
   final String sha256;
 
+  /// 该安装包的精确字节数（GitHub API 给的，用于判断**已缓存的包是否下完整**）。
+  /// 0 = 未知。
+  final int sizeBytes;
+
   UpdateInfo({
     required this.latestVersion,
     this.downloadUrl,
@@ -30,6 +51,7 @@ class UpdateInfo {
     this.forced = false,
     this.assetName,
     this.sha256 = '',
+    this.sizeBytes = 0,
   });
 
   bool get isNewer {
@@ -156,6 +178,7 @@ class UpdateService {
         assetName: picked.name,
         // 顺带取 sha256：下载完校验完整性（拿不到就跳过校验，不阻塞更新）
         sha256: await _fetchSha256(assets, picked.name),
+        sizeBytes: picked.size,
       );
       _cacheAt = DateTime.now();
       hasUpdate.value = _cacheInfo!.isNewer;
@@ -236,34 +259,43 @@ class UpdateService {
 
   /// 从 `SHA256SUMS*.txt` 里取本平台安装包的校验值（缺失返回空串）。
   static Future<String> _fetchSha256(List<Map> assets, String assetName) async {
-    final sumsName = switch (defaultTargetPlatform) {
-      TargetPlatform.android => 'SHA256SUMS.txt',
-      TargetPlatform.windows => 'SHA256SUMS.txt',
-      TargetPlatform.iOS => 'SHA256SUMS-ios.txt',
-      TargetPlatform.macOS => assetName.contains('-macos-arm64-')
-          ? 'SHA256SUMS-macos-arm64.txt'
-          : assetName.contains('-macos-universal-')
-              ? 'SHA256SUMS-macos-universal.txt'
-              : 'SHA256SUMS-macos-x64.txt',
-      _ => '',
-    };
-    if (sumsName.isEmpty) return '';
-    final sums = assets
-        .where((a) => a['name'] == sumsName)
-        .map((a) => a['browser_download_url']?.toString() ?? '')
-        .firstWhere((u) => u.isNotEmpty, orElse: () => '');
-    if (sums.isEmpty) return '';
-    try {
-      final text = (await _ghDio.get<String>(sums,
-              options: Options(responseType: ResponseType.plain)))
-          .data ??
-          '';
-      for (final line in text.split('\n')) {
-        if (!line.contains(assetName)) continue;
-        final hash = line.trim().split(RegExp(r'\s+')).first.toLowerCase();
-        if (hash.length == 64) return hash;
-      }
-    } catch (_) {}
+    // 候选校验和文件名：先平台/架构专属那份，再退回发布时合并的 SHA256SUMS.txt。
+    // 两个都留着是有原因的：合并文件由 release job 生成（覆盖全部 10 个产物），
+    // 而专属文件由各构建 job 生成 —— 任一步骤改动都不该让「校验」整条失效。
+    final candidates = <String>[
+      switch (defaultTargetPlatform) {
+        TargetPlatform.android => 'SHA256SUMS-android-apk.txt',
+        TargetPlatform.windows => 'SHA256SUMS-windows.txt',
+        TargetPlatform.iOS => 'SHA256SUMS-ios.txt',
+        TargetPlatform.macOS => assetName.contains('-macos-arm64-')
+            ? 'SHA256SUMS-macos-arm64.txt'
+            : assetName.contains('-macos-universal-')
+                ? 'SHA256SUMS-macos-universal.txt'
+                : 'SHA256SUMS-macos-x64.txt',
+        _ => '',
+      },
+      'SHA256SUMS.txt',
+    ];
+    for (final sumsName in candidates) {
+      if (sumsName.isEmpty) continue;
+      final sums = assets
+          .where((a) => a['name'] == sumsName)
+          .map((a) => a['browser_download_url']?.toString() ?? '')
+          .firstWhere((u) => u.isNotEmpty, orElse: () => '');
+      if (sums.isEmpty) continue;
+      try {
+        final text = (await _ghDio.get<String>(sums,
+                options: Options(responseType: ResponseType.plain)))
+            .data ??
+            '';
+        for (final line in text.split('\n')) {
+          if (!line.contains(assetName)) continue;
+          // 兼容 Windows 上 sha256sum 的二进制模式标记：`<hash> *<name>`
+          final hash = line.trim().split(RegExp(r'\s+')).first.toLowerCase();
+          if (hash.length == 64) return hash;
+        }
+      } catch (_) {}
+    }
     return '';
   }
 
@@ -299,7 +331,12 @@ class UpdateService {
     return dir;
   }
 
-  /// 已下载安装包的路径（存在且非空才有值）
+  /// 已下载安装包的路径（存在、非空、且**大小与发布方给出的字节数一致**才有值）。
+  ///
+  /// 这里以前只判 `lengthSync() > 0`，于是**半截文件会被当成「已下好」**：
+  /// 下载中途退出/断网留下的残包，之后每次点更新都直接拿它去装 ——
+  /// 表现就是 macOS 挂载失败（用户看到「磁盘映像已损坏/无法识别」，即
+  /// 「点击安装 → 提示磁盘损坏」）。现在大小不符直接删掉重新下。
   Future<String?> downloadedInstaller([UpdateInfo? info]) async {
     final i = info ?? _cacheInfo;
     final name = i?.assetName;
@@ -308,8 +345,46 @@ class UpdateService {
     if (dir == null) return null;
     final f = File('${dir.path}/$name');
     if (!f.existsSync() || f.lengthSync() == 0) return null;
+    final expect = i?.sizeBytes ?? 0;
+    if (expect > 0 && f.lengthSync() != expect) {
+      AppLog.error('更新包不完整（${f.lengthSync()} != $expect），丢弃重下: $name');
+      try {
+        f.deleteSync();
+      } catch (_) {}
+      return null;
+    }
     return f.path;
   }
+
+  /// 安装前再核一次 sha256（有校验值时必须一致，否则删包返回 false）。
+  /// 缓存命中路径也要核：只有「下载那一刻」校验过是不够的 —— 磁盘写坏、
+  /// 手动替换、下载被 kill 都可能留下一个大小正确但内容错误的包。
+  Future<bool> verifyInstaller(String path, [UpdateInfo? info]) async {
+    final i = info ?? _cacheInfo;
+    final expect = (i?.sha256 ?? '').toLowerCase();
+    if (expect.isEmpty) return true; // 发布方没给校验值：不阻塞安装（大小已核过）
+    final key = '$path|$expect';
+    if (_verifiedSha[key] == true) return true;
+    try {
+      final actual = await _sha256Of(File(path));
+      if (actual == expect) {
+        _verifiedSha[key] = true;
+        return true;
+      }
+      AppLog.error('更新包校验失败（sha256 不匹配），丢弃: $path');
+      try {
+        File(path).deleteSync();
+      } catch (_) {}
+      _verifiedSha.remove(key);
+      return false;
+    } catch (e) {
+      AppLog.error('更新包校验异常: $e');
+      return false;
+    }
+  }
+
+  /// sha256 校验结果缓存（key = 路径|期望值）：避免弹窗/安装流程重复哈希几十 MB
+  static final Map<String, bool> _verifiedSha = {};
 
   /// 后台/前台下载本机匹配的安装包（幂等：已下好直接返回路径）。
   ///
@@ -328,8 +403,15 @@ class UpdateService {
     final path = '${dir.path}/$name';
     final dest = File(path);
     if (dest.existsSync() && dest.lengthSync() > 0) {
-      downloadProgress.value = 1;
-      return path;
+      // 缓存命中也要「大小 + sha256」过关才算数（见 downloadedInstaller 的说明）
+      final sizeOk = i!.sizeBytes <= 0 || dest.lengthSync() == i.sizeBytes;
+      if (sizeOk && await verifyInstaller(path, i)) {
+        downloadProgress.value = 1;
+        return path;
+      }
+      try {
+        dest.deleteSync();
+      } catch (_) {}
     }
     // 并发去重：后台预下载与用户点「立即更新」会同时触发同一份下载，
     // 两个写入方写同一个文件会把包写坏 → 后来的等前一个的结果。
@@ -391,13 +473,24 @@ class UpdateService {
     return digest.toString();
   }
 
-  /// 调起系统安装器（Windows/macOS 打开安装包；Android 交给系统包安装器）。
+  /// 测试用：算一段字节的 sha256（避免测试自己再引一份 crypto 实现）
+  @visibleForTesting
+  static String sha256HexForTest(List<int> bytes) => sha256.convert(bytes).toString();
+
+  /// 调起系统安装器（Windows 打开 exe；macOS 走 [installMacDmg] 就地替换）。
   /// **不退出进程** —— 退出由上层在断连后决定，避免装到一半内核还在跑。
   Future<bool> launchInstaller(String path) async {
     final override = debugLaunchInstallerOverride;
     if (override != null) return override(path);
-    if (Platform.isWindows || Platform.isMacOS) {
-      if (Platform.isMacOS) await clearQuarantine(path);
+    if (Platform.isMacOS) {
+      // 旧实现这里是 `open <dmg>`：只是把安装包丢给 Finder，用户还得自己把
+      // App 拖进「应用程序」—— 这不是「自动安装」，而且拖出来的 App 带着
+      // 隔离属性时 Gatekeeper 会直接报「已损坏」。现在自己做完整流程。
+      final r = await installMacDmg(path);
+      return r == MacInstallResult.installed ||
+          r == MacInstallResult.openedExternally;
+    }
+    if (Platform.isWindows) {
       try {
         return await launchUrl(Uri.file(path),
             mode: LaunchMode.externalApplication);
@@ -406,6 +499,178 @@ class UpdateService {
       }
     }
     return false;
+  }
+
+  /// macOS 就地安装结果
+  @visibleForTesting
+  static Future<MacInstallResult> Function(String dmg)? debugInstallMacOverride;
+
+  /// 测试缝：替换进程调用（真实路径要挂 DMG、复制几十 MB、替换 App）
+  @visibleForTesting
+  static Future<ProcessResult> Function(String exe, List<String> args)?
+      debugRunProcess;
+
+  /// 测试缝：替换「用系统默认程序打开某个文件」（测试环境里 launchUrl 永不返回）
+  @visibleForTesting
+  static Future<bool> Function(String path)? debugOpenFileOverride;
+
+  /// 测试缝：覆盖「当前 App 包路径」（测试进程不在 .app 里，真实推断恒为 null）
+  @visibleForTesting
+  static String? debugAppBundlePath;
+
+  /// 挂载 DMG → 复制出 .app（**不带隔离属性**）→ 替换当前 App → 重新启动。
+  ///
+  /// 为什么要自己做而不是 `open <dmg>`：
+  ///  1. 真正的自动更新：用户点一次就完事，不需要手动拖进「应用程序」；
+  ///  2. **隔离属性**：从 DMG 里拖出来的 App 可能带 `com.apple.quarantine`，
+  ///     而我们的 App 是 ad-hoc 签名（无 TeamIdentifier），一旦被隔离，
+  ///     Gatekeeper 只会报「已损坏，无法打开」—— 用 `ditto --noqtn` + 
+  ///     `xattr -dr com.apple.quarantine` 从根上避免；
+  ///  3. 挂载失败能区分出「安装包损坏」（半截下载）并让 UI 给出正确指引。
+  Future<MacInstallResult> installMacDmg(String dmgPath) async {
+    final override = debugInstallMacOverride;
+    if (override != null) return override(dmgPath);
+    if (!Platform.isMacOS) return MacInstallResult.failed;
+    final run = debugRunProcess ??
+        (String exe, List<String> args) => Process.run(exe, args);
+    if (!File(dmgPath).existsSync()) return MacInstallResult.failed;
+
+    final target = currentAppBundlePath();
+    if (target == null) {
+      // 不是从 .app 里跑（开发模式/命令行）：只能退回「打开安装包」让用户手动装
+      await clearQuarantine(dmgPath);
+      return await _openFile(dmgPath)
+          ? MacInstallResult.openedExternally
+          : MacInstallResult.failed;
+    }
+
+    final tmp = await Directory.systemTemp.createTemp('moneyfly_upd_');
+    final mnt = Directory('${tmp.path}/mnt')..createSync(recursive: true);
+    var mounted = false;
+    Directory? staging;
+    try {
+      // 1) 挂载（不弹 Finder、只读）。
+      const attachArgs = ['attach', '-nobrowse', '-readonly'];
+      var attach = await run(
+          'hdiutil', [...attachArgs, '-mountpoint', mnt.path, dmgPath]);
+      var err = '${attach.stderr}';
+      // 「资源忙」= 这张 DMG 已经挂载过（上一次尝试留下的卷）→ 先卸载再试一次，
+      // 不要把这种情况误判成「安装包损坏」（用户会以为自己下载坏了）
+      if (attach.exitCode != 0 &&
+          (err.contains('忙') || err.contains('busy') || err.contains('already'))) {
+        await run('hdiutil', ['detach', '/Volumes/MoneyFly', '-force']);
+        attach = await run(
+            'hdiutil', [...attachArgs, '-mountpoint', mnt.path, dmgPath]);
+        err = '${attach.stderr}';
+      }
+      if (attach.exitCode != 0) {
+        // 只有「映像本身读不出来」才算损坏（半截下载的典型症状）；
+        // 其它错误（权限、被占用）归为 failed，提示语不同、处理方式也不同
+        AppLog.error('更新包挂载失败: $err');
+        return _looksLikeCorruptImage(err)
+            ? MacInstallResult.damaged
+            : MacInstallResult.failed;
+      }
+      mounted = true;
+
+      // 2) 找挂载卷里的 .app
+      final src = mnt
+          .listSync()
+          .whereType<Directory>()
+          .where((d) => d.path.endsWith('.app'))
+          .toList();
+      if (src.isEmpty) return MacInstallResult.damaged;
+
+      // 3) 复制到**同一个卷**的暂存目录（才能原子替换）
+      final stagingPath = '$target.new';
+      staging = Directory(stagingPath);
+      if (staging.existsSync()) staging.deleteSync(recursive: true);
+      final copy = await run('ditto',
+          ['--noqtn', '-rsrc', src.first.path, stagingPath]);
+      if (copy.exitCode != 0) {
+        AppLog.error('更新包复制失败: ${copy.stderr}');
+        return MacInstallResult.failed;
+      }
+      // 双保险：清掉可能被继承的隔离属性（App 是 ad-hoc 签名，被隔离 = 报「已损坏」）
+      await run('xattr', ['-dr', 'com.apple.quarantine', stagingPath]);
+
+      // 4) 替换：旧 App 先改名让位，新 App 就位（运行中的进程不受影响）
+      final backupPath = '$target.old-${DateTime.now().millisecondsSinceEpoch}';
+      final oldDir = Directory(target);
+      if (oldDir.existsSync()) oldDir.renameSync(backupPath);
+      staging.renameSync(target);
+      staging = null;
+      mounted = false;
+      await run('hdiutil', ['detach', mnt.path, '-force']);
+      // 5) 清理备份（失败不影响结果）
+      await run('rm', ['-rf', backupPath]);
+
+      // 6) 起新版本。先把单实例锁放掉：新实例启动时会抢同一把排他锁，
+      //    我们还持锁的话它会立刻自杀（用户看到「更新完什么都没发生」）。
+      await SingleInstance.release();
+      final open = await run('open', ['-n', target]);
+      if (open.exitCode != 0) {
+        AppLog.error('新版本启动失败: ${open.stderr}');
+      }
+      return MacInstallResult.installed;
+    } catch (e) {
+      AppLog.error('就地安装失败: $e');
+      return MacInstallResult.failed;
+    } finally {
+      if (mounted) {
+        try {
+          await run('hdiutil', ['detach', mnt.path, '-force']);
+        } catch (_) {}
+      }
+      try {
+        if (staging != null && staging.existsSync()) {
+          staging.deleteSync(recursive: true);
+        }
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      } catch (_) {}
+    }
+  }
+
+  /// hdiutil 的错误里含这些词 = 安装包本体坏了（不是权限/占用问题）
+  static bool _looksLikeCorruptImage(String stderr) {
+    final s = stderr.toLowerCase();
+    const keys = [
+      'not recognized', // hdiutil: attach failed - 无法识别映像
+      '无法识别',
+      'corrupt',
+      'checksum',
+      'damaged',
+      'not a valid',
+      'no mountable file systems',
+    ];
+    return keys.any(s.contains);
+  }
+
+  /// 用系统默认程序打开文件（可注入：测试环境里 url_launcher 永不返回）
+  static Future<bool> _openFile(String path) async {
+    final override = debugOpenFileOverride;
+    if (override != null) return override(path);
+    try {
+      return await launchUrl(Uri.file(path),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 当前正在运行的 App 包路径（`/Applications/MoneyFly.app`）；
+  /// 不是从 .app 里跑（开发模式）则返回 null。
+  @visibleForTesting
+  static String? currentAppBundlePath() {
+    if (debugAppBundlePath != null) return debugAppBundlePath;
+    try {
+      final exe = Platform.resolvedExecutable;
+      final i = exe.indexOf('.app/Contents/MacOS/');
+      if (i < 0) return null;
+      return exe.substring(0, i + 4);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// macOS：清掉下载文件的隔离属性，否则 Gatekeeper 会拦下安装包
@@ -430,5 +695,10 @@ class UpdateService {
     debugLaunchInstallerOverride = null;
     debugCacheDir = null;
     debugCanInstallInApp = null;
+    debugInstallMacOverride = null;
+    debugRunProcess = null;
+    debugOpenFileOverride = null;
+    debugAppBundlePath = null;
+    _verifiedSha.clear();
   }
 }

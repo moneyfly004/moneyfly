@@ -54,13 +54,21 @@ class SingleInstance {
     }
   }
 
-  /// 仅供测试：释放锁（真实进程里不需要，退出即释放）
-  @visibleForTesting
-  static Future<void> releaseForTest() async {
+  /// 主动放掉锁。
+  ///
+  /// **自更新专用**：macOS 就地安装完成后要用 `open -n` 起新实例，而新实例启动时
+  /// 会抢同一把排他锁 —— 旧进程还持锁的话它会「抢不到锁 → 立刻退出」，
+  /// 用户看到的现象就是「更新完什么都没发生、软件不见了」。
+  /// 正常退出**不需要**调用：进程消亡时系统自动释放。
+  static Future<void> release() async {
     try {
       _lock?.unlockSync();
       await _lock?.close();
     } catch (_) {}
     _lock = null;
   }
+
+  /// 仅供测试：释放锁（等价于 [release]）
+  @visibleForTesting
+  static Future<void> releaseForTest() => release();
 }

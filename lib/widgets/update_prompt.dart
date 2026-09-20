@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/proxy/proxy_core.dart';
@@ -159,6 +160,15 @@ abstract final class UpdatePrompt {
             ],
           ),
           actions: [
+            // 手动兜底常驻：自动更新这条路无论因为什么走不通（网络、权限、
+            // 被安全软件拦、安装包损坏），用户手上都得有一个能真正完成的入口
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx, false);
+                openDownloadPage(downloadPageUrl);
+              },
+              child: Text(AppStrings.t('update_open_download_page')),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: Text(AppStrings.t('later')),
@@ -202,22 +212,31 @@ abstract final class UpdatePrompt {
       return;
     }
     if (path == null) {
-      // 不支持应用内安装（iOS）或下载失败 → 给下载页兜底
       if (!context.mounted) return;
-      final url = info?.downloadUrl ?? '';
-      if (url.isEmpty) {
+      // 连下载地址都没有（发布方还没传产物）：这条要单独说清楚，别甩「下载失败」
+      final hasUrl = (info?.downloadUrl ?? '').isNotEmpty;
+      if (!hasUrl) {
         await _alert(context, AppStrings.t('no_download_url'));
         return;
       }
-      final ok = await _confirm(context, AppStrings.t('update_download_failed'));
-      if (ok == true) await openDownloadPage(url);
+      await _fallback(context, info: info, reason: AppStrings.t('update_download_failed'));
       return;
     }
     if (!context.mounted) return;
     if (!UpdateService.canInstallInApp) {
-      await openDownloadPage(info?.downloadUrl ?? '');
+      await openDownloadPage(downloadPageUrl);
       return;
     }
+
+    // 安装前最后一道完整性校验：**缓存命中的包也要过**。
+    // 旧实现只判「文件存在且非空」，一个下载到一半的残包会被当成「已就绪」，
+    // 每次点更新都拿它去装 —— macOS 上就是挂载失败（用户看到「磁盘损坏」）。
+    if (!await UpdateService.instance.verifyInstaller(path, info)) {
+      if (!context.mounted) return;
+      await _fallback(context, info: info, reason: AppStrings.t('update_pkg_corrupt'));
+      return;
+    }
+    if (!context.mounted) return;
 
     // 装之前先断开：停内核 + 还原系统代理。
     // 否则安装器替换文件时可能被占用，且系统代理会残留指向死端口（整机断网）。
@@ -230,10 +249,39 @@ abstract final class UpdatePrompt {
       await SystemProxyManager.restore();
     } catch (_) {}
 
+    // macOS：直接就地安装（挂载 DMG → 复制出 .app（不带隔离属性）→ 替换 → 起新版本）
+    if (Platform.isMacOS) {
+      final r = await UpdateService.instance.installMacDmg(path);
+      if (!context.mounted) return;
+      switch (r) {
+        case MacInstallResult.installed:
+          await _alert(
+              context,
+              AppStrings.t('update_installed_restart',
+                  {'v': info?.latestVersion ?? ''}));
+          (debugExitOverride ?? exit)(0);
+          return;
+        case MacInstallResult.openedExternally:
+          // 开发模式运行（不是 .app）或权限不足：安装包已打开，交给用户手动拖
+          await _alert(context, AppStrings.t('update_manual_open_hint'));
+          (debugExitOverride ?? exit)(0);
+          return;
+        case MacInstallResult.damaged:
+          await _fallback(context,
+              info: info, reason: AppStrings.t('update_pkg_corrupt'));
+          return;
+        case MacInstallResult.failed:
+          await _fallback(context,
+              info: info, reason: AppStrings.t('update_install_failed'));
+          return;
+      }
+    }
+
     final launched = await UpdateService.instance.launchInstaller(path);
     if (!context.mounted) return;
     if (!launched) {
-      await _alert(context, AppStrings.t('update_install_launch_failed'));
+      await _fallback(context,
+          info: info, reason: AppStrings.t('update_install_launch_failed'));
       return;
     }
     if (Platform.isAndroid) {
@@ -241,8 +289,123 @@ abstract final class UpdatePrompt {
       return;
     }
     await _alert(context, AppStrings.t('update_installing_exit'));
-    // 让安装器独占文件（Windows Inno / macOS DMG）
+    // 让安装器独占文件（Windows Inno）
     (debugExitOverride ?? exit)(0);
+  }
+
+  /// GitHub Releases 最新版页面（打开**网页**而不是直链：直链会被浏览器
+  /// 下载并被打上隔离属性，ad-hoc 签名的 App 一被隔离就报「已损坏」，
+  /// 用户反而更困惑；网页上能看清版本、平台和体积）
+  static String get downloadPageUrl =>
+      'https://github.com/${UpdateService.githubRepo}/releases/latest';
+
+  /// 应急兜底弹窗：自动更新走不通时，给出**能真正完成**的手动路径。
+  ///
+  /// 为什么需要它：自动更新会因为一堆我们控制不了的原因失败 —— 网络拉不动
+  /// GitHub 资源、/Applications 没写权限、安装包不完整、被安全软件拦下。
+  /// 没有这个入口时用户就卡死在「点了更新但装不上」这一步。
+  static Future<void> _fallback(
+    BuildContext context, {
+    required UpdateInfo? info,
+    required String reason,
+  }) async {
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('update_fallback_title'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(reason,
+                style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.6)),
+            const SizedBox(height: 10),
+            Text(AppStrings.t('update_fallback_body'),
+                style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6)),
+          ],
+        ),
+        actions: [
+          if (Platform.isMacOS)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showMacManualHelp(context);
+              },
+              child: Text(AppStrings.t('update_manual_help')),
+            ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(AppStrings.t('cancel'))),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              openDownloadPage(downloadPageUrl);
+            },
+            child: Text(AppStrings.t('update_open_download_page'),
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// macOS 手动安装说明：包含「已损坏」的成因与一行修复命令（可复制）。
+  /// 这条是最后一道应急预案：用户从浏览器下载后可能被 Gatekeeper 拦下
+  /// （我们的 App 是 ad-hoc 签名，一旦带隔离属性就只会报「已损坏」）。
+  static Future<void> _showMacManualHelp(BuildContext context) async {
+    if (!context.mounted) return;
+    const cmd = 'xattr -dr com.apple.quarantine /Applications/MoneyFly.app';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('update_manual_help'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(AppStrings.t('update_manual_steps'),
+                  style: TextStyle(fontSize: 12.5, color: MFColors.txt2, height: 1.7)),
+              const SizedBox(height: 12),
+              Text(AppStrings.t('update_manual_damaged_hint'),
+                  style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6)),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: MFColors.card,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: MFColors.line),
+                ),
+                child: SelectableText(cmd,
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        color: MFColors.txt,
+                        fontFamily: kNumFont)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(const ClipboardData(text: cmd));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(AppStrings.t('update_manual_copied'))));
+            },
+            child: Text(AppStrings.t('update_manual_copy_cmd')),
+          ),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(AppStrings.t('confirm'))),
+        ],
+      ),
+    );
   }
 
   /// 显示进度弹窗并等待下载完成；超时或失败返回 path=null（cancelled=false）。
@@ -418,26 +581,6 @@ abstract final class UpdatePrompt {
     );
   }
 
-  static Future<bool?> _confirm(BuildContext context, String text) async {
-    if (!context.mounted) return null;
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: MFColors.card2,
-        content: Text(text, style: const TextStyle(fontSize: 13, height: 1.6)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(AppStrings.t('cancel')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(AppStrings.t('confirm')),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// 可关闭的弹窗句柄（幂等；用弹窗自己的 navigator 关，避免关错栈）
