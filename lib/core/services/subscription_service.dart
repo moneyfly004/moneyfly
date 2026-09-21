@@ -10,6 +10,42 @@ import '../models/models.dart';
 import 'settings_store.dart';
 import 'subscription_cache.dart';
 
+/// 订阅拿不到节点的**可区分原因**。
+///
+/// 为什么需要：历史上「更新订阅没有节点」在客户端是**全静默**的 —— 到期、
+/// 未开通、订阅被停用、后端没给订阅地址、后端返回故障页，全都只返回空列表，
+/// 用户看到的只有「没有可用节点」，既不知道原因也不知道下一步该做什么。
+/// 这里把原因分类出来，UI 才能给出**能真正解决问题**的动作（续费 / 设备管理 /
+/// 重新登录 / 重试）。
+enum SubscribeIssue {
+  /// 本机设备被移除（后端 403「已被移除并踢下线」）→ 重新登录以重新绑定本机
+  deviceKicked,
+
+  /// 套餐已到期 → 去续费
+  expired,
+
+  /// 尚未开通套餐 → 去开通
+  noSubscription,
+
+  /// 订阅被管理员停用 / 状态异常 → 联系客服
+  subscriptionDisabled,
+
+  /// 账号被禁用 → 联系客服
+  accountDisabled,
+
+  /// 设备数量已达上限 → 设备管理（删掉不再使用的设备）
+  deviceFull,
+
+  /// 有套餐但后端没下发订阅地址（异常）→ 重新登录 / 重试
+  noSubscribeUrl,
+
+  /// 网络 / 后端异常 → 重试
+  network,
+
+  /// 后端返回的不是订阅内容（故障页 / HTML / 跳登录）→ 已保留上次线路，可重试
+  badContent,
+}
+
 /// 订阅服务：拉取订阅信息 → 获取 Clash YAML → 解析节点列表
 ///
 /// 数据流（对应「运行拉取订阅并覆盖旧配置」要求）：
@@ -42,6 +78,7 @@ class SubscriptionService {
 
   /// 登出/切号时清空节点缓存（内存 + 磁盘），避免旧账号节点残留到新账号
   void clearCache() {
+    _lastIssue = null;
     _epoch++;
     _cache = [];
     _cacheTime = DateTime.fromMillisecondsSinceEpoch(0);
@@ -65,6 +102,74 @@ class SubscriptionService {
     } catch (_) {
       return const [];
     }
+  }
+
+  /// 最近一次拉取「为什么没有节点」（成功拉到时清空）。UI 据此弹可操作提示。
+  SubscribeIssue? get lastIssue => _lastIssue;
+  SubscribeIssue? _lastIssue;
+
+  /// 原因分类：订阅信息 → 原因（null = 信息层面正常）。
+  /// 与 [AccountService.classify] 的优先级保持一致（停用 > 到期 > 设备满 > 未开通），
+  /// 避免同一个用户在两处被判成不同状态。
+  static SubscribeIssue? classifyFromInfo(SubscriptionInfo s) {
+    final subActive =
+        s.isActive && (s.status.isEmpty || s.status.toLowerCase() == 'active');
+    if (!subActive) return SubscribeIssue.subscriptionDisabled;
+    if (s.isExpired) return SubscribeIssue.expired;
+    if (s.deviceLimit > 0 && s.currentDevices >= s.deviceLimit) {
+      return SubscribeIssue.deviceFull;
+    }
+    if (s.subscribeUrl.isEmpty) {
+      // 有套餐（有到期时间/剩余天数）却没给订阅地址 = 后端异常；
+      // 真·没套餐才是「未开通」
+      return (s.remainingDays > 0 || s.expireTime != null)
+          ? SubscribeIssue.noSubscribeUrl
+          : SubscribeIssue.noSubscription;
+    }
+    return null;
+  }
+
+  /// 原因分类：错误文案 → 原因。
+  static SubscribeIssue classifyFromError(String msg) {
+    if (isKickedMessage(msg)) return SubscribeIssue.deviceKicked;
+    if (_isDisableMessage(msg)) return SubscribeIssue.accountDisabled;
+    final m = msg.toLowerCase();
+    if (msg.contains('设备') && (msg.contains('上限') || msg.contains('已达'))) {
+      return SubscribeIssue.deviceFull;
+    }
+    if (m.contains('device limit') || m.contains('too many devices')) {
+      return SubscribeIssue.deviceFull;
+    }
+    return SubscribeIssue.network;
+  }
+
+  /// 订阅原文是否**看起来像**一份订阅（节点链接 / Clash YAML / JSON / base64）。
+  ///
+  /// 用途：区分两种「解析出 0 个节点」——
+  ///   1) 后端**故意**下发的占位内容（到期/禁用场景）→ 必须覆盖本地旧配置；
+  ///   2) 后端返回了故障页 / HTML 错误页 / 跳登录页 → **绝不能**据此清空用户的
+  ///      线路（一次后端抖动就把用户的节点全抹掉，用户只会看到「没有节点」）。
+  static bool looksLikeSubscription(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return false; // 空正文单独按「空订阅」处理，不算异常
+    if (t.startsWith('{') || t.startsWith('[')) return true; // JSON
+    final lower = t.toLowerCase();
+    if (lower.contains('proxies:') ||
+        lower.contains('proxy-groups:') ||
+        lower.contains('proxy-providers:')) {
+      return true;
+    }
+    if (t.contains('://')) return true; // vmess:// ss:// trojan:// ...
+    // base64 订阅：解出来含节点才算
+    final compact = t.replaceAll(RegExp(r'\s'), '');
+    if (compact.length > 24 &&
+        RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(compact)) {
+      try {
+        final dec = utf8.decode(base64.decode(base64.normalize(compact)));
+        return dec.contains('://') || dec.contains('proxies:');
+      } catch (_) {}
+    }
+    return false;
   }
 
   /// 获取订阅信息（XBoard 兼容 /user/subscribe）
@@ -117,6 +222,7 @@ class SubscriptionService {
     _enterSync();
     try {
       final info = await fetchInfo();
+      _lastIssue = classifyFromInfo(info);
       if (info.subscribeUrl.isEmpty) return [];
       if (!info.hasSubscription) {
         // 到期 / 订阅被停用 / 状态异常：清空缓存，加载「失效」而非老配置
@@ -133,16 +239,17 @@ class SubscriptionService {
       return await _pullAndCache(info, epoch);
     } catch (e) {
       final msg = ApiClient.errorMsg(e);
+      _lastIssue = classifyFromError(msg);
       // 账号被禁用：后端业务接口统一 403「账户已被禁用…」→ 视为受限，
       // 清空缓存返回空，避免把禁用误当网络错误后回退到老配置
-      if (_isDisableMessage(msg)) {
+      if (_lastIssue == SubscribeIssue.accountDisabled) {
         _dropAllCaches();
         return [];
       }
       // 设备被踢下线：后端对「被删除设备的订阅请求」返回 403
       // 「此设备已被移除并踢下线…」→ 清空本地订阅缓存（该设备不能再
       // 使用任何旧配置），断开与提示由调用方（UI / 调度器）处理
-      if (isKickedMessage(msg)) {
+      if (_lastIssue == SubscribeIssue.deviceKicked) {
         _dropAllCaches();
       }
       // 其余失败（断网/超时/服务端异常）：缓存新鲜（TTL 内）时回退内存缓存，
@@ -174,9 +281,26 @@ class SubscriptionService {
     // 请求，可能在「到期/禁用后已返回占位节点」的新请求之后落地，把老配置写回去，
     // 使过期用户重新拿到可用线路。序号让**过期的在途结果一律作废**。
     final seq = ++_reqSeq;
-    final raw = await _fetchRawWithCacheFallback(info.subscribeUrl);
+    var raw = await _fetchRawWithCacheFallback(info.subscribeUrl);
+    // 订阅地址轮换兜底：续费/换套餐/后台重建订阅后 subscribe_url 可能变化，
+    // 旧地址会 403/404 —— 这里重新问一次订阅信息，拿到新地址就再试一次，
+    // 避免用户「续了费还是拿不到节点」（必须重新登录才能恢复的体验）
+    try {
+      if (raw.trim().isEmpty) {
+        final fresh = await fetchInfo();
+        if (fresh.subscribeUrl.isNotEmpty &&
+            fresh.subscribeUrl != info.subscribeUrl) {
+          raw = await _fetchRawWithCacheFallback(fresh.subscribeUrl);
+        }
+      }
+    } catch (_) {}
     // 大订阅解析放到后台 isolate，避免阻塞 UI 线程
     final nodes = await compute(_parseInIsolate, raw);
+    if (nodes.isEmpty && raw.trim().isNotEmpty && !looksLikeSubscription(raw)) {
+      // 后端返回的不是订阅内容（故障页/HTML/跳登录）→ 别拿它清空用户线路
+      _lastIssue = SubscribeIssue.badContent;
+      return List.of(_cache);
+    }
     // 拉取期间发生登出/清缓存（epoch 变化）或已有更新的请求发出 → 结果作废：
     // **返回空而不是旧节点**。旧实现返回 nodes，会让「已过期/已禁用账号的
     // 在途旧请求」把可用线路重新注入连接器，绕过准入闸门。
@@ -190,6 +314,7 @@ class SubscriptionService {
     // 杜绝删完又被异步写回旧数据的竞态
     await SubscriptionCache.instance
         .write(subscribeUrl: info.subscribeUrl, raw: raw);
+    _lastIssue = null;
     return nodes;
   }
 

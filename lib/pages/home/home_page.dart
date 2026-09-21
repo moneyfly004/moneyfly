@@ -11,6 +11,7 @@ import '../../core/services/account_service.dart';
 import '../../core/services/permission_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/services/update_service.dart';
+import '../../widgets/subscribe_issue.dart';
 import '../../widgets/update_prompt.dart';
 import '../../core/api/api_client.dart';
 import '../../l10n/app_strings.dart';
@@ -155,6 +156,13 @@ class _HomePageState extends State<HomePage>
       if (!hadNodes && conn.nodes.isNotEmpty && mounted) {
         _toast(AppStrings.t('sub_updated_click_connect'));
       }
+      // 拉取「成功但没节点」也要说清楚原因：到期 / 未开通 / 订阅被停用 /
+      // 设备被移除 / 后端没给订阅地址 —— 每种都给能解决问题的按钮
+      if (nodes.isEmpty) {
+        if (!mounted) return;
+        await SubscribeIssuePrompt.showIfAny(context,
+            onRetry: () => _ensureNodes(force: true));
+      }
     } catch (e) {
       if (mounted) {
         final msg = ApiClient.errorMsg(e);
@@ -163,7 +171,13 @@ class _HomePageState extends State<HomePage>
           await conn.disconnect();
           await conn.loadNodes(const []);
         }
-        _toast(msg);
+        // 有可分类的原因（被移除/禁用/设备上限/网络）→ 弹可操作框；
+        // 分类不出来才退回原始文案 toast
+        if (!mounted) return;
+        if (!await SubscribeIssuePrompt.showIfAny(context,
+            onRetry: () => _ensureNodes(force: true))) {
+          _toast(msg);
+        }
       }
     } finally {
       if (mounted) setState(() => _loadingNodes = false);

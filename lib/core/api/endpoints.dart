@@ -25,6 +25,8 @@ class Endpoints {
   static const userSubscribe = '/user/subscribe'; // 返回 subscribe_url + 到期 + 设备数
   static const subscriptions = '/subscriptions/user-subscription';
   static const subscriptionsDevices = '/subscriptions/devices';
+  /// 自助恢复：把被「踢下线」的本机重新登记回设备列表（无需重新登录）
+  static const devicesRebind = '/subscriptions/devices/rebind';
 
   // 套餐 / 订单 / 支付
   static const packages = '/packages';

@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/api/user_agent.dart';
 import '../../core/models/models.dart';
+import '../../core/proxy/proxy_core.dart';
 import '../../core/services/account_service.dart';
+import '../../core/services/app_log.dart';
+import '../../core/services/subscription_service.dart';
 import '../../core/services/device_service.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
@@ -20,6 +26,28 @@ class DevicesPage extends StatefulWidget {
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
+}
+
+/// 设备列表里哪一条是「本机」。
+///
+/// 为什么重要：删除设备 = 踢下线，**删掉本机就等于把自己踢掉**（用户 2026-09-21
+/// 真实工单：到期后把设备全删了，续费一年仍然拿不到节点，因为本机已被移除）。
+/// 之前列表里不区分本机，用户根本不知道自己删的是正在用的这台。
+///
+/// 判定口径与后端识别设备的口径一致：UA 里的机型 + 品牌（客户端每个请求都会带
+/// `X-MF-Device-Model` / `X-MF-Device-Brand`）。
+bool isCurrentDeviceEntry(DeviceInfo d, Map<String, String> headers) {
+  final model = (headers['X-MF-Device-Model'] ?? '').trim().toLowerCase();
+  final brand = (headers['X-MF-Device-Brand'] ?? '').trim().toLowerCase();
+  final dModel = d.deviceModel.trim().toLowerCase();
+  final dBrand = d.deviceBrand.trim().toLowerCase();
+  if (model.isEmpty && brand.isEmpty) return false;
+  final modelHit = model.isNotEmpty && dModel.isNotEmpty && dModel == model;
+  final brandHit = brand.isNotEmpty && dBrand.isNotEmpty && dBrand == brand;
+  // 机型命中就够了（同名机型在不同品牌下也会被品牌条件误筛掉）
+  if (modelHit) return true;
+  // 机型拿不到（部分平台为空）时退化为品牌 + 在线 判定，避免完全认不出本机
+  return brandHit && model.isEmpty;
 }
 
 class _DevicesPageState extends State<DevicesPage> {
@@ -68,8 +96,14 @@ class _DevicesPageState extends State<DevicesPage> {
       builder: (_) => AlertDialog(
         backgroundColor: MFColors.card2,
         title: Text(AppStrings.t('delete_device'), style: const TextStyle(fontSize: 16)),
-        content: Text(AppStrings.t('delete_device_body', {'name': device.displayName}),
-            style:  TextStyle(fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+        content: Text(
+            isCurrentDeviceEntry(device, UserAgent.deviceHeaders)
+                ? AppStrings.t('delete_self_device_body',
+                    {'name': device.displayName})
+                : AppStrings.t('delete_device_body',
+                    {'name': device.displayName}),
+            style: TextStyle(
+                fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppStrings.t('cancel_text'))),
           TextButton(
@@ -83,12 +117,51 @@ class _DevicesPageState extends State<DevicesPage> {
     setState(() => _deletingId = device.id);
     try {
       await DeviceService.instance.delete(device.id);
+      final wasCurrent = isCurrentDeviceEntry(device, UserAgent.deviceHeaders);
       await _load(spinner: false);
-      if (mounted) _toast(AppStrings.t('device_deleted'));
+      if (!mounted) return;
+      _toast(AppStrings.t('device_deleted'));
+      // 删掉的如果是本机：本机已进入「已被移除」状态，拿不到订阅也连不上，
+      // 唯一恢复路径是重新登录（重新登记本机）—— 当场告诉用户，别让他
+      // 自己去猜为什么「更新订阅没有节点」
+      if (wasCurrent) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: MFColors.card2,
+            title: Text(AppStrings.t('self_deleted_title'),
+                style: const TextStyle(fontSize: 16)),
+            content: Text(AppStrings.t('self_deleted_body'),
+                style: TextStyle(
+                    fontSize: 13.5, color: MFColors.txt2, height: 1.6)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(AppStrings.t('ok_btn')),
+              ),
+            ],
+          ),
+        );
+      }
+      // 删设备会改变设备数/名额：立刻刷新账号状态与订阅，
+      // 否则「设备已达上限」的横幅与门禁会停留在旧判定上（用户删完还是连不上）
+      unawaited(_refreshAccountAndSub());
     } catch (e) {
       if (mounted) _toast(ApiClient.errorMsg(e));
     } finally {
       if (mounted) setState(() => _deletingId = null);
+    }
+  }
+
+  /// 删设备后刷新账号状态 + 订阅节点（设备名额释放要立刻体现出来）
+  Future<void> _refreshAccountAndSub() async {
+    try {
+      await AccountService.instance.refresh(force: true);
+      final nodes = await SubscriptionService.instance.fetchNodes(force: true);
+      // 名额释放后节点可能立刻可用：同步给连接器，用户回到首页就能连
+      await ConnectionController.instance.applySubscriptionNodes(nodes);
+    } catch (e) {
+      AppLog.error('refresh after device change failed: $e');
     }
   }
 
@@ -292,9 +365,36 @@ class _DevicesPageState extends State<DevicesPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(d.remark.isNotEmpty ? d.remark : d.displayName,
-                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                              d.remark.isNotEmpty ? d.remark : d.displayName,
+                              style: const TextStyle(
+                                  fontSize: 14.5, fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        if (isCurrentDeviceEntry(d, UserAgent.deviceHeaders)) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: MFColors.brand.withValues(alpha: .14),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                  color: MFColors.brand.withValues(alpha: .38)),
+                            ),
+                            child: Text(AppStrings.t('this_device'),
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: MFColors.brandLight,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       [d.osName, d.deviceModel].where((e) => e.isNotEmpty).join(' · '),

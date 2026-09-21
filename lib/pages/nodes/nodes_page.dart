@@ -15,6 +15,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/mf_chip.dart';
 import '../../widgets/mf_input.dart';
 import '../../widgets/country_flag.dart';
+import '../../widgets/subscribe_issue.dart';
 import '../devices/devices_page.dart';
 
 /// 节点列表（设计稿 03）：自动选优条 + 分组 + 延迟徽标 + 真实测速
@@ -54,7 +55,15 @@ class _NodesPageState extends State<NodesPage> {
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       // 受保护合并:已连接且当前线路不在新订阅时保持现状,不打断连接
       await conn.applySubscriptionNodes(nodes);
-      if (mounted && nodes.isEmpty) _toast(AppStrings.t('no_nodes_hint'));
+      if (mounted && nodes.isEmpty) {
+        // 原因优先：能分类就弹可操作框（重新登录/续费/设备管理/重试），
+        // 分类不出来才退回「订阅中没有可用节点」
+        if (!mounted) return;
+        if (!await SubscribeIssuePrompt.showIfAny(context,
+            onRetry: () => _load(force: true))) {
+          _toast(AppStrings.t('no_nodes_hint'));
+        }
+      }
       if (mounted && nodes.isNotEmpty && force) _toast(AppStrings.t('refresh_sub_ok'));
     } catch (e) {
       if (mounted) {
@@ -64,7 +73,11 @@ class _NodesPageState extends State<NodesPage> {
           await conn.disconnect();
           await conn.loadNodes(const []);
         }
-        _toast(msg);
+        if (!mounted) return;
+        if (!await SubscribeIssuePrompt.showIfAny(context,
+            onRetry: () => _load(force: true))) {
+          _toast(msg);
+        }
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);

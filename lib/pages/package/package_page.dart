@@ -4,12 +4,14 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/account_service.dart';
+import '../../core/services/app_log.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/mf_empty.dart';
+import '../../widgets/subscribe_issue.dart';
 import '../payment/payment_dialog.dart';
 
 /// 购买套餐：上下列表模式（每行 = 名称/说明/价格/购买）＋ 支付方式。
@@ -123,7 +125,19 @@ class _PackagePageState extends State<PackagePage> {
           if (mounted) {
             await context.read<ConnectionController>().applySubscriptionNodes(nodes);
           }
-        } catch (_) {}
+          // 刚续费/开通却仍没节点？——把原因说清楚（后端还没生效、订阅被停用、
+          // 设备数超限、本机被移除…）。旧实现这里 `catch (_) {}` 全吞，
+          // 用户付完钱只看到「已开通」然后一片空白，只能来问客服。
+          if (mounted && nodes.isEmpty) {
+            await SubscribeIssuePrompt.showIfAny(context,
+                force: true, onRetry: activate);
+          }
+        } catch (e) {
+          AppLog.error('refresh after purchase failed: $e');
+          if (!mounted) return;
+          await SubscribeIssuePrompt.showIfAny(context,
+              force: true, onRetry: activate);
+        }
       }
 
       // 免费/全额抵扣订单：后端直接置 paid，无需二维码，直接开通
