@@ -1,6 +1,8 @@
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 
+import '../services/local_paths.dart';
+
 /// MoneyFly User-Agent + 设备信息头
 ///
 /// UA 规范：`MoneyFly/<应用版本> (<操作系统特征串>)`
@@ -109,6 +111,24 @@ class UserAgent {
       }
       // 过滤空值
       deviceHeaders.removeWhere((_, v) => v.isEmpty);
+    } catch (_) {}
+
+    // 稳定设备 ID：安装级唯一、写入后不再变化（只有重装/清数据才换）。
+    //
+    // 后端用它做设备身份，而不是像过去那样按 UA（**含 App 版本号**）识别 ——
+    // 旧算法下用户每次升级 App/系统都会被当成「新设备」重复登记，旧行变成永久
+    // 占名额的幽灵设备，还会让「删除设备 = 踢下线」的判定错位（升级一次就绕过）。
+    //
+    // 刻意放在平台信息采集的 try 之外：设备信息插件失败也不能丢掉这个头。
+    try {
+      var installId = await LocalPaths.readMarker();
+      if (installId.isEmpty) {
+        await LocalPaths.writeMarker(); // 首次运行/标记缺失时补写
+        installId = await LocalPaths.readMarker();
+      }
+      if (installId.isNotEmpty) {
+        deviceHeaders['X-MF-Device-Id'] = installId;
+      }
     } catch (_) {}
   }
 
