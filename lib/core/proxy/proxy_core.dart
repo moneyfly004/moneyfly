@@ -208,20 +208,54 @@ class ConnectionController extends ChangeNotifier {
   /// true 后 applySettings 不再用设置里的 defaultMode 覆盖（首页选择优先）。
   bool _modeUserSet = false;
 
-  /// 用户手动选定的国家码（快速切换国家 / 节点选择器手动切换后锁定）。
-  /// 非 null 时，后台测速和自动选优只在该国家范围内切换，不会跳到其他国家。
-  /// 首次连接（自动选最优）/ disconnect / resetForLogout / unlockCountry 时清空。
+  /// 用户手动选定的国家码（快速切换国家 / 托盘国家菜单后锁定）。
+  /// 非 null 时，后台测速和自动选优只在该国家范围内切换（允许换节点），
+  /// 不会跳到其他国家。与 [pinnedTag] 互斥。
   String? lockedCountry;
 
-  /// 解除国家锁定，回到全局自动选优。已连接时立刻测速并切换到全局最优。
-  Future<void> unlockCountry() async {
+  /// 用户手动固定的**节点** tag（在节点列表里点某个节点 = 固定它）。
+  ///
+  /// 非 null 时是「最强约束」：后台测速 / 自动选优 / 慢线回落一律不换节点
+  /// （测速只更新延迟数字），断开重连与重启后仍恢复到这个节点。
+  /// 只有三种情况会解除：用户点了别的节点、点了「自动选择最优」、
+  /// 或该节点在新订阅里消失。
+  String? pinnedTag;
+
+  /// 是否已从设置里恢复过一次持久化的选择（避免设置变更时反复覆盖内存态）
+  bool _selectionLoaded = false;
+
+  /// 解除「固定节点 / 锁定国家」，回到全局自动选优（首页「自动选择最优」）。
+  /// 已连接时立刻测速并切换到全局最优。
+  Future<void> unlockSelection() async {
+    final hadPin = pinnedTag;
+    pinnedTag = null;
     lockedCountry = null;
-    // 同时清除持久化的手动选择：此后连接不再恢复旧节点，走全局自动选优
+    // 清除持久化：此后连接不再恢复旧节点/旧国家，走全局自动选优
     unawaited(_clearPersistedSelection());
+    if (hadPin != null) {
+      AppLog.conn('unpin node ($hadPin) → 全局自动选优');
+    }
     notifyListeners();
     if (status == ConnStatus.connected && autoTest) {
       await _autoSpeedTestAndSwitch(_epoch, forceBest: true);
     }
+  }
+
+  /// 点「国家」：锁定国家，只在该国范围内自动选最优（允许换节点）。
+  /// 与点「节点」（固定节点）互斥 —— 这里会解除节点固定。
+  Future<bool> switchCountry(String code) async {
+    final cc = code.toUpperCase();
+    final candidates = nodes
+        .where((n) => (n.countryCode?.toUpperCase() ?? 'XX') == cc)
+        .toList();
+    if (candidates.isEmpty) return false;
+    final best = SpeedTester.selectBest(candidates) ??
+        candidates.firstWhere((n) => n.online, orElse: () => candidates.first);
+    pinnedTag = null;
+    lockedCountry = cc;
+    unawaited(_persistCountry(cc, best));
+    await _applyNodeSwitch(best);
+    return true;
   }
 
   /// 持久化统一收敛到 SettingsStore.update(全局单写队列),
@@ -233,12 +267,62 @@ class ConnectionController extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// 持久化「用户手动选择的节点」到设置（重启后由 connect 恢复）
+  /// 持久化「用户手动选定的节点」：既是上次使用的节点（lastSelectedTag，兼容
+  /// 旧数据），也是**节点固定**（pinTag）。两者一起写，重启后 connect 才能
+  /// 既恢复节点又恢复「不自动跳」的语义。
   Future<void> _persistSelection(ProxyNode node) =>
-      _enqueueSettingsWrite((s) => s['lastSelectedTag'] = node.tag);
+      _enqueueSettingsWrite((s) {
+        s['lastSelectedTag'] = node.tag;
+        s['pinTag'] = node.tag;
+        s.remove('lockCountry');
+      });
+
+  /// 持久化「锁定国家」：pinTag 必须一并清掉，否则重启后节点固定会盖过国家锁
+  Future<void> _persistCountry(String code, ProxyNode node) =>
+      _enqueueSettingsWrite((s) {
+        s['lastSelectedTag'] = node.tag;
+        s['lockCountry'] = code;
+        s.remove('pinTag');
+      });
 
   Future<void> _clearPersistedSelection() =>
-      _enqueueSettingsWrite((s) => s.remove('lastSelectedTag'));
+      _enqueueSettingsWrite((s) {
+        s.remove('lastSelectedTag');
+        s.remove('pinTag');
+        s.remove('lockCountry');
+      });
+
+  /// 连接前恢复用户的选择：固定节点优先 → 锁定国家（该国上次节点或该国最优）
+  /// → 上次手动选择的节点。节点已不在订阅里时顺手解除对应的固定/锁定。
+  Future<ProxyNode?> _restoreSelection(List<ProxyNode> list) async {
+    final pin = pinnedTag;
+    if (pin != null && pin.isNotEmpty) {
+      for (final n in list) {
+        if (n.tag == pin) return n;
+      }
+      // 固定节点已下架：解除固定，否则会一直连不上或连到不存在的线路
+      AppLog.conn('pinned node gone from subscription: $pin → 解除固定');
+      pinnedTag = null;
+      unawaited(_clearPersistedSelection());
+    }
+    final cc = lockedCountry;
+    if (cc != null && cc.isNotEmpty) {
+      final remembered = await _restoreLastSelection(list);
+      if (remembered != null &&
+          (remembered.countryCode?.toUpperCase() ?? 'XX') == cc) {
+        return remembered;
+      }
+      final candidates = list
+          .where((n) => (n.countryCode?.toUpperCase() ?? 'XX') == cc)
+          .toList();
+      if (candidates.isNotEmpty) {
+        return SpeedTester.selectBest(candidates) ?? candidates.first;
+      }
+      lockedCountry = null;
+      unawaited(_clearPersistedSelection());
+    }
+    return _restoreLastSelection(list);
+  }
 
   /// 从设置恢复上次手动选择的节点（仅当节点仍存在于当前订阅时）
   Future<ProxyNode?> _restoreLastSelection(List<ProxyNode> list) async {
@@ -351,6 +435,18 @@ class ConnectionController extends ChangeNotifier {
 
   /// 从设置项同步连接行为（设置页 / 启动时调用）
   void applySettings(Map<String, dynamic> s) {
+    // 首次加载时恢复持久化的「固定节点 / 锁定国家」（之后以内存态为准，
+    // 避免设置变更把用户刚做的选择覆盖回去）
+    if (!_selectionLoaded) {
+      _selectionLoaded = true;
+      final pin = s['pinTag']?.toString() ?? '';
+      final lock = s['lockCountry']?.toString() ?? '';
+      if (pin.isNotEmpty) {
+        pinnedTag = pin;
+      } else if (lock.isNotEmpty) {
+        lockedCountry = lock.toUpperCase();
+      }
+    }
     if (s['autoTest'] is bool) autoTest = s['autoTest'] as bool;
     if (s['autoReconnect'] is bool) autoReconnect = s['autoReconnect'] as bool;
     final u = s['testUrl']?.toString();
@@ -443,6 +539,7 @@ class ConnectionController extends ChangeNotifier {
 
   Future<void> loadNodes(List<ProxyNode> list) async {
     nodes = _carryMeasuredLatency(list, nodes);
+    _dropPinIfNodeGone();
     _retargetCurrent();
     notifyListeners();
   }
@@ -461,6 +558,18 @@ class ConnectionController extends ChangeNotifier {
     }
     current = null;
     _dropLockIfCountryGone();
+  }
+
+  /// 固定节点已不在当前列表（订阅下架/换源）→ 解除固定，
+  /// 否则会一直尝试连一个不存在的线路（内核里也没有该 outbound）。
+  void _dropPinIfNodeGone() {
+    final pin = pinnedTag;
+    if (pin == null) return;
+    if (!nodes.any((n) => n.tag == pin)) {
+      pinnedTag = null;
+      unawaited(_clearPersistedSelection());
+      AppLog.conn('pinned node gone: $pin → 解除固定');
+    }
   }
 
   /// 锁定国家已无任何节点（订阅下架/换源）→ 解除锁，
@@ -655,11 +764,14 @@ class ConnectionController extends ChangeNotifier {
     // 选连接节点：优先恢复「上次手动选择的节点」（跨重启/断开重连都保持
     // 固定国家不跳）→ 其次延迟最优 → 再次首个在线节点兜底。
     if (current == null) {
-      final remembered = await _restoreLastSelection(nodes);
+      final remembered = await _restoreSelection(nodes);
       if (remembered != null) {
         current = remembered;
-        // 恢复后继续锁定该国家：后台测速/自动选优只在该国范围，绝不乱跳
-        lockedCountry ??= remembered.countryCode;
+        // 固定节点：不设国家锁（固定是最强约束，自动逻辑一律不动它）；
+        // 否则恢复后继续锁定该国家：后台测速/自动选优只在该国范围，绝不乱跳
+        if (pinnedTag == null) {
+          lockedCountry ??= remembered.countryCode;
+        }
       }
     }
     final best = SpeedTester.selectBest(nodes);
@@ -934,6 +1046,9 @@ class ConnectionController extends ChangeNotifier {
   Future<void> _applySwitchPolicy(
       _SwitchPolicy policy, List<ProxyNode> tested) async {
     if (policy == _SwitchPolicy.none) return;
+    // 用户固定了节点 → 任何自动策略都不换（测速只更新延迟数字）；
+    // 「自动选择最优」是显式动作（unlockSelection），不走这里
+    if (pinnedTag != null) return;
     if (status != ConnStatus.connected || !_core.isRunning) return;
     final best = selectBestRespectingLock(tested);
     if (best == null) return;
@@ -993,7 +1108,10 @@ class ConnectionController extends ChangeNotifier {
 
   /// 在 [tested] 中按 lockedCountry 过滤后选延迟最优节点。
   /// 锁定国家无候选/无在线节点时返回 null（宁可不切换，也绝不跨国家跳）。
+  /// 用户固定了具体节点时**恒返回 null**：自动换线的所有调用点都以此为准，
+  /// 一处收敛，避免遗漏某条回落路径把用户的固定悄悄换掉。
   ProxyNode? selectBestRespectingLock(List<ProxyNode> tested) {
+    if (pinnedTag != null) return null;
     if (lockedCountry == null) return SpeedTester.selectBest(tested);
     final candidates = tested
         .where((n) => (n.countryCode?.toUpperCase() ?? 'XX') == lockedCountry)
@@ -1139,7 +1257,10 @@ class ConnectionController extends ChangeNotifier {
     _stableResetTimer?.cancel();
     _bgTestTimer?.cancel();
     _clearState();
-    // 登出/切号：清掉持久化的节点选择，避免旧账号的固定线路残留到新账号
+    // 登出/切号：清掉持久化的节点选择（含固定节点/锁定国家），
+    // 避免旧账号的固定线路残留到新账号
+    pinnedTag = null;
+    lockedCountry = null;
     unawaited(_clearPersistedSelection());
     final stopFut = _core.stop().catchError((e) {
       AppLog.error('resetForLogout stop failed: $e');
@@ -1156,15 +1277,25 @@ class ConnectionController extends ChangeNotifier {
   }
 
   /// 切换节点（热切换；失败则提示；成功后重测真实出口国家）。
-  /// [userInitiated] 用户手动切换（首页国家/节点选择器）→ 锁定该国家，
-  /// 后台测速不再跳到其他国家；自动选优调用时传 false 不改锁定状态。
+  ///
+  /// [userInitiated] = true 表示**用户点了这个节点** → 固定该节点（pinnedTag）：
+  /// 后台测速/自动选优不再换节点，断开重连与重启后仍恢复它。
+  /// 点「国家」走 [switchCountry]（只锁国家、允许在国内换节点）；
+  /// 点「自动选择最优」走 [unlockSelection]。
+  /// 自动选优/回落调用时传 false，不改动用户的固定与锁定。
   Future<void> switchNode(ProxyNode node, {bool userInitiated = true}) async {
-    current = node;
     if (userInitiated) {
-      lockedCountry = node.countryCode;
-      // 持久化用户手动选择：跨重启 / 断开重连后恢复（固定国家不跳的前提）
+      pinnedTag = node.tag;
+      lockedCountry = null; // 固定节点是国家锁的更强形式，二者互斥
+      // 持久化：跨重启 / 断开重连后恢复（固定节点不跳的前提）
       unawaited(_persistSelection(node));
     }
+    await _applyNodeSwitch(node);
+  }
+
+  /// 真正落地一次节点切换：内存态 + 内核热切换 + 出口国家重测。
+  Future<void> _applyNodeSwitch(ProxyNode node) async {
+    current = node;
     notifyListeners();
     if (status == ConnStatus.connected && _core.isRunning) {
       try {
@@ -1385,6 +1516,12 @@ class ConnectionController extends ChangeNotifier {
       if (status != ConnStatus.connected || !autoTest) return;
       nodes = tested;
       _retargetCurrent(); // 列表整体替换后 current 重指向新实例
+      // 用户固定了节点 → 只更新延迟，绝不换线（与 _applySwitchPolicy 同一规则）
+      if (pinnedTag != null) {
+        lastSpeedTestTime = _now();
+        notifyListeners();
+        return;
+      }
       final best = selectBestRespectingLock(tested);
       final cur = current;
       if (best == null || cur == null) return;

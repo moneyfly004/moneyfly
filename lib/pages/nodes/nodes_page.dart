@@ -418,7 +418,7 @@ class _NodesPageState extends State<NodesPage> {
     return GestureDetector(
       onTap: () async {
         await conn.switchNode(n);
-        if (mounted) _toast(AppStrings.t('switched_to', {'name': n.tag}));
+        if (mounted) _toast(AppStrings.t('pin_toast', {'name': n.tag}));
       },
       child: Container(
         margin: _nodeMargin,
@@ -447,7 +447,11 @@ class _NodesPageState extends State<NodesPage> {
                   const SizedBox(height: 2),
                   Text('${n.type} · ${n.port}',
                       style:  TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
-                  if (isCurrent) ...[
+                  if (conn.pinnedTag == n.tag) ...[
+                    const SizedBox(height: 2),
+                    Text('📌 ${AppStrings.t('node_pinned_hint')}',
+                        style: TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w700)),
+                  ] else if (isCurrent) ...[
                     const SizedBox(height: 2),
                     Text('✨ ${AppStrings.t('selected')}', style: TextStyle(fontSize: 9.5, color: MFColors.brandLight, fontWeight: FontWeight.w600)),
                   ],

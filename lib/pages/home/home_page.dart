@@ -52,6 +52,7 @@ class _HomePageState extends State<HomePage>
     ConnectionController.instance.addListener(_onConnChanged);
     // 启动后台检查发现新版本 → 弹一次更新提示（同版本一次运行只弹一次）
     UpdateService.hasUpdate.addListener(_onUpdateAvailable);
+    _onLaunchAutoInstall();
     // 检查往往在本页挂载**之前**就完成了（启动即发起），那时只加监听收不到通知
     // → 用当前值补一次，否则「检查比进主页快」时永远不会弹（静默错过更新）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -67,6 +68,16 @@ class _HomePageState extends State<HomePage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(UpdatePrompt.maybePromptOnLaunch(context));
+    });
+  }
+
+  /// 启动时先补最后一步：后台已下载好的新版本包直接静默安装（Windows 安装版）。
+  /// 这样「点了检查更新 → 后台下好 → 重启」就能真正完成升级，而不是永远停在
+  /// 「已下载」。
+  void _onLaunchAutoInstall() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(UpdatePrompt.maybeAutoInstallPending(context));
     });
   }
 
@@ -468,8 +479,14 @@ class _HomePageState extends State<HomePage>
               SizedBox(height: gapL),
               RepaintBoundary(child: _buildStats(ConnectionController.instance, compact)),
               SizedBox(height: gapL),
-              Selector<ConnectionController, ({int nodesHash, String? curTag, String? lock})>(
-                selector: (_, c) => (nodesHash: c.nodes.length, curTag: c.current?.tag, lock: c.lockedCountry),
+              Selector<ConnectionController,
+                  ({int nodesHash, String? curTag, String? lock, String? pin})>(
+                selector: (_, c) => (
+                  nodesHash: c.nodes.length,
+                  curTag: c.current?.tag,
+                  lock: c.lockedCountry,
+                  pin: c.pinnedTag
+                ),
                 builder: (ctx, v, child) =>
                     _buildQuickCountries(ctx.read<ConnectionController>(), compact),
               ),
@@ -855,6 +872,31 @@ class _HomePageState extends State<HomePage>
                         ],
                       ),
                     ),
+                    // 已固定节点：明确告知「不会自动跳」，这是用户最容易困惑的点
+                    if (conn.pinnedTag != null && conn.pinnedTag == node.tag)
+                      Container(
+                        margin: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: MFColors.brand.withValues(alpha: .14),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: MFColors.brand.withValues(alpha: .38)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.push_pin,
+                                size: 11, color: MFColors.brandLight),
+                            const SizedBox(width: 3),
+                            Text(AppStrings.t('node_pinned'),
+                                style: TextStyle(
+                                    fontSize: 10.5,
+                                    color: MFColors.brandLight,
+                                    fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
                     if (node.online && node.latencyMs >= 0)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
@@ -1211,13 +1253,14 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  /// 「自动最优」药丸：解除国家锁定，回到全局选优。恒占网格第一格。
+  /// 「自动最优」药丸：解除「固定节点 / 锁定国家」，回到全局选优。恒占网格第一格。
   Widget _autoBestPill(ConnectionController conn, int index) {
-    final active = conn.lockedCountry == null;
+    // 亮着 = 当前没有任何固定/锁定（全局自动选最优）
+    final active = conn.lockedCountry == null && conn.pinnedTag == null;
     return GestureDetector(
       key: ValueKey('quick_pill_$index'),
       onTap: () async {
-        await conn.unlockCountry();
+        await conn.unlockSelection();
         if (mounted) _toast(AppStrings.t('auto_best_activated'));
       },
       child: _pillShell(
@@ -1245,15 +1288,23 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  /// 国家药丸：国旗 + 国家名 + 该国最低延迟
+  /// 国家药丸：国旗 + 国家名 + 该国最低延迟。
+  /// 点它 = **锁定国家**（只在该国范围内自动挑最优，允许换节点），
+  /// 与「点节点 = 固定节点」区分开。
   Widget _countryPill(
       ConnectionController conn, MapEntry<String, ProxyNode> e, bool compact, int index) {
-    final active = conn.current?.countryCode?.toUpperCase() == e.key;
+    // 高亮 = 当前正处于「锁定该国」状态（固定了具体节点时不高亮国家格）
+    final active =
+        conn.pinnedTag == null && conn.lockedCountry?.toUpperCase() == e.key;
     return GestureDetector(
       key: ValueKey('quick_pill_$index'),
       onTap: () async {
-        await conn.switchNode(e.value);
-        if (mounted) _toast(AppStrings.t('switched_to', {'name': e.value.tag}));
+        final ok = await conn.switchCountry(e.key);
+        if (!mounted) return;
+        _toast(ok
+            ? AppStrings.t('country_locked_toast',
+                {'name': GeoLookupService.countryName(e.key)})
+            : AppStrings.t('no_nodes'));
       },
       child: _pillShell(
         active: active,
@@ -1437,7 +1488,7 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
                   onTap: () async {
                     Navigator.pop(context);
                     await conn.switchNode(n);
-                    _toast(AppStrings.t('switched_to', {'name': n.tag}));
+                    _toast(AppStrings.t('pin_toast', {'name': n.tag}));
                   },
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 8),
@@ -1468,6 +1519,10 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                        if (conn.pinnedTag == n.tag) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.push_pin, size: 14, color: MFColors.brandLight),
+                        ],
                         if (isCurrent) ...[
                           const SizedBox(width: 8),
                           Icon(Icons.check_circle, size: 16, color: MFColors.brandLight),

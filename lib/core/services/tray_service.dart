@@ -41,22 +41,6 @@ class TrayService with TrayListener {
 
   void _onStateChanged() => _updateMenu();
 
-  /// 该国家当前应切换的节点：已测延迟最低的在线节点，否则首个在线/首个
-  ProxyNode? _bestInCountry(ConnectionController ctrl, String code) {
-    final candidates = ctrl.nodes
-        .where((n) => (n.countryCode?.toUpperCase() ?? 'XX') == code)
-        .toList();
-    if (candidates.isEmpty) return null;
-    candidates.sort((a, b) {
-      if (a.online != b.online) return a.online ? -1 : 1;
-      if (a.latencyMs < 0 && b.latencyMs < 0) return 0;
-      if (a.latencyMs < 0) return 1;
-      if (b.latencyMs < 0) return -1;
-      return a.latencyMs.compareTo(b.latencyMs);
-    });
-    return candidates.first;
-  }
-
   Future<void> _updateMenu() async {
     final ctrl = ConnectionController.instance;
     final connected = ctrl.status == ConnStatus.connected;
@@ -131,12 +115,9 @@ class TrayService with TrayListener {
     }
     if (key.startsWith('country:')) {
       final code = key.substring('country:'.length);
-      final target = _bestInCountry(ctrl, code);
-      if (target != null) {
-        // switchNode(userInitiated:true)：连接时热切+锁定国家；
-        // 未连接时预选节点并锁定（与首页点击国家行为一致）
-        unawaitedSafe(ctrl.switchNode(target, userInitiated: true));
-      }
+      // switchCountry：锁定国家（该国范围内自动选最优，允许换节点），
+      // 同时解除节点固定 —— 与首页点国家格子的语义完全一致
+      unawaitedSafe(ctrl.switchCountry(code));
       return;
     }
     switch (key) {
