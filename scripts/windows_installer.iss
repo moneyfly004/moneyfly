@@ -63,14 +63,19 @@ Type: filesandordirs; Name: "{localappdata}\top.moneyfly\MoneyFly"
 Type: filesandordirs; Name: "{localappdata}\Temp\moneyfly_core"
 
 [Code]
-// 静默自动安装（应用内「重启即更新」）时，/CLOSEAPPLICATIONS 已由 Restart Manager
-// 关闭占用文件的进程；这里额外兜一层：升级安装（已存在安装目录）时主动结束
-// moneyfly.exe，避免个别环境下 Restart Manager 拿不到句柄导致替换失败。
-function InitializeSetup(): Boolean;
+// 升级安装时先结束正在运行的旧版本：/CLOSEAPPLICATIONS 靠 Restart Manager，
+// 个别环境下拿不到句柄就替换失败，这里兜一层 taskkill（没在跑时它返回非零，无害）。
+//
+// ⚠️ 位置很重要：**绝不能放在 InitializeSetup 里**。Inno 的 {app} 等常量在
+// 向导初始化阶段还没赋值，那里展开会直接抛
+//   "An attempt was made to expand the "app" constant before it was initialized"
+// 并中断安装（2.2.14 的真实事故：所有 Windows 用户装到 1:56 就报这个错）。
+// PrepareToInstall 是「安装目录已确定、文件还没开始复制」的时机，
+// 普通安装与 /SILENT 静默安装都会走到这里。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  if DirExists(ExpandConstant('{app}')) then
-    Exec('taskkill.exe', '/f /im moneyfly.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := True;
+  Exec('taskkill.exe', '/f /im moneyfly.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
 end;
