@@ -46,7 +46,10 @@ Name: "{group}\{cm:UninstallProgram,MoneyFly}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\MoneyFly"; Filename: "{app}\moneyfly.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\moneyfly.exe"; Description: "{cm:LaunchProgram,MoneyFly}"; Flags: nowait postinstall skipifsilent
+; 注意：**不能加 skipifsilent**。应用内「重启即更新」用的是 /SILENT 静默安装，
+; 加了 skipifsilent 装完就不会拉起 App —— 用户看到的就是「升级装完了但程序没回来」
+; （旧版本还停在后台/或窗口消失）。nowait 让安装器立刻返回，不阻塞收尾。
+Filename: "{app}\moneyfly.exe"; Description: "{cm:LaunchProgram,MoneyFly}"; Flags: nowait postinstall
 
 ; ===== 卸载彻底：删除应用数据残留 =====
 ; path_provider 在 Windows 上：支持目录 %APPDATA%\top.moneyfly\MoneyFly、
@@ -60,8 +63,14 @@ Type: filesandordirs; Name: "{localappdata}\top.moneyfly\MoneyFly"
 Type: filesandordirs; Name: "{localappdata}\Temp\moneyfly_core"
 
 [Code]
-// 安装前检查残留进程，避免文件占用（可选增强）
+// 静默自动安装（应用内「重启即更新」）时，/CLOSEAPPLICATIONS 已由 Restart Manager
+// 关闭占用文件的进程；这里额外兜一层：升级安装（已存在安装目录）时主动结束
+// moneyfly.exe，避免个别环境下 Restart Manager 拿不到句柄导致替换失败。
 function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
 begin
+  if DirExists(ExpandConstant('{app}')) then
+    Exec('taskkill.exe', '/f /im moneyfly.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;

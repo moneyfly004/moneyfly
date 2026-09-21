@@ -79,6 +79,75 @@ abstract final class UpdatePrompt {
     await showUpdateDialog(context, info: info);
   }
 
+  /// 启动时：后台已经把新版本安装包下好了 → **直接静默装掉**（"重启即更新"）。
+  ///
+  /// 为什么需要：用户点了「检查更新」，包在后台下好了，但弹窗被关掉/没点安装，
+  /// 于是「下载完了却永远装不上」。这里在启动时补上最后一步。
+  ///
+  /// 只在 Windows 的**安装版**上做（便携版静默安装会装出第二份；macOS 走
+  /// 点击安装时就地替换的既有路径）。同一版本只自动尝试一次：万一是权限/安全
+  /// 软件拦下导致装不上，不做无限重试（否则每次启动都弹一下、永远升不上去），
+  /// 之后由常规更新弹窗引导手动安装。
+  static Future<void> maybeAutoInstallPending(BuildContext context) async {
+    if (!Platform.isWindows) return;
+    if (!UpdateService.canInstallInApp) return;
+    if (!UpdateService.runningFromInstalledLayout) return;
+
+    final pending = await UpdateService.instance.pendingNewerInstaller();
+    if (pending == null) return;
+    if (_busy) return;
+
+    final tried = (await SettingsStore.instance
+            .load())['autoInstallTriedVersion']
+        ?.toString() ??
+        '';
+    if (tried == pending.version) {
+      AppLog.log('UPDATE',
+          '已自动安装过 ${pending.version} 但仍未生效 → 不再自动重试，改走手动更新');
+      return;
+    }
+    // 先记账再动手：即使进程在安装过程中被结束，也不会陷入「启动→安装→失败」循环
+    await SettingsStore.instance
+        .update((s) => s['autoInstallTriedVersion'] = pending.version);
+    if (!context.mounted) return;
+
+    _busy = true;
+    AppLog.log('UPDATE', '启动时发现已下载的 ${pending.version}，开始静默安装');
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: MFColors.card,
+        title: Text(AppStrings.t('update_installing_title'),
+            style: const TextStyle(fontSize: 15)),
+        content: Text(
+            AppStrings.t('update_installing_body', {'v': pending.version}),
+            style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+      ),
+    ));
+
+    // 与手动安装同一条路径：先断开内核 + 还原系统代理，避免文件占用与
+    // 「代理指向死端口导致整机断网」的残留
+    try {
+      await ConnectionController.instance.disconnect();
+    } catch (e) {
+      AppLog.error('disconnect before auto install failed: $e');
+    }
+    try {
+      await SystemProxyManager.restore();
+    } catch (_) {}
+
+    final ok = await UpdateService.instance.installWindowsSilently(pending.path);
+    if (!ok) {
+      _busy = false;
+      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+      AppLog.error('静默安装启动失败，回退到手动更新弹窗');
+      return; // 常规弹窗/设置页仍可手动更新
+    }
+    // 安装器接手后本进程必须退出（否则文件被占用装不进去）
+    (debugExitOverride ?? exit)(0);
+  }
+
   /// 手动检查更新（设置 →「版本更新」）。
   static Future<void> checkManually(BuildContext context) async {
     if (_busy || !context.mounted) return;

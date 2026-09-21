@@ -477,6 +477,88 @@ class UpdateService {
   @visibleForTesting
   static String sha256HexForTest(List<int> bytes) => sha256.convert(bytes).toString();
 
+  /// 「重启即更新」用：缓存里已下好、且比当前版本新的安装包。
+  ///
+  /// 只认本平台的安装器文件名前缀（Windows: `MoneyFly-setup-<ver>.exe`），
+  /// 版本从文件名解析并与当前版本比较 —— 比当前版本旧或相同的缓存一律忽略
+  /// （用户手里可能留着老包）。多个候选取版本最高的。
+  Future<({String path, String version})?> pendingNewerInstaller() async {
+    final dir = await _updateDir();
+    if (dir == null || !dir.existsSync()) return null;
+    ({String path, String version})? best;
+    for (final f in dir.listSync()) {
+      if (f is! File) continue;
+      final name = f.uri.pathSegments.isEmpty ? '' : f.uri.pathSegments.last;
+      final m = RegExp(r'^MoneyFly-setup-(\d+\.\d+\.\d+)\.exe$').firstMatch(name);
+      if (m == null) continue;
+      final v = m.group(1)!;
+      if (!_newerThanCurrent(v)) continue;
+      if (f.lengthSync() == 0) continue;
+      if (best == null || _versionKey(v).compareTo(_versionKey(best.version)) > 0) {
+        best = (path: f.path, version: v);
+      }
+    }
+    return best;
+  }
+
+  static String _versionKey(String v) {
+    final m = RegExp(r'(\d+)\.(\d+)\.(\d+)').firstMatch(v);
+    if (m == null) return v;
+    return '${int.parse(m.group(1)!).toString().padLeft(6, '0')}'
+        '${int.parse(m.group(2)!).toString().padLeft(6, '0')}'
+        '${int.parse(m.group(3)!).toString().padLeft(6, '0')}';
+  }
+
+  static bool _newerThanCurrent(String v) =>
+      _versionKey(v).compareTo(_versionKey(UpdateInfo.currentVersion)) > 0;
+
+  /// 当前是否以「安装版」形态运行（%LOCALAPPDATA%\Programs\MoneyFly）。
+  ///
+  /// 便携版（解压 zip 直接跑）不该走静默自动安装：那会装出第二份到
+  /// Programs 目录，而用户双击的还是旧的便携 exe，观感更糟。
+  static bool get runningFromInstalledLayout {
+    if (!Platform.isWindows) return false;
+    final local = (Platform.environment['LOCALAPPDATA'] ?? '')
+        .replaceAll('\\', '/')
+        .toLowerCase();
+    if (local.isEmpty) return false;
+    final exe =
+        Platform.resolvedExecutable.replaceAll('\\', '/').toLowerCase();
+    return exe.startsWith('$local/programs/moneyfly/');
+  }
+
+  /// 测试缝：替换「分离式启动安装器」（返回是否成功启动）
+  static Future<bool> Function(String exe, List<String> args)?
+      debugStartDetached;
+
+  /// Windows：静默安装（无向导、自动关占用进程、不重启系统；装完由安装器
+  /// 自己把 App 拉起来 —— 见 scripts/windows_installer.iss 的 [Run]）。
+  ///
+  /// 参数含义（Inno Setup 官方开关）：
+  ///   /SILENT            只有进度条，不弹向导（"热更新"的关键）
+  ///   /SP-               连"即将安装"的确认框也跳过
+  ///   /CLOSEAPPLICATIONS 自动结束占用待替换文件的进程（正在运行的旧版本）
+  ///   /NORESTART         即使需要也不要重启系统
+  ///   /SUPPRESSMSGBOXES  静默模式下不弹任何消息框
+  Future<bool> installWindowsSilently(String path) async {
+    final args = const [
+      '/SILENT',
+      '/SP-',
+      '/CLOSEAPPLICATIONS',
+      '/NORESTART',
+      '/SUPPRESSMSGBOXES',
+    ];
+    final start = debugStartDetached;
+    if (start != null) return start(path, args);
+    try {
+      await Process.start(path, args, mode: ProcessStartMode.detached);
+      return true;
+    } catch (e) {
+      AppLog.error('silent install failed: $e');
+      return false;
+    }
+  }
+
   /// 调起系统安装器（Windows 打开 exe；macOS 走 [installMacDmg] 就地替换）。
   /// **不退出进程** —— 退出由上层在断连后决定，避免装到一半内核还在跑。
   Future<bool> launchInstaller(String path) async {
@@ -694,6 +776,7 @@ class UpdateService {
     debugDownloadOverride = null;
     debugLaunchInstallerOverride = null;
     debugCacheDir = null;
+    debugStartDetached = null;
     debugCanInstallInApp = null;
     debugInstallMacOverride = null;
     debugRunProcess = null;
