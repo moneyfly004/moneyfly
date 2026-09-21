@@ -14,6 +14,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:moneyfly/core/services/update_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Windows 上 File.path 用的是反斜杠，断言前统一成正斜杠再比
+String _norm(String p) => p.replaceAll('\\', '/');
+
 Directory _tmpCache() {
   final d = Directory.systemTemp.createTempSync('mf_update_cache');
   return d;
@@ -62,7 +65,7 @@ void main() {
 
       expect(pending, isNotNull);
       expect(pending!.version, '2.2.14');
-      expect(pending.path, newer.path);
+      expect(_norm(pending.path), _norm(newer.path));
     });
 
     test('多个候选取版本最高的', () async {
@@ -73,7 +76,7 @@ void main() {
 
       final pending = await UpdateService.instance.pendingNewerInstaller();
 
-      expect(pending!.path, highest.path);
+      expect(_norm(pending!.path), _norm(highest.path));
       expect(pending.version, '2.2.20');
     });
 
