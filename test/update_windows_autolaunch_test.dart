@@ -6,7 +6,7 @@
 //
 // 这里覆盖三件事：
 //   1) 缓存里挑出**比当前版本新**的安装包（旧包/空文件/别的平台包必须忽略）；
-//   2) 静默安装用的 Inno 参数正确（少了 /SILENT 就会弹向导，"热更新"就废了）；
+//   2) 静默安装用的 Inno 参数正确（少了 `/SILENT` 就会弹向导，"热更新"就废了）；
 //   3) 同一版本只自动尝试一次（装不上不做无限重试）。
 import 'dart:io';
 
@@ -19,7 +19,7 @@ Directory _tmpCache() {
   return d;
 }
 
-/// 安装包落在 <cache>/update/ 下（UpdateService._updateDir 固定拼 /update）
+/// 安装包落在 `<cache>/update/` 下（UpdateService 固定拼 /update）
 Directory _updateDir(Directory cache) {
   final d = Directory('${cache.path}/update');
   if (!d.existsSync()) d.createSync(recursive: true);
@@ -130,7 +130,7 @@ void main() {
     });
 
     test('启动安装器失败 → 返回 false（上层回退到手动更新）', () async {
-      UpdateService.debugStartDetached = (_, __) async => false;
+      UpdateService.debugStartDetached = (_, _) async => false;
 
       expect(await UpdateService.instance.installWindowsSilently('/tmp/x.exe'),
           isFalse);
