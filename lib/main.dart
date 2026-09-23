@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/api/api_client.dart';
+import 'core/api/server_pool.dart';
 import 'core/proxy/proxy_core.dart';
 import 'core/proxy/proxy_core_cli.dart';
 import 'core/services/account_service.dart';
@@ -86,6 +87,9 @@ void main() async {
   }
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
   await UpdateService.instance.init();
+  // 恢复上次可用的服务器线路（某些地区官网域名被墙时，用户上次切到的备用域名要延续使用；
+  // 未切换过则默认主域名）。必须在首个 API 请求前完成，见 core/api/server_pool.dart。
+  await ServerPool.instance.ensureLoaded();
   // 后台静默检查更新：有新版则点亮全局红点（底部「我的」tab / 设置「版本更新」行）
   // 并（默认开启）在后台把匹配本机的安装包预下载好 —— 用户点「立即更新」时无需等待。
   unawaited(() async {

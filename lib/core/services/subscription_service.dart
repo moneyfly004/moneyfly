@@ -8,6 +8,7 @@ import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
 import 'settings_store.dart';
+import 'subscribe_url_failover.dart';
 import 'subscription_cache.dart';
 
 /// 订阅拿不到节点的**可区分原因**。
@@ -281,7 +282,41 @@ class SubscriptionService {
     // 请求，可能在「到期/禁用后已返回占位节点」的新请求之后落地，把老配置写回去，
     // 使过期用户重新拿到可用线路。序号让**过期的在途结果一律作废**。
     final seq = ++_reqSeq;
-    var raw = await _fetchRawWithCacheFallback(info.subscribeUrl);
+    // 订阅地址轮换：主地址打不开（域名被墙/线路不通）时自动改试备用地址。
+    // 顺序 = 上次成功的地址 → 主地址 → 备用地址（后端 subscribe_urls 下发）；
+    // 全部失败才回退本地缓存；实际使用的地址会写进磁盘缓存，下次优先使用。
+    final cachedLatest = await SubscriptionCache.instance.readLatest();
+    final preferred = (cachedLatest != null &&
+            SubscribeUrlFailover.tokenOf(cachedLatest.subscribeUrl) ==
+                SubscribeUrlFailover.tokenOf(info.subscribeUrl))
+        ? cachedLatest.subscribeUrl
+        : null;
+
+    String raw;
+    var usedSubscribeUrl = info.subscribeUrl;
+    try {
+      final fetched = await SubscribeUrlFailover.fetchFirst(
+        primary: info.subscribeUrl,
+        backups: info.subscribeUrls,
+        preferred: preferred,
+        fetch: (u) async => ApiClient.instance
+            .fetchText(u, ua: await _subscriptionUa()),
+        // 连上了但返回的不是订阅内容（机房拦截页/运营商提示页常是 200 + HTML）
+        // → 视为该地址失败，继续换下一个，避免用户拿到解析不出节点的"空订阅"
+        looksUsable: looksLikeSubscription,
+      );
+      raw = fetched.raw;
+      usedSubscribeUrl = fetched.url;
+    } catch (e) {
+      // 所有地址都失败 → 回退本地缓存（同一份订阅即可，域名不同也算）
+      if (cachedLatest == null ||
+          SubscribeUrlFailover.tokenOf(cachedLatest.subscribeUrl) !=
+              SubscribeUrlFailover.tokenOf(info.subscribeUrl)) {
+        rethrow;
+      }
+      raw = cachedLatest.raw;
+      usedSubscribeUrl = cachedLatest.subscribeUrl;
+    }
     // 订阅地址轮换兜底：续费/换套餐/后台重建订阅后 subscribe_url 可能变化，
     // 旧地址会 403/404 —— 这里重新问一次订阅信息，拿到新地址就再试一次，
     // 避免用户「续了费还是拿不到节点」（必须重新登录才能恢复的体验）
@@ -290,7 +325,15 @@ class SubscriptionService {
         final fresh = await fetchInfo();
         if (fresh.subscribeUrl.isNotEmpty &&
             fresh.subscribeUrl != info.subscribeUrl) {
-          raw = await _fetchRawWithCacheFallback(fresh.subscribeUrl);
+          final again = await SubscribeUrlFailover.fetchFirst(
+            primary: fresh.subscribeUrl,
+            backups: fresh.subscribeUrls,
+            fetch: (u) async => ApiClient.instance
+                .fetchText(u, ua: await _subscriptionUa()),
+            looksUsable: looksLikeSubscription,
+          );
+          raw = again.raw;
+          usedSubscribeUrl = again.url;
         }
       }
     } catch (_) {}
@@ -311,9 +354,11 @@ class SubscriptionService {
     _cache = nodes;
     _cacheTime = DateTime.now();
     // 串行写完磁盘缓存再返回：保证「登出删除磁盘缓存」发生在成功写入之后，
-    // 杜绝删完又被异步写回旧数据的竞态
+    // 杜绝删完又被异步写回旧数据的竞态。
+    // 这里存**实际取到内容的那个地址**（可能是轮换后的备用域名）：下次拉取
+    // 会优先用它，避免每次都先撞一遍打不开的主域名。
     await SubscriptionCache.instance
-        .write(subscribeUrl: info.subscribeUrl, raw: raw);
+        .write(subscribeUrl: usedSubscribeUrl, raw: raw);
     _lastIssue = null;
     return nodes;
   }
@@ -338,16 +383,21 @@ class SubscriptionService {
     unawaited(SubscriptionCache.instance.clear());
   }
 
-  /// 拉取订阅原文；失败回退本地缓存（仅同安装且版本匹配的缓存有效）。
-  /// 注意：成功的磁盘缓存写入由调用方（fetchNodes）在 epoch 校验后统一执行，
-  /// 这里只负责取回原文。
-  Future<String> _fetchRawWithCacheFallback(String subscribeUrl) async {
+  /// 拉取订阅原文（单地址，失败回退同一份订阅的本地缓存）。
+  ///
+  /// 主流程已改为 [SubscribeUrlFailover.fetchFirst] 的多地址轮换（见 [_pullAndCache]）；
+  /// 本方法是"只取一个地址、不做轮换"的变体，供分享/导出与测试使用。
+  Future<String> fetchRawWithCacheFallback(String subscribeUrl) async {
     try {
       return await ApiClient.instance
           .fetchText(subscribeUrl, ua: await _subscriptionUa());
     } catch (e) {
       final cached = await SubscriptionCache.instance.readLatest();
-      if (cached == null || cached.subscribeUrl != subscribeUrl) rethrow;
+      if (cached == null ||
+          SubscribeUrlFailover.tokenOf(cached.subscribeUrl) !=
+              SubscribeUrlFailover.tokenOf(subscribeUrl)) {
+        rethrow;
+      }
       return cached.raw;
     }
   }

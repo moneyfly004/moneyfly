@@ -1,0 +1,101 @@
+/// 订阅地址轮换：主订阅地址打不开时，按顺序尝试其它域名，拿到同一份订阅。
+///
+/// 为什么需要（2026-09-23）：官网/主订阅域名在部分地区被屏蔽，用户「更新不了订阅」。
+/// 后端现在会在 `/user/subscribe` 里下发 `subscribe_urls`（主域名 + 备用域名，
+/// token 相同、配置完全一致），本类负责按合适顺序逐个尝试：
+///
+///   1. **上次成功的地址优先** —— 上次能用的域名大概率现在也能用，避免每次都先撞墙；
+///   2. 其次主地址，再依次尝试备用地址；
+///   3. 成功即回调 [onSuccess]，由调用方记住（磁盘缓存里会记录实际使用的地址）；
+///   4. 全部失败时**如实抛出最后一个异常**，不掩盖错误、不返回空内容。
+///
+/// 命中「返回了内容但不是订阅」（机房拦截页/运营商提示页常返回 200 + HTML）
+/// 时也视为该地址失败，继续换下一个 —— 否则用户会拿到一份解析不出节点的"空订阅"。
+library;
+
+/// 拉取订阅原文的函数签名（注入以便测试）
+typedef SubscribeFetch = Future<String> Function(String url);
+
+class SubscribeUrlFailover {
+  SubscribeUrlFailover._();
+
+  /// 从订阅地址里取 token：用于判断两个不同域名的地址是否是**同一份订阅**。
+  /// 取不到 token 时返回空串（调用方应按"不确定"处理，不做同源判断）。
+  static String tokenOf(String url) {
+    if (url.isEmpty) return '';
+    final m = RegExp(r'[?&]token=([^&#]+)').firstMatch(url);
+    return m?.group(1) ?? '';
+  }
+
+  /// 候选顺序：上次成功的（若与主地址同属一份订阅）→ 主地址 → 备用地址（去重）。
+  static List<String> candidates({
+    required String primary,
+    Iterable<String> backups = const [],
+    String? preferred,
+  }) {
+    final out = <String>[];
+    void add(String? u) {
+      final v = (u ?? '').trim();
+      if (v.isEmpty || out.contains(v)) return;
+      out.add(v);
+    }
+
+    final primaryToken = tokenOf(primary);
+    final preferredToken = tokenOf(preferred ?? '');
+    // preferred 只在「与主地址同一份订阅」时采用：避免续费/重建订阅后
+    // 拿着旧 token 的地址反复失败（旧地址会 403/404）
+    if (preferredToken.isNotEmpty && preferredToken == primaryToken) {
+      add(preferred);
+    }
+    add(primary);
+    for (final b in backups) {
+      final t = tokenOf(b);
+      // 备用地址必须与主地址同 token；不同 token 的一律跳过（可能是别的订阅/别的账号）
+      if (t.isNotEmpty && primaryToken.isNotEmpty && t != primaryToken) continue;
+      add(b);
+    }
+    return out;
+  }
+
+  /// 依次尝试候选地址，返回第一个成功拿到"像订阅的内容"的结果。
+  ///
+  /// [looksUsable] 用于识别"连上了但不是订阅"（拦截页/HTML）；为空则只要请求成功就算可用。
+  /// [onSuccess] 在成功时回调实际使用的地址（调用方据此记忆/落盘）。
+  /// 全部失败抛出最后一次异常；候选为空时抛 [StateError]。
+  static Future<({String url, String raw})> fetchFirst({
+    required String primary,
+    Iterable<String> backups = const [],
+    String? preferred,
+    required SubscribeFetch fetch,
+    bool Function(String raw)? looksUsable,
+    void Function(String url)? onSuccess,
+    int maxAttempts = 4,
+  }) async {
+    final list = candidates(primary: primary, backups: backups, preferred: preferred);
+    if (list.isEmpty) {
+      throw StateError('没有可用的订阅地址');
+    }
+    Object? lastError;
+    var attempts = 0;
+    for (final url in list) {
+      if (attempts >= maxAttempts) break;
+      attempts++;
+      try {
+        final raw = await fetch(url);
+        if (raw.trim().isEmpty) {
+          lastError = StateError('订阅地址返回空内容: $url');
+          continue;
+        }
+        if (looksUsable != null && !looksUsable(raw)) {
+          lastError = StateError('订阅地址返回的不是订阅内容: $url');
+          continue;
+        }
+        onSuccess?.call(url);
+        return (url: url, raw: raw);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError ?? StateError('订阅地址全部不可用');
+  }
+}

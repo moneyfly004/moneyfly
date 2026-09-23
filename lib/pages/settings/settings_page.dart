@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../core/api/server_pool.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/app_log.dart';
 import '../../core/services/autostart.dart';
@@ -228,6 +229,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     ? AppStrings.t('settings_subscribe_ua_default')
                     : _s['subscribeUserAgent'].toString(),
                 onTap: _pickSubscribeUa),
+            // 线路自救：某些地区官网域名被墙 → 自动/手动改用备用域名（订阅与接口都受益）
+            _row(icon: '🛰️', title: AppStrings.t('settings_server_line'),
+                desc: AppStrings.t('settings_server_line_desc'),
+                value: _serverLineLabel(),
+                onTap: _pickServerLine),
             // ⑥ 账户
             _section(AppStrings.t('group_account')),
             _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
@@ -689,6 +695,103 @@ class _SettingsPageState extends State<SettingsPage> {
     final u = _s['testUrl']?.toString() ?? ConnectionController.defaultTestUrl;
     final host = Uri.tryParse(u)?.host;
     return (host != null && host.isNotEmpty) ? host : u;
+  }
+
+  /// 服务器线路行展示：当前生效域名（自定义时加标记）
+  String _serverLineLabel() {
+    final pool = ServerPool.instance;
+    return pool.usingCustom ? '${pool.activeHost} · 自定义' : pool.activeHost;
+  }
+
+  /// 服务器线路选择：自动（主域名优先）／池内其它线路／自定义域名。
+  ///
+  /// 存在的意义：某些地区官网域名被墙，用户"登录不进去、更新不了订阅"。
+  /// 这里让用户能看到当前走哪个域名，并手动切到能用的那个（自动切换见 ServerPool）。
+  Future<void> _pickServerLine() async {
+    final pool = ServerPool.instance;
+    await pool.ensureLoaded();
+    if (!mounted) return;
+    final all = pool.all;
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        backgroundColor: MFColors.card2,
+        title: Text(AppStrings.t('settings_server_line'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, '__auto__'),
+            child: Text(
+              AppStrings.t('settings_server_line_auto'),
+              style: TextStyle(
+                  color: pool.usingCustom || pool.activeIndex != 0
+                      ? MFColors.txt
+                      : MFColors.brandLight),
+            ),
+          ),
+          for (final base in all)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, base),
+              child: Text(
+                '${Uri.tryParse(base)?.host ?? base}'
+                '${base == pool.activeBase ? '  ✓' : ''}',
+                style: TextStyle(
+                    color: base == pool.activeBase
+                        ? MFColors.brandLight
+                        : MFColors.txt),
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, '__custom__'),
+            child: Text(AppStrings.t('settings_server_line_custom'),
+                style: TextStyle(color: MFColors.txt)),
+          ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    if (picked == '__auto__') {
+      await pool.reset();
+    } else if (picked == '__custom__') {
+      final ctrl = TextEditingController(text: pool.usingCustom ? pool.activeHost : '');
+      final input = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: MFColors.card2,
+          title: Text(AppStrings.t('settings_server_line'),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            style: TextStyle(color: MFColors.txt),
+            decoration: mfInput(hint: AppStrings.t('settings_server_line_custom_hint')),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(AppStrings.t('cancel_text'))),
+            TextButton(
+                onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+                child: Text(AppStrings.t('save'),
+                    style: TextStyle(color: MFColors.brandLight))),
+          ],
+        ),
+      );
+      if (input == null || !mounted) return;
+      final normalized = ServerPool.normalizeBase(input);
+      if (normalized.isEmpty) {
+        _toast(AppStrings.t('settings_server_line_custom_bad'));
+        return;
+      }
+      await pool.setCustom(normalized);
+    } else {
+      await pool.markWorking(picked);
+    }
+    if (!mounted) return;
+    setState(() {});
+    _toast(AppStrings.t('settings_server_line_switched')
+        .replaceAll('{host}', pool.activeHost));
   }
 
   /// 生效的主 DNS 列表：dnsNameservers（新，主列表）> dns（旧单值兼容）> 默认

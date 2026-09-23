@@ -99,6 +99,11 @@ class DashboardInfo {
 class SubscriptionInfo {
   final String subscribeUrl;
   final String? universalUrl;
+
+  /// 备用订阅地址（后端 subscription_backup_domains 下发的其它域名，token 相同、配置一致）。
+  /// 主地址在当前网络打不开时（域名被墙/线路不通），按顺序尝试这些地址即可拿到同一份订阅。
+  /// 轮换逻辑见 `services/subscribe_url_failover.dart`。
+  final List<String> subscribeUrls;
   final DateTime? expireTime;
   final int deviceLimit;
   final int currentDevices;
@@ -111,6 +116,7 @@ class SubscriptionInfo {
   SubscriptionInfo({
     required this.subscribeUrl,
     this.universalUrl,
+    this.subscribeUrls = const [],
     this.expireTime,
     required this.deviceLimit,
     required this.currentDevices,
@@ -122,9 +128,16 @@ class SubscriptionInfo {
 
   factory SubscriptionInfo.fromJson(Map<String, dynamic> j) {
     final et = j['expire_time']?.toString();
+    final rawList = j['subscribe_urls'];
     return SubscriptionInfo(
       subscribeUrl: j['subscribe_url']?.toString() ?? '',
       universalUrl: j['universal_url']?.toString(),
+      subscribeUrls: rawList is List
+          ? [
+              for (final u in rawList)
+                if (u != null && u.toString().trim().isNotEmpty) u.toString().trim(),
+            ]
+          : const [],
       expireTime: (et == null || et.isEmpty) ? null : DateTime.tryParse(et),
       deviceLimit: (j['device_limit'] as num?)?.toInt() ?? 0,
       currentDevices: (j['current_devices'] as num?)?.toInt() ?? 0,

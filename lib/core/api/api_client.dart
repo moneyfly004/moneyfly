@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../utils/log_rotation.dart';
 import '../utils/serial_executor.dart';
 import 'endpoints.dart';
+import 'server_pool.dart';
 import 'user_agent.dart';
 
 /// 统一 API 客户端
@@ -64,6 +65,9 @@ class ApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // 每次请求都取「当前生效域名」：ServerPool 会在主域名不可达时切到备用域名，
+          // 构造 Dio 时快照进 BaseOptions 的 baseUrl 不会跟着变，必须在这里刷新。
+          options.baseUrl = ServerPool.instance.activeBase;
           // UA 每次请求强制覆盖：Dio 构造时会把 UA 快照进 BaseOptions，
           // 若 UpdateService 在单例创建后才更新 userAgent，直接赋值静态量
           // 不会生效；这里在发请求前统一刷新（与 Authorization 同机制）。
@@ -110,6 +114,10 @@ class ApiClient {
         },
       ),
     );
+
+    // 域名轮换拦截器（最后添加 → onError 最先执行）：见 server_pool.dart
+    // 的实现与说明（只在「连接层失败」时换域名重试，4xx/5xx 业务错误不换）。
+    _dio.interceptors.add(buildServerFailoverInterceptor(_dio, onLog: _logHttp));
   }
 
   static ApiClient? _instance;

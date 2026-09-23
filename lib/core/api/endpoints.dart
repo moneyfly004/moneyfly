@@ -1,10 +1,15 @@
+import 'server_pool.dart';
+
 /// MoneyFly 后端接口常量（cboard-go /api/v1，XBoard 兼容）
 class Endpoints {
   Endpoints._();
 
-  static final String baseUrl = _d(const [50,46,46,42,41,96,117,117,62,35,116,55,53,52,63,35,60,54,35,116,46,53,42,117,59,42,51,117,44,107]);
-
-  static String _d(List<int> b) => String.fromCharCodes([for (final c in b) c ^ 0x5A]);
+  /// 当前生效的接口基底地址。
+  ///
+  /// 由 [ServerPool] 决定：默认走主域名（官网）；主域名在当前网络不可达时，
+  /// ApiClient 会自动轮换到备用域名重试（备用域名是同一套后端，token 通用）。
+  /// 域名池见 `server_pool.dart`，失败重试见 `api_client.dart`。
+  static String get baseUrl => ServerPool.instance.activeBase;
 
   // 认证
   static const login = '/auth/login-json';
