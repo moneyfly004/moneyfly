@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
+import '../api/gh_mirror.dart';
 import '../api/user_agent.dart';
 import 'app_log.dart';
 import 'single_instance.dart';
@@ -123,6 +124,58 @@ class UpdateService {
     headers: {'Accept': 'application/json', 'User-Agent': ApiClient.userAgent},
   ));
 
+  /// 测试缝：替换 GitHub 裸客户端（单测用假适配器覆盖「直连不通 → 走镜像」分支）
+  @visibleForTesting
+  static Dio? debugGhDio;
+
+  static Dio get _gh => debugGhDio ?? _ghDio;
+
+  /// 最近一次成功的通道下标（0 = 直连，>0 = [GhMirror.prefixes] 里第 n 个镜像）。
+  /// 记住它有两个作用：后续的校验和与安装包下载直接走同一通道，不必各自再试错一轮；
+  /// 「打开下载页」也能据此把 GitHub 直链换成国内镜像地址。
+  static int _ghChannel = 0;
+
+  /// 当前是否已在走镜像通道（供日志/排查使用）
+  static bool get usingGhMirror => _ghChannel > 0;
+
+  /// 候选尝试顺序：先试上次成功的通道，再按「直连 → 各镜像」补齐其余。
+  static List<int> _attemptOrder(String url) {
+    final n = GhMirror.candidates(url).length;
+    if (n <= 1) return [for (var i = 0; i < n; i++) i];
+    final start = _ghChannel.clamp(0, n - 1);
+    return [start, for (var i = 0; i < n; i++) if (i != start) i];
+  }
+
+  /// 带镜像兜底的请求：直连不通（连接层错误/超时）就依次换镜像重试；
+  /// 全部失败返回 null 并记日志（调用方各自决定「当作没有更新」还是「放弃校验」）。
+  static Future<T?> _withMirrorFallback<T>(
+    String url,
+    Future<T> Function(String url) attempt,
+  ) async {
+    Object? lastError;
+    for (final idx in _attemptOrder(url)) {
+      final candidate = GhMirror.at(url, idx);
+      try {
+        final result = await attempt(candidate);
+        if (idx != _ghChannel) {
+          AppLog.net(
+              'GitHub 通道切换为${idx == 0 ? '直连' : '镜像 #$idx'}（$candidate）');
+        }
+        _ghChannel = idx;
+        return result;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    AppLog.error('GitHub 直连与镜像均不可用: $url（$lastError）');
+    return null;
+  }
+
+  /// 供「打开下载页」用：把 GitHub 直链换成当前已确认可用的通道地址。
+  /// 直连正常（从未切换过通道）时原样返回，不改变既有行为。
+  static String mirroredUrl(String url) =>
+      _ghChannel == 0 ? url : GhMirror.at(url, _ghChannel);
+
   /// 测试缝：替换整段「查最新版本」逻辑（单测不打网络）
   @visibleForTesting
   static Future<UpdateInfo?> Function()? debugCheckOverride;
@@ -156,9 +209,11 @@ class UpdateService {
       return _cacheInfo;
     }
     try {
-      final r = await _ghDio
-          .get('https://api.github.com/repos/$githubRepo/releases/latest');
-      final data = r.data;
+      // 直连 api.github.com 在国内常超时/被阻断 → 依次退到镜像（见 GhMirror）
+      final data = await _withMirrorFallback<dynamic>(
+        'https://api.github.com/repos/$githubRepo/releases/latest',
+        (u) async => (await _gh.get(u)).data,
+      );
       if (data is! Map) return null;
       final tag = data['tag_name']?.toString() ?? '';
       final version = tag.startsWith('v') ? tag.substring(1) : tag;
@@ -283,18 +338,23 @@ class UpdateService {
           .map((a) => a['browser_download_url']?.toString() ?? '')
           .firstWhere((u) => u.isNotEmpty, orElse: () => '');
       if (sums.isEmpty) continue;
-      try {
-        final text = (await _ghDio.get<String>(sums,
-                options: Options(responseType: ResponseType.plain)))
-            .data ??
-            '';
-        for (final line in text.split('\n')) {
-          if (!line.contains(assetName)) continue;
-          // 兼容 Windows 上 sha256sum 的二进制模式标记：`<hash> *<name>`
-          final hash = line.trim().split(RegExp(r'\s+')).first.toLowerCase();
-          if (hash.length == 64) return hash;
-        }
-      } catch (_) {}
+      // 校验和与安装包走同一通道：既然直连不通，独立再试一轮只会让用户白等
+      final text = await _withMirrorFallback<String>(
+            sums,
+            (u) async =>
+                (await _gh.get<String>(u,
+                            options:
+                                Options(responseType: ResponseType.plain)))
+                        .data ??
+                    '',
+          ) ??
+          '';
+      for (final line in text.split('\n')) {
+        if (!line.contains(assetName)) continue;
+        // 兼容 Windows 上 sha256sum 的二进制模式标记：`<hash> *<name>`
+        final hash = line.trim().split(RegExp(r'\s+')).first.toLowerCase();
+        if (hash.length == 64) return hash;
+      }
     }
     return '';
   }
@@ -438,12 +498,36 @@ class UpdateService {
       if (override != null) {
         await override(url, path);
       } else {
-        await _ghDio.download(url, path, onReceiveProgress: (received, total) {
-          if (total <= 0) return;
-          final p = received / total;
-          downloadProgress.value = p;
-          onProgress?.call(p);
-        });
+        // 下载同样带镜像兜底：几十 MB 的包直连 github.com 在国内大概率半路断，
+        // 逐个候选重试；每次重试前清掉半截文件，避免续写出一个坏包。
+        Object? lastError;
+        var downloaded = false;
+        for (final idx in _attemptOrder(url)) {
+          final candidate = GhMirror.at(url, idx);
+          try {
+            await _gh.download(candidate, path,
+                onReceiveProgress: (received, total) {
+              if (total <= 0) return;
+              final p = received / total;
+              downloadProgress.value = p;
+              onProgress?.call(p);
+            });
+            _ghChannel = idx;
+            downloaded = true;
+            break;
+          } catch (e) {
+            lastError = e;
+            downloadProgress.value = 0;
+            try {
+              if (dest.existsSync()) dest.deleteSync();
+            } catch (_) {}
+          }
+        }
+        if (!downloaded) {
+          AppLog.error('安装包下载失败（直连 + 镜像均不可用）: $url（$lastError）');
+          downloadProgress.value = null;
+          return null;
+        }
       }
       // 校验值取自**本次下载用的 info**：早先写成读全局缓存，导致「显式传 info
       // 的调用」压根不校验（单测直接抓到：给了错哈希仍然返回成功）。
@@ -782,6 +866,8 @@ class UpdateService {
     debugRunProcess = null;
     debugOpenFileOverride = null;
     debugAppBundlePath = null;
+    debugGhDio = null;
+    _ghChannel = 0;
     _verifiedSha.clear();
   }
 }

@@ -537,12 +537,16 @@ abstract final class UpdatePrompt {
   }
 
   /// 打开下载页（直链 = GitHub 上与本机平台/架构匹配的那个安装包）
+  ///
+  /// 直连不通时（此前检查更新已切到镜像）这里也换成同一镜像地址 ——
+  /// 否则移动端用户点「去下载」会打开一个在他网络下打不开的 github.com 页面。
   static Future<void> openDownloadPage(String url) async {
     if (url.isEmpty) return;
     final override = debugOpenUrlOverride;
     if (override != null) return override(url);
+    final target = UpdateService.mirroredUrl(url);
     try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
     } catch (e) {
       AppLog.error('open download page failed: $e');
     }
