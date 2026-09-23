@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/api/endpoints.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/login_lock.dart';
 import '../../l10n/app_strings.dart';
 import '../../main.dart';
 import '../../theme/app_theme.dart';
@@ -27,6 +31,14 @@ class _LoginPageState extends State<LoginPage> {
   bool _autoLogin = true;
   bool _loading = false;
 
+  /// 限流冷却截止时间（服务端 429 后本地点亮，用于按钮倒计时）。
+  ///
+  /// 为什么要有：后端 `/auth/login` 是**按 IP 每分钟 10 次**限流，登录页反复点
+  /// 「登录」正好让计数器一直不滑出窗口 —— 客户看到的「怎么都登不上」有一多半
+  /// 是这么来的。这里冷却期内不再发请求，并在按钮上如实显示还要等多久。
+  DateTime? _cooldownUntil;
+  Timer? _cooldownTimer;
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +52,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     _account.dispose();
     _password.dispose();
     super.dispose();
@@ -51,9 +64,40 @@ class _LoginPageState extends State<LoginPage> {
     await p.setBool(_autoLoginKey, v);
   }
 
+  /// 冷却剩余秒数（0 = 不在冷却中）
+  int get _cooldownLeft {
+    final until = _cooldownUntil;
+    if (until == null) return 0;
+    final left = until.difference(DateTime.now()).inSeconds;
+    return left > 0 ? left : 0;
+  }
+
+  void _startCooldown(Duration d) {
+    _cooldownUntil = DateTime.now().add(d);
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_cooldownLeft <= 0) {
+        t.cancel();
+        _cooldownUntil = null;
+      }
+      setState(() {});
+    });
+    if (mounted) setState(() {});
+  }
+
   Future<void> _login() async {
     if (_account.text.trim().isEmpty || _password.text.isEmpty) {
       _toast(AppStrings.t('input_account_pwd'));
+      return;
+    }
+    // 冷却期内不再发请求：继续点只会让服务端限流计数一直满格
+    final left = _cooldownLeft;
+    if (left > 0) {
+      _toast(AppStrings.t('rate_limit_cooldown', {'n': '$left'}));
       return;
     }
     setState(() => _loading = true);
@@ -62,7 +106,15 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) context.read<SessionState>().setLoggedIn(true);
     } catch (e) {
       final msg = ApiClient.errorMsg(e);
-      // 账号被禁用：后端登录返回 403「账户已被禁用…」——弹窗明确提示，
+      // ① 限流 / 锁定：服务端 429（按 IP 限流 或 失败次数锁定）——必须专门提示：
+      //    这两种情况下密码是对的却登不进，用户只会反复点，反而让限流一直不解除。
+      final limit = parseRateLimit(e, path: Endpoints.login);
+      if (limit != null) {
+        _startCooldown(limit.cooldown);
+        _showRateLimitDialog(limit);
+        return;
+      }
+      // ② 账号被禁用：后端登录返回 403「账户已被禁用…」——弹窗明确提示，
       // 而不是普通 toast（用户需要知道不是密码错、且无法自助解决）
       final m = msg.toLowerCase();
       if (msg.contains('禁用') ||
@@ -76,6 +128,59 @@ class _LoginPageState extends State<LoginPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// 限流/锁定提示：服务端原文 + 剩余等待 + 「怎么办」（等待 or 换网络）
+  void _showRateLimitDialog(RateLimitInfo info) {
+    if (!mounted) return;
+    final wait = formatRemaining(info.retryAfter ?? Duration.zero);
+    final body = [
+      AppStrings.t('rate_limit_server', {'msg': info.message}),
+      info.isAccountLock
+          ? AppStrings.t('rate_limit_hint_lock')
+          : AppStrings.t('rate_limit_hint_ip'),
+      if (wait.isNotEmpty) AppStrings.t('rate_limit_wait', {'time': wait}),
+    ].join('\n\n');
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: MFColors.card2,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(18))),
+        title: Text(AppStrings.t('rate_limit_title'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Text(body,
+            style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.7)),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogCtx);
+              Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ForgotPasswordPage()));
+            },
+            child: Text(AppStrings.t('forgot_password')),
+          ),
+          // 锁定是按「IP(+账号)」算的：换了网络（WiFi ↔ 移动数据）本来就该能立刻登录，
+          // 所以给一个显式出口，而不是让用户对着倒计时干等。
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogCtx);
+              _cooldownTimer?.cancel();
+              _cooldownUntil = null;
+              if (mounted) setState(() {});
+              _login();
+            },
+            child: Text(AppStrings.t('rate_limit_retry_now')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text(AppStrings.t('ok_btn')),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showDisabledDialog(String msg) {
@@ -181,7 +286,13 @@ class _LoginPageState extends State<LoginPage> {
                 ],
               ),
               SizedBox(height: compact ? 10 : 16),
-              MFPrimaryButton(label: AppStrings.t('login_button'), loading: _loading, onPressed: _loading ? null : _login),
+              MFPrimaryButton(
+                label: _cooldownLeft > 0
+                    ? AppStrings.t('rate_limit_cooldown', {'n': '$_cooldownLeft'})
+                    : AppStrings.t('login_button'),
+                loading: _loading,
+                onPressed: _loading ? null : _login,
+              ),
               SizedBox(height: compact ? 16 : 26),
               // 两个入口（注册 / 忘记密码）的命中区撑到 44px：旧实现只有一行
               // 13.5px 的文字（实际可点高度 ≈18px），手机端很难点中
