@@ -208,6 +208,17 @@ class UpdateService {
       hasUpdate.value = _cacheInfo!.isNewer;
       return _cacheInfo;
     }
+    // 先问 GitHub（信息最全）；直连不通时再问自己的面板（见 _checkViaPanel）
+    final info = await _checkViaGitHub() ?? await _checkViaPanel();
+    if (info == null) return null;
+    _cacheInfo = info;
+    _cacheAt = DateTime.now();
+    hasUpdate.value = info.isNewer;
+    return info;
+  }
+
+  /// 直接问 GitHub Releases API（带镜像兜底；网络异常/取不到包返回 null）
+  Future<UpdateInfo?> _checkViaGitHub() async {
     try {
       // 直连 api.github.com 在国内常超时/被阻断 → 依次退到镜像（见 GhMirror）
       final data = await _withMirrorFallback<dynamic>(
@@ -226,7 +237,7 @@ class UpdateService {
       final picked = await _pickAsset(assets);
       if (picked == null) return null;
 
-      _cacheInfo = UpdateInfo(
+      return UpdateInfo(
         latestVersion: version,
         downloadUrl: picked.url,
         sizeText: _sizeText(picked.size),
@@ -235,11 +246,72 @@ class UpdateService {
         sha256: await _fetchSha256(assets, picked.name),
         sizeBytes: picked.size,
       );
-      _cacheAt = DateTime.now();
-      hasUpdate.value = _cacheInfo!.isNewer;
-      return _cacheInfo;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 问自己的面板：服务器代查 GitHub（`GET /api/v1/software/latest`）。
+  ///
+  /// 为什么必须有这条兜底（2026-09-23 实测）：GitHub 加速镜像**只代理 Release
+  /// 资产、不代理 API**（ghfast.top 对 api.github.com 返回 403，gh.ddlc.top 404），
+  /// 所以「App 端换镜像」解决不了国内检查更新失败；而服务器本身能直连 GitHub。
+  /// 这条路径只依赖「App 能连上自己的面板」—— 那正是 ServerPool 已经保证的事
+  /// （多域名 + 连不上自动换域名）。
+  static Future<Map?> Function(String configKey)? debugPanelLatestOverride;
+
+  Future<UpdateInfo?> _checkViaPanel() async {
+    final key = await _panelConfigKey();
+    if (key.isEmpty) return null; // 该平台面板没有对应入口（如 iOS 侧载包）
+    Map<String, dynamic>? data;
+    try {
+      final override = debugPanelLatestOverride;
+      if (override != null) {
+        final r = await override(key);
+        data = r == null ? null : Map<String, dynamic>.from(r);
+      } else {
+        final r = await ApiClient.instance
+            .get('/software/latest', query: {'key': key});
+        if (r is Map) data = Map<String, dynamic>.from(r);
+      }
+    } catch (e) {
+      AppLog.net('面板代查最新版本失败: $e');
+      return null;
+    }
+    if (data == null) return null;
+
+    final version = (data['version'] ?? '').toString().trim();
+    final assetName = (data['asset_name'] ?? '').toString().trim();
+    if (version.isEmpty || assetName.isEmpty) return null;
+    final size = (data['size_bytes'] as num?)?.toInt() ?? 0;
+    final url = (data['download_url'] ?? '').toString().trim();
+    if (url.isEmpty) return null; // 拿不到下载地址就没法更新，不如如实返回 null
+
+    return UpdateInfo(
+      latestVersion: version,
+      downloadUrl: url,
+      sizeText: _sizeText(size),
+      assetName: assetName,
+      sha256: (data['sha256'] ?? '').toString().trim(),
+      sizeBytes: size,
+    );
+  }
+
+  /// 本平台在面板「软件下载配置」里的键名（与后端同步目录的 ConfigKey 一致）
+  static Future<String> _panelConfigKey() async {
+    if (kIsWeb) return '';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+        return 'moneyfly_windows_url';
+      case TargetPlatform.android:
+        return 'moneyfly_android_url';
+      case TargetPlatform.macOS:
+        return await _isMacIntel()
+            ? 'moneyfly_macos_url'
+            : 'moneyfly_macos_arm_url';
+      default:
+        // iOS 走侧载 IPA，面板没有对应入口 → 不兜底（与「检查失败」同表现）
+        return '';
     }
   }
 
@@ -868,6 +940,7 @@ class UpdateService {
     debugAppBundlePath = null;
     debugGhDio = null;
     _ghChannel = 0;
+    debugPanelLatestOverride = null;
     _verifiedSha.clear();
   }
 }

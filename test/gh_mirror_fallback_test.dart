@@ -167,6 +167,8 @@ void main() {
     test('直连与所有镜像都不可用 → 返回 null 且不崩', () async {
       final adapter = _MirrorAdapter(mirrorWorks: false);
       UpdateService.debugGhDio = Dio()..httpClientAdapter = adapter;
+      // 面板兜底也声明为不可用（这条用例只验 GitHub 侧全挂不崩；面板兜底另有用例覆盖）
+      UpdateService.debugPanelLatestOverride = (_) async => null;
 
       final info = await UpdateService.instance.check();
 
@@ -239,6 +241,124 @@ void main() {
 
       expect(UpdateService.mirroredUrl('https://github.com/a/b'),
           '${GhMirror.prefixes.first}https://github.com/a/b');
+    });
+  });
+  group('面板兜底：GitHub 不通时问自己的服务器', () {
+    test('GitHub 全挂 → 用面板返回的版本/包名/体积/sha256', () async {
+      // GitHub 侧全挂（国内真实场景）
+      UpdateService.debugGhDio = Dio()
+        ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+      final panelKey = <String>[];
+      UpdateService.debugPanelLatestOverride = (key) async {
+        panelKey.add(key);
+        return {
+          'version': '2.2.20',
+          'asset_name': 'MoneyFly-setup-2.2.20.exe',
+          'size_bytes': 27262976,
+          'sha256': 'a' * 64,
+          'download_url':
+              'https://github.com/moneyfly004/moneyfly/releases/download/v2.2.20/MoneyFly-setup-2.2.20.exe',
+        };
+      };
+
+      final info = await UpdateService.instance.check();
+
+      expect(info, isNotNull, reason: 'GitHub 不通时必须靠面板拿到更新信息');
+      expect(info!.latestVersion, '2.2.20');
+      expect(info.assetName, 'MoneyFly-setup-2.2.20.exe');
+      expect(info.sha256, 'a' * 64, reason: 'sha256 由自己的服务器给出，校验不降级');
+      expect(info.sizeBytes, 27262976);
+      expect(info.sizeText, '26 MB');
+      expect(info.isNewer, isTrue);
+      expect(UpdateService.hasUpdate.value, isTrue);
+      expect(panelKey, ['moneyfly_windows_url'], reason: 'Windows 应问 Windows 入口');
+    });
+
+    test('面板兜底拿到的包也能下载并按 sha256 校验', () async {
+      final bytes = List<int>.generate(96, (i) => i * 3 % 251);
+      final adapter = _MirrorAdapter(assetBytes: bytes, mirrorWorks: true);
+      UpdateService.debugGhDio = Dio()..httpClientAdapter = adapter;
+      UpdateService.debugPanelLatestOverride = (_) async => {
+            'version': '2.2.20',
+            'asset_name': 'MoneyFly-setup-2.2.20.exe',
+            'size_bytes': bytes.length,
+            'sha256': UpdateService.sha256HexForTest(bytes),
+            'download_url':
+                'https://github.com/moneyfly004/moneyfly/releases/download/v2.2.20/MoneyFly-setup-2.2.20.exe',
+          };
+
+      final info = await UpdateService.instance.check();
+      final path = await UpdateService.instance.downloadInstaller(info: info);
+
+      expect(path, isNotNull);
+      expect(await UpdateService.instance.verifyInstaller(path!, info), isTrue);
+    });
+
+    test('面板也失败 → 返回 null（不误报「已是最新」）', () async {
+      UpdateService.debugGhDio = Dio()
+        ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+      UpdateService.debugPanelLatestOverride = (_) async => null;
+
+      expect(await UpdateService.instance.check(), isNull);
+      expect(UpdateService.hasUpdate.value, isFalse);
+    });
+
+    test('面板数据缺版本或下载地址 → 视为失败，不构造半个 UpdateInfo', () async {
+      UpdateService.debugGhDio = Dio()
+        ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+      for (final bad in <Map<String, dynamic>>[
+        {'version': '', 'asset_name': 'a.exe', 'download_url': 'https://x/y.exe'},
+        {'version': '2.2.20', 'asset_name': '', 'download_url': 'https://x/y.exe'},
+        {'version': '2.2.20', 'asset_name': 'a.exe', 'download_url': ''},
+      ]) {
+        UpdateService.resetForTest();
+        UpdateService.debugCacheDir = () async => tmp;
+        UpdateService.debugGhDio = Dio()
+          ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+        UpdateService.debugPanelLatestOverride = (_) async => bad;
+        expect(await UpdateService.instance.check(), isNull,
+            reason: '残缺面板数据必须当作失败: $bad');
+      }
+    });
+
+    test('已是最新版本时不误报红点', () async {
+      UpdateInfo.currentVersion = '2.2.20';
+      UpdateService.debugGhDio = Dio()
+        ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+      UpdateService.debugPanelLatestOverride = (_) async => {
+            'version': '2.2.20',
+            'asset_name': 'MoneyFly-setup-2.2.20.exe',
+            'download_url': 'https://github.com/x/y/MoneyFly-setup-2.2.20.exe',
+          };
+      final info = await UpdateService.instance.check();
+      expect(info, isNotNull);
+      expect(info!.isNewer, isFalse);
+      expect(UpdateService.hasUpdate.value, isFalse);
+    });
+    test('平台→面板入口映射：Android 走 android 入口，iOS 不兜底', () async {
+      final keys = <String>[];
+      void armStub() {
+        UpdateService.debugGhDio = Dio()
+          ..httpClientAdapter = _MirrorAdapter(mirrorWorks: false);
+        UpdateService.debugPanelLatestOverride = (k) async {
+          keys.add(k);
+          return null;
+        };
+      }
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      armStub();
+      await UpdateService.instance.check();
+      expect(keys, ['moneyfly_android_url']);
+
+      // iOS 只做 IPA 侧载提示，面板没有对应入口 → 不应发出兜底请求
+      keys.clear();
+      UpdateService.resetForTest();
+      UpdateService.debugCacheDir = () async => tmp;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      armStub();
+      await UpdateService.instance.check();
+      expect(keys, isEmpty, reason: 'iOS 不该去打一个不存在的面板入口');
     });
   });
 }

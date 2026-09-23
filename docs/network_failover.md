@@ -54,3 +54,31 @@
   连接失败 → 断言自动改打备用域名并记住）
 - `test/subscribe_url_failover_test.dart`：token 提取、候选顺序、跨订阅地址不串号、
   失败后依次尝试、上次成功地址优先、拦截页/空内容视为失败、全部失败如实抛错、尝试次数上限
+
+## 六、App 更新同样吃这条通道（2026-09-23 补充）
+
+更新检查原先直连 `api.github.com`、下载直连 `github.com`，国内常失败 ——
+用户看到「检查更新失败」就永远停在旧版，而旧版又没有线路轮换，问题被放大。
+
+实测过一个看似显然的方案并否掉了：**GitHub 加速镜像只代理 Release 资产，
+不代理 API**，所以「App 端把 API 也换镜像」解决不了问题：
+
+| 镜像 | api.github.com | Release 资产 |
+| --- | --- | --- |
+| ghfast.top | 403 | 206 正常 |
+| gh.ddlc.top | 404 | 206 正常 |
+| gh-proxy.com / gh.llkk.cc | 连不上 | 连不上 |
+
+最终分两层解决：
+
+1. **元数据问自己的服务器**：`GET /api/v1/software/latest?key=<平台入口>`（`SoftwareLatest`）
+   由服务器代查 GitHub（服务器直连 GitHub 实测 0.27s），返回版本号、资产名、体积、
+   sha256 与下载地址。App 侧走 `ApiClient` → 自动享受域名池轮换，只要能连上自己的
+   任意一个域名就能检查更新，且 sha256 来自可信来源，**校验不降级**。
+   （见 `UpdateService._checkViaPanel`，仅在 GitHub 直连失败时触发。）
+2. **资产下载走镜像兜底**：`GhMirror` 依次尝试
+   `直连 → ghfast.top → gh-proxy.com → gh.llkk.cc → gh.ddlc.top`，并记住最近成功的
+   通道（后续校验和、下载、外呼都复用它，不再各自试错一轮）。
+
+对应测试：`test/gh_mirror_fallback_test.dart`（候选顺序/幂等、直连失败→镜像命中、
+校验和同通道、下载与 sha256、坏包丢弃、面板兜底、平台→入口映射、iOS 不兜底）。
