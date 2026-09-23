@@ -9,6 +9,7 @@ import '../../l10n/app_strings.dart';
 import '../services/app_log.dart';
 import '../services/permission_service.dart';
 import 'mihomo_config.dart';
+import 'native_start_failure.dart';
 import 'proxy_core.dart';
 
 /// 看门狗单次巡检后的决策（纯逻辑，便于单元测试）
@@ -139,14 +140,25 @@ class ProxyCoreEmbedded extends ProxyCore {
           ConnErrorKind.unknown, AppStrings.t('vpn_start_fail', {'err': '$e'}));
     }
     final sw = Stopwatch()..start();
+    // 原生侧「上一轮」的失败记录：本轮就绪窗口内只认**新增/变化**的失败，
+    // 否则会把上一次连接的残留错误当成这次失败（原生侧也会在新一轮 startBox
+    // 入口清空，这里是双保险 —— startVpn 是 startService，返回时可能尚未开始）。
+    final staleError = await _safeChannelString('lastStartError');
     // 就绪窗口 20s：Clash API 监听在内核完全起来后才可用，Doze/后台限流/
     // 低端机慢启动都可能让首个 /version 迟到。窗口略放宽 + 超时后问原生
     // 存活（见下），双保险避免误杀正在正常转发的活内核。
+    //
+    // 原生侧**已明确记录启动失败**时不再干等满 20s（早失败）：安卓上
+    // `VpnService.Builder.establish()` 被系统拒绝（如多用户/分身空间的
+    // INTERACT_ACROSS_USERS）是确定性的，等满窗口只是让用户白等 20 秒，
+    // 还会被自动重连重复三遍（线上日志实测）。
     //
     // iOS 额外做「早失败」探测：扩展启动失败时系统会很快把连接置为
     // disconnected/invalid，这时没必要干等满 20s —— 提前失败并带上扩展轨迹，
     // 否则用户只会看到一个没有原因的「内核启动超时」。
     var downStreak = 0;
+    var nativeFailDetail = '';
+    var ticks = 0;
     while (sw.elapsed < const Duration(seconds: 20)) {
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));
@@ -154,9 +166,18 @@ class ProxyCoreEmbedded extends ProxyCore {
           _running = true;
           _startWatchdog();
           _startTrafficStream();
+          await _logStartWarning();
           return;
         }
       } catch (_) {}
+      // 每 ~600ms 问一次原生侧是否已记录启动失败
+      if (++ticks % 2 == 0) {
+        final err = await _safeChannelString('lastStartError');
+        if (err != null && err.isNotEmpty && err != staleError) {
+          nativeFailDetail = err;
+          break; // 早失败：原生侧已经知道原因，别让用户干等
+        }
+      }
       if (Platform.isIOS && sw.elapsed > const Duration(seconds: 5)) {
         final st = await _iosVpnStatus();
         if (st != null &&
@@ -198,7 +219,7 @@ class ProxyCoreEmbedded extends ProxyCore {
     // 原生也确认内核未运行：这才是真正的启动失败。主动清理原生侧
     // （VpnService/内核可能启动失败留下残留），避免「UI 报失败但 VPN 通知/
     // 隧道残留」的幽灵连接。顺带拉取内核日志尾部，把真实原因带给用户。
-    var detail = '';
+    var detail = nativeFailDetail;
     // 1) 原生侧记录的真实启动错误（最直接、最精确）
     try {
       final err = await _channel.invokeMethod<String>('lastStartError');
@@ -253,10 +274,39 @@ class ProxyCoreEmbedded extends ProxyCore {
     try {
       await _channel.invokeMethod('stopVpn');
     } catch (_) {}
+    // 原生侧的分类（cross_user / vpn_not_prepared / app_missing / unknown）：
+    // 决定给用户什么文案、以及上层该不该自动重连（跨用户拦截是确定性的，
+    // 重试只会让用户多等 3 轮 —— 见 native_start_failure.dart）。
+    final kindStr = await _safeChannelString('lastStartErrorKind');
+    final failure = classifyNativeStartFailure(kind: kindStr, detail: detail);
+    if (failure == NativeStartFailure.crossUserBlocked) {
+      AppLog.error('[VPN] Android 多用户/分身空间拦截建立隧道：$detail');
+    } else if (failure != NativeStartFailure.none) {
+      AppLog.error('[VPN] 启动失败（${failure.name}）：$detail');
+    }
     throw TypedConnError(
-      ConnErrorKind.kernelTimeout,
-      detail.isEmpty ? _lastError! : '$_lastError：$detail',
+      connErrorKindForNativeStartFailure(failure) ?? ConnErrorKind.kernelTimeout,
+      nativeStartFailureMessage(failure, detail),
     );
+  }
+
+  /// 读原生侧字符串通道（通道缺失/平台不支持时返回 null，不抛）。
+  Future<String?> _safeChannelString(String method) async {
+    try {
+      final v = await _channel.invokeMethod<String>(method);
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 启动成功但原生侧记录了降级（如按应用分流被系统拒绝）→ 落日志中心。
+  /// 不静默：用户开了「仅这些应用走代理」却发现其他应用也在走代理时，
+  /// 至少日志里能查到原因（UI 提示见 vpn_access_control_degraded）。
+  Future<void> _logStartWarning() async {
+    final w = await _safeChannelString('lastStartWarning');
+    if (w == null || w.trim().isEmpty) return;
+    AppLog.kernel('[VPN] 启动降级（${AppStrings.t('vpn_access_control_degraded')}）：$w');
   }
 
   /// iOS：向原生查询隧道状态（Android 无此通道方法 → 返回 null）。

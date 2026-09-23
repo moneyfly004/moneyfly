@@ -918,10 +918,14 @@ class ConnectionController extends ChangeNotifier {
       // 系统代理异常时由连接期的保活巡检自动恢复（见 SystemProxyManager）。
       // 重连链不中断：重连发起的连接失败 → 继续调度下一次重试（上限取自
       // 设置 reconnectTimes；内核崩溃自愈链在 autoReconnect 关闭时用自愈额度，
-      // 见 [_autoRetryAllowed]）。例外：TUN 权限类失败是**确定性**的（进程不可能
-      // 运行中拿到管理员权限），重试只会把可执行提示推迟 8~30 秒。
+      // 见 [_autoRetryAllowed]）。例外：**确定性**失败不重试 ——
+      //  - TUN 权限类失败：进程不可能运行中拿到管理员权限；
+      //  - Android 多用户/分身空间拦截（androidMultiUserBlocked）：普通 App 不可能
+      //    拿到 INTERACT_ACROSS_USERS，用户不换空间就永远失败（线上日志里连续
+      //    3 次、每次白等 20s 就是这个）。
       if (fromReconnect &&
           _autoRetryAllowed &&
+          errorKind != ConnErrorKind.androidMultiUserBlocked &&
           (tunErr == null || isRetryableTunFailure(tunErr.failure))) {
         _scheduleReconnect();
       }

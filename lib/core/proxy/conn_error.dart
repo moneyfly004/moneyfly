@@ -27,6 +27,11 @@ enum ConnErrorKind {
 
   /// 看门狗判定内核死亡 / 内核异常退出
   kernelExited,
+
+  /// Android：多用户 / 应用分身 / 工作资料空间下，系统拒绝建立 VPN —— 框架在
+  /// 解析跨用户包 UID 时要求 INTERACT_ACROSS_USERS，普通 App 不可能持有。
+  /// 详见 native_start_failure.dart 的文件头注释。
+  androidMultiUserBlocked,
 }
 
 /// 携带类型的连接异常（内核/平台层上抛，ConnectionController 捕获后落位
@@ -69,6 +74,10 @@ ConnErrorUi guideForConnError(ConnErrorKind kind) => switch (kind) {
           showGrantVpn: false, showGrantNotify: true, showRetry: false, foregroundHint: false),
       ConnErrorKind.backgroundStartBlocked => const ConnErrorUi(
           showGrantVpn: false, showGrantNotify: false, showRetry: true, foregroundHint: true),
+      // 多用户/分身拦截：授权按钮没用（不是没授权，是系统权限不可能拿到），
+      // 保留「重试」—— 用户关掉分身/切回主空间后点一下就能连上。
+      ConnErrorKind.androidMultiUserBlocked => const ConnErrorUi(
+          showGrantVpn: false, showGrantNotify: false, showRetry: true, foregroundHint: false),
       _ => const ConnErrorUi(
           showGrantVpn: false, showGrantNotify: false, showRetry: true, foregroundHint: false),
     };

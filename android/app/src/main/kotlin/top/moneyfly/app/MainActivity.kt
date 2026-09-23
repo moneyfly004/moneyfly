@@ -131,6 +131,11 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "lastStartError" -> result.success(MoneyFlyVpnService.lastStartError)
+                    // 失败分类（cross_user / vpn_not_prepared / app_missing / unknown）：
+                    // Dart 侧据此给可执行文案、并跳过确定性的自动重连
+                    "lastStartErrorKind" -> result.success(MoneyFlyVpnService.lastStartErrorKind)
+                    // 启动成功但有降级（如按应用分流被系统拒绝）时的说明
+                    "lastStartWarning" -> result.success(MoneyFlyVpnService.lastStartWarning)
                     "getInstalledApps" -> {
                         // PackageManager 查询较重（数百次 IPC），放工作线程避免 UI 卡顿
                         Thread {

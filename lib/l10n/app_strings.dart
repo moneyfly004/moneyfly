@@ -687,6 +687,11 @@ class AppStrings {
     'poll_stopped': '已停止轮询',
     'vpn_start_fail': 'VPN 启动失败：{err}',
     'kernel_timeout': '内核启动超时',
+    // Android 多用户 / 应用分身 / 工作资料：系统在解析跨用户包 UID 时要求
+    // INTERACT_ACROSS_USERS（普通 App 不可能拿到）→ VPN 隧道建不起来。
+    // 只能换空间使用，重试/授权都没用（详见 lib/core/proxy/native_start_failure.dart）
+    'vpn_multiuser_blocked': '当前是「应用分身 / 工作资料 / 多用户」空间，Android 系统不允许在这里建立 VPN 隧道（缺少 INTERACT_ACROSS_USERS 权限）。请回到手机主空间打开本应用，或先关闭该应用的分身/工作资料后重试。',
+    'vpn_access_control_degraded': '按应用分流未生效（系统拒绝该设置），已改为「除本应用外全部走代理」，连接可正常使用。',
     'kernel_exit': '内核异常退出',
     'kernel_busy': '内核正在启动中，请稍候',
     'expired_short': '已到期',
@@ -1369,6 +1374,8 @@ class AppStrings {
     'poll_stopped': 'Polling stopped',
     'vpn_start_fail': 'VPN start failed: {err}',
     'kernel_timeout': 'Kernel startup timed out',
+    'vpn_multiuser_blocked': 'MoneyFly is running in a cloned app / work profile / secondary user space, where Android does not allow establishing a VPN tunnel (INTERACT_ACROSS_USERS is not granted to normal apps). Please open MoneyFly in the main space, or turn off app cloning / the work profile and retry.',
+    'vpn_access_control_degraded': 'Per-app routing could not be applied (the system rejected it). MoneyFly fell back to "all apps except itself", so the connection still works.',
     'kernel_exit': 'Kernel exited unexpectedly',
     'kernel_busy': 'Kernel is starting, please wait',
     'expired_short': 'Expired',

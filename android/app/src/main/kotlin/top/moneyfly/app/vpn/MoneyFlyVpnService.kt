@@ -9,6 +9,8 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Process
+import android.os.UserManager
 import android.util.Log
 import org.json.JSONObject
 import top.moneyfly.app.MainActivity
@@ -43,6 +45,11 @@ class MoneyFlyVpnService : VpnService() {
         const val CHANNEL_ID = "moneyfly_vpn_channel"
         private const val NOTIFY_ID = 1001
 
+        /** 失败分类常量（与 lib/core/proxy/native_start_failure.dart 对齐） */
+        const val KIND_CROSS_USER = "cross_user"
+        const val KIND_VPN_NOT_PREPARED = "vpn_not_prepared"
+        const val KIND_APP_MISSING = "app_missing"
+
         /** TUN 网段（与 mihomo 配置的 fake-ip/dns 逻辑配套，参考 Clash Meta for Android） */
         private const val TUN_GATEWAY = "172.19.0.1"
         private const val TUN_PREFIX = 30
@@ -56,6 +63,23 @@ class MoneyFlyVpnService : VpnService() {
         /** 最近一次内核启动失败的原因（Dart 侧超时后读取，用于精确定位） */
         @Volatile
         var lastStartError: String? = null
+            private set
+
+        /** 启动失败的**分类**（cross_user / vpn_not_prepared / app_missing /
+         *  unknown）。Dart 侧据此给可执行文案与「该不该自动重连」的判断，
+         *  不必去解析英文异常原文（见 lib/core/proxy/native_start_failure.dart）。
+         *
+         *  为什么需要：`getPackageUid: Neither user 10235 nor current process has
+         *  android.permission.INTERACT_ACROSS_USERS.` 是 Android 框架在多用户/
+         *  应用分身/工作资料空间下解析跨用户包 UID 时的拒绝，普通 App 不可能
+         *  拿到该权限 —— 必须告知用户「换回主空间」，重试与授权都无效。 */
+        @Volatile
+        var lastStartErrorKind: String? = null
+            private set
+
+        /** 本次启动有降级时的说明（如按应用分流被系统拒绝后退化为全部走代理） */
+        @Volatile
+        var lastStartWarning: String? = null
             private set
 
         /** 内置内核版本（任何时候可读，用于设置页「内核管理」） */
@@ -145,6 +169,11 @@ class MoneyFlyVpnService : VpnService() {
     }
     @Synchronized
     private fun startBox(configYaml: String, needTun: Boolean) {
+        // 新一轮启动：先清掉上一轮的失败/降级记录。Dart 侧会在就绪窗口内轮询
+        // lastStartError 做「早失败」，残留的旧值会被误判成本次失败。
+        lastStartError = null
+        lastStartErrorKind = null
+        lastStartWarning = null
         // 竞态处理：Dart 断开后立刻重连时，旧内核可能还在停止中
         // （running=true 但用户已发起新连接）。此时不能「忽略」——
         // 否则旧内核随后停掉，新连接轮询超时。语义：收到新的启动请求
@@ -184,17 +213,49 @@ class MoneyFlyVpnService : VpnService() {
             )
             isRunning = true
             lastStartError = null
+            lastStartErrorKind = null
             Log.i(TAG, "libmihomo started (tunFd=$fd, version=${Mihomelib.version()})")
         } catch (e: Exception) {
             // 记录真实原因（供 Dart 读取展示），再上抛。
             // fd 不在此 close：detach 后若内核未接管，由 wrapper 在失败路径兜底关闭；
             // 若内核已接管，其 Shutdown 会自关 —— 这里 close 任何一次都可能 double-close。
-            lastStartError = e.message ?: e.javaClass.simpleName
+            lastStartErrorKind = classifyStartFailure(e)
+            lastStartError = buildStartErrorDetail(e, lastStartErrorKind ?: "unknown")
             Log.e(TAG, "startBox failed: $lastStartError")
             tunFd = 0
             isRunning = false
             throw e
         }
+    }
+
+    /** 失败分类：与 Dart 侧 native_start_failure.dart 的常量一一对应。 */
+    private fun classifyStartFailure(e: Throwable): String {
+        val m = (e.message ?: "").lowercase()
+        return when {
+            m.contains("interact_across_users") -> KIND_CROSS_USER
+            m.contains("missing vpn permission") ||
+                m.contains("not prepared or is revoked") -> KIND_VPN_NOT_PREPARED
+            m.contains("namenotfound") -> KIND_APP_MISSING
+            else -> "unknown"
+        }
+    }
+
+    /** 失败详情：原文 + 跨用户拦截时的设备环境信息（客服据此判断是不是分身/
+     *  工作资料空间，不必再让用户去翻系统设置）。 */
+    private fun buildStartErrorDetail(e: Throwable, kind: String): String {
+        val base = e.message ?: e.javaClass.simpleName
+        if (kind != KIND_CROSS_USER) return base
+        // uid 足以定位：额外用户空间里的应用 uid 与主空间不同；profiles > 1
+        // 说明设备上确实存在工作资料/分身空间。
+        // （不用 UserHandle.getUserId/myUserId —— 都是 @hide，公开 SDK 里没有。）
+        return "$base | uid=${Process.myUid()} profiles=${profileCount()}"
+    }
+
+    /** 当前用户的 profile 数量（>1 说明有工作资料/分身空间）。读取失败返回 -1。 */
+    private fun profileCount(): Int = try {
+        getSystemService(UserManager::class.java)?.userProfiles?.size ?: 1
+    } catch (_: Exception) {
+        -1
     }
 
     @Synchronized
@@ -212,12 +273,53 @@ class MoneyFlyVpnService : VpnService() {
      *  按 Flutter 侧「按 App 分流/排除」设置决定哪些应用进入 TUN：
      *   - all（默认）：仅本应用自身不走 VPN（控制通道直连）
      *   - selected（仅以下应用走代理）：allowed = 勾选 + 本应用
-     *   - denied（排除以下应用）：disallowed = 勾选（不含本应用，本应用始终直连） */
+     *   - denied（排除以下应用）：disallowed = 勾选（不含本应用，本应用始终直连）
+     *
+     *  **两次尝试**：第 1 次带用户的应用分流；若系统拒绝（典型：多用户/应用分身/
+     *  工作资料空间下，框架把分流列表解析成每个 profile 用户的 UID 区间时撞上
+     *  INTERACT_ACROSS_USERS 校验 → SecurityException，见 Dart 侧
+     *  native_start_failure.dart 的文件头注释），第 2 次**放弃按应用分流**、只保留
+     *  「排除自身」的内核自环保护后重试 —— 让用户至少能连上，并在
+     *  lastStartWarning 里如实说明降级，而不是整条连接失败。 */
     @SuppressLint("MissingPermission")
     private fun establishTun(): ParcelFileDescriptor {
         if (prepare(this) != null) {
             throw IllegalStateException("android: missing vpn permission")
         }
+        var firstError: Exception? = null
+        try {
+            val pfd = buildTunBuilder(withAccessControl = true).establish()
+            if (pfd != null) return pfd
+            firstError = IllegalStateException(
+                "android: the application is not prepared or is revoked")
+        } catch (e: Exception) {
+            firstError = e
+            Log.w(TAG, "establish with per-app access control failed: ${e.message}")
+        }
+        // 降级重试：只排除自身（内核自环保护不可省 —— 本进程与内核同 uid，
+        // 出站 socket 若不排除会被自己的 TUN 再抓回来，形成自代理死循环：
+        // 「显示已连接、零流量」，比一条明确的失败更糟）。
+        try {
+            val pfd = buildTunBuilder(withAccessControl = false).establish()
+            if (pfd != null) {
+                lastStartWarning = "per-app access control rejected by system, " +
+                    "degraded to disallow-self-only (first error: ${firstError?.message})"
+                Log.w(TAG, "TUN established WITHOUT per-app access control (degraded)")
+                return pfd
+            }
+            throw IllegalStateException(
+                "android: the application is not prepared or is revoked")
+        } catch (e: Exception) {
+            Log.w(TAG, "TUN establish fallback also failed: ${e.message}")
+            // 两次都失败：上抛**首次**原因（它才是真因；降级失败通常只是同一个
+            // 系统限制的复现），Dart 侧据它分类出可执行文案。
+            throw (firstError ?: e)
+        }
+    }
+
+    /** 构造一份全新的 Builder（每次尝试都要新建：同一个 Builder 里 allowed/
+     *  disallowed 不能混用，框架会抛 UnsupportedOperationException）。 */
+    private fun buildTunBuilder(withAccessControl: Boolean): VpnService.Builder {
         val builder =
             Builder()
                 .setSession("MoneyFly")
@@ -235,35 +337,65 @@ class MoneyFlyVpnService : VpnService() {
                 .addRoute("::", 0)
                 // 虚拟 DNS：Android 的 DNS 查询发给它 → 进 TUN → 内核 hijack 处理 fake-ip
                 .addDnsServer(TUN_DNS)
-        applyAccessControl(builder)
-        return builder.establish()
-            ?: throw IllegalStateException("android: the application is not prepared or is revoked")
+        if (withAccessControl) {
+            applyAccessControl(builder)
+        } else {
+            builder.addDisallowedApplication(packageName)
+        }
+        return builder
     }
 
+    /** 写入按应用分流设置。**逐项容错**：单个应用不存在/被系统拒绝时只跳过该项
+     *  并计数，不再像旧实现那样「一个失败就整份列表作废且静默」——
+     *  那会让用户以为分流生效，实际全都没生效。
+     *
+     *  两类情况必须中断本次尝试（交给 establishTun 降级重试）：
+     *   1) 排除自身失败 → 自代理死循环风险，绝不能建立这样的隧道；
+     *   2) selected 模式下一个应用都没加进去 → 空的 allowed 列表等于「没有任何
+     *      应用走代理」，隧道形同虚设。 */
     private fun applyAccessControl(builder: VpnService.Builder) {
         val (mode, apps) = readAccessSettings()
-        try {
-            when (mode) {
-                "selected" -> {
-                    // 仅勾选应用走代理；**本应用自身必须排除**（直连控制通道/登录 API）。
-                    // 注意 addAllowedApplication 的语义是「该应用流量进入隧道」——
-                    // 把 packageName 加进去会让进程内内核（gomobile 库、同 uid、
-                    // 无 socket protect 回调）拨号到代理服务器的流量再次被 TUN
-                    // 捕获 → 再匹配 MATCH,select → 自代理循环（整条链路无流量）。
-                    (apps - packageName).forEach { builder.addAllowedApplication(it) }
+        val others = apps - packageName
+        when (mode) {
+            "selected" -> {
+                // 仅勾选应用走代理；**本应用自身必须排除**（直连控制通道/登录 API）。
+                // 注意 addAllowedApplication 的语义是「该应用流量进入隧道」——
+                // 把 packageName 加进去会让进程内内核（gomobile 库、同 uid、
+                // 无 socket protect 回调）拨号到代理服务器的流量再次被 TUN
+                // 捕获 → 再匹配 MATCH,select → 自代理循环（整条链路无流量）。
+                var ok = 0
+                for (p in others) {
+                    try {
+                        builder.addAllowedApplication(p)
+                        ok++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "addAllowedApplication($p) skipped: ${e.message}")
+                    }
                 }
-                "denied" -> {
-                    // 排除勾选应用；本应用自身也排除（直连控制通道）
-                    (apps - packageName).forEach { builder.addDisallowedApplication(it) }
-                    builder.addDisallowedApplication(packageName)
+                if (ok == 0) {
+                    throw IllegalStateException(
+                        "android: none of the selected apps could be added to the tunnel " +
+                            "(requested=${others.size})")
                 }
-                else -> {
-                    // 全部走代理：仅本应用自身不走（避免控制通道进隧道死锁）
-                    builder.addDisallowedApplication(packageName)
+                if (ok < others.size) {
+                    Log.w(TAG, "access control partial: $ok/${others.size} selected apps applied")
                 }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "applyAccessControl: ${e.message}")
+            "denied" -> {
+                // 排除勾选应用；本应用自身也排除（直连控制通道）
+                for (p in others) {
+                    try {
+                        builder.addDisallowedApplication(p)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "addDisallowedApplication($p) skipped: ${e.message}")
+                    }
+                }
+                builder.addDisallowedApplication(packageName)
+            }
+            else -> {
+                // 全部走代理：仅本应用自身不走（避免控制通道进隧道死锁）
+                builder.addDisallowedApplication(packageName)
+            }
         }
     }
 
