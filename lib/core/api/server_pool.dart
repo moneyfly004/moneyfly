@@ -189,7 +189,12 @@ class ServerPool {
   ///   - `connectionError` / `connectionTimeout`：压根没连上 → 任何方法都可安全重试；
   ///   - `sendTimeout` / `receiveTimeout`：连接已建立、请求可能已送达服务端 →
   ///     只对幂等方法（GET/HEAD/OPTIONS）重试，写操作交给上层如实报错。
-  static bool isRetryableOnRotation(Object error, String method) {
+  static bool isRetryableOnRotation(Object error, String method,
+      {String? path}) {
+    // 刷新令牌**绝不换域名重试**：该接口一旦成功就会轮换并拉黑旧 refresh_token，
+    // 若第一次已成功而响应在途中丢失，换域名拿同一个旧 token 再刷必然 401
+    // 「刷新令牌已失效」→ 反而把用户登出（见 refresh_policy.dart）。
+    if (path != null && path.contains('/auth/refresh')) return false;
     if (!isConnectionFailure(error)) return false;
     final m = method.toUpperCase();
     final idempotent = m == 'GET' || m == 'HEAD' || m == 'OPTIONS';
@@ -225,8 +230,13 @@ Interceptor buildServerFailoverInterceptor(Dio dio,
     },
     onError: (e, h) async {
       final opts = e.requestOptions;
+      // 请求方显式声明「不要换域名重试」（如 /auth/refresh：换了反而会把用户登出）
+      if (opts.extra['_noDomainFailover'] == true) {
+        h.next(e);
+        return;
+      }
       // 写操作只在"压根没连上"时重试，避免服务端已执行过又被重试（重复下单/签到）
-      if (!ServerPool.isRetryableOnRotation(e, opts.method)) {
+      if (!ServerPool.isRetryableOnRotation(e, opts.method, path: opts.path)) {
         h.next(e);
         return;
       }
@@ -253,7 +263,10 @@ Interceptor buildServerFailoverInterceptor(Dio dio,
           return;
         } catch (e2) {
           lastError = e2 is DioException ? e2 : e;
-          if (!ServerPool.isRetryableOnRotation(lastError, opts.method)) break;
+          if (!ServerPool.isRetryableOnRotation(lastError, opts.method,
+              path: opts.path)) {
+            break;
+          }
         }
       }
       h.next(lastError is DioException ? lastError : e);

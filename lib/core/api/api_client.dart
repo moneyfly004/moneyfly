@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../utils/log_rotation.dart';
 import '../utils/serial_executor.dart';
 import 'endpoints.dart';
+import 'refresh_policy.dart';
 import 'server_pool.dart';
 import 'user_agent.dart';
 
@@ -85,6 +86,13 @@ class ApiClient {
           final t = await readAccessToken();
           if (t != null && t.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $t';
+            // 提前刷新：access token 剩余不足 10 分钟就静默续期，别等 401 再补
+            // ——「401 → 刷新」那条路每次都是一次赌博，而客户大多开着代理，
+            //   节点一抖刷新就失败（旧实现会因此登出，见 refresh_policy.dart）。
+            if (options.extra['_noSessionExpired'] != true &&
+                needsProactiveRefresh(t)) {
+              unawaited(_tryRefresh());
+            }
           }
           handler.next(options);
         },
@@ -94,8 +102,8 @@ class ApiClient {
           if (resp?.statusCode == 401 && !noSession &&
               e.requestOptions.extra['_retried'] != true) {
             e.requestOptions.extra['_retried'] = true;
-            final ok = await _tryRefresh();
-            if (ok) {
+            final outcome = await _tryRefresh();
+            if (outcome == RefreshOutcome.success) {
               final t = await readAccessToken();
               e.requestOptions.headers['Authorization'] = 'Bearer $t';
               try {
@@ -106,9 +114,22 @@ class ApiClient {
               } catch (_) {
                 return handler.next(e);
               }
-            } else {
-              _onSessionExpired?.call();
             }
+            if (shouldEndSession(outcome)) {
+              // 服务端明确拒绝（令牌失效/被拉黑/账户禁用）→ 只能重新登录
+              _onSessionExpired?.call();
+              return handler.next(e);
+            }
+            // 传输层失败（超时/连不上/5xx…）：**不登出**，如实报「网络异常」。
+            // 旧实现把这种情况也当会话失效 → 客户网络/代理一抖就被踢回登录页，
+            // 这正是「软件无故退出」的主因（见 refresh_policy.dart 文件头注释）。
+            _logHttp('!!! 刷新失败（传输层）→ 保留会话，报网络错误: ${e.requestOptions.uri}');
+            return handler.next(DioException(
+              requestOptions: e.requestOptions,
+              response: e.response,
+              type: DioExceptionType.connectionError,
+              error: '令牌刷新失败：网络不可用',
+            ));
           }
           handler.next(e);
         },
@@ -149,7 +170,7 @@ class ApiClient {
 
   late final Dio _dio;
   VoidCallback? _onSessionExpired;
-  Future<bool>? _refreshing;
+  Future<RefreshOutcome>? _refreshing;
 
   // ---------- Token 存取 ----------
   static Future<String?> readAccessToken() async {
@@ -202,35 +223,73 @@ class ApiClient {
   /// 会话失效回调（强制回登录页）
   void onSessionExpired(VoidCallback cb) => _onSessionExpired = cb;
 
-  /// 并发 401 去重：同一时刻只允许一个刷新请求在途
-  Future<bool> _tryRefresh() =>
+  /// 并发 401 去重：同一时刻只允许一个刷新请求在途。
+  /// 返回的是 [RefreshOutcome]（不是 bool）——「服务端明确拒绝」与「网络抖动」
+  /// 必须分开：只有前者才终结会话（见 refresh_policy.dart 文件头注释）。
+  Future<RefreshOutcome> _tryRefresh() =>
       _refreshing ??= _doRefresh().whenComplete(() => _refreshing = null);
 
-  Future<bool> _doRefresh() async {
-    final rt = await readRefreshToken();
-    if (rt == null || rt.isEmpty) return false;
-    try {
-      // 刷新请求自身标记 _retried + _noSessionExpired：若后端对失效 refresh_token
-      // 也返 401，避免 onError 拦截器再次进入刷新分支 —— 那会重入 _tryRefresh()
-      // 拿到「正在进行中的同一个 future」并 await 它，而该 future 正等这条 POST
-      // 完成，形成自等待死锁。带上标记直接放行为普通失败。
-      final r = await _dio.post(Endpoints.refresh,
-          data: {'refresh_token': rt},
-          options: Options(extra: {'_noSessionExpired': true, '_retried': true}));
-      final data = _unwrap(r.data);
-      if (data is Map && data['access_token'] != null) {
-        final newAccess = data['access_token'].toString();
-        if (newAccess.isEmpty) return false;
-        await saveTokens(
-          newAccess,
-          (data['refresh_token'] as String?) ?? rt,
-        );
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
+  Future<RefreshOutcome> _doRefresh() async {
+    final rt = await _readRefreshTokenWithRetry();
+    if (rt == null || rt.isEmpty) {
+      // 本地没有可用的 refresh token：无法自愈，只能重新登录。
+      // （读存储失败已在 _readRefreshTokenWithRetry 里兜一层，避免 Keychain
+      //  抖动一次就把用户登出。）
+      _logHttp('!!! 无可用 refresh token → 会话无法续期');
+      return RefreshOutcome.rejected;
     }
+    for (var attempt = 1; attempt <= kRefreshMaxAttempts; attempt++) {
+      try {
+        // 刷新请求自身标记 _retried + _noSessionExpired：若后端对失效 refresh_token
+        // 也返 401，避免 onError 拦截器再次进入刷新分支 —— 那会重入 _tryRefresh()
+        // 拿到「正在进行中的同一个 future」并 await 它，而该 future 正等这条 POST
+        // 完成，形成自等待死锁。带上标记直接放行为普通失败。
+        //
+        // _noDomainFailover：刷新**禁止**换域名重试 —— 该接口会轮换并拉黑旧
+        // refresh_token，第一次已成功而响应丢失时，换域名拿同一个旧 token 再刷
+        // 必然 401，反而把用户登出。
+        final r = await _dio.post(Endpoints.refresh,
+            data: {'refresh_token': rt},
+            options: Options(extra: {
+              '_noSessionExpired': true,
+              '_retried': true,
+              '_noDomainFailover': true,
+            }));
+        final data = _unwrap(r.data);
+        if (data is Map && data['access_token'] != null) {
+          final newAccess = data['access_token'].toString();
+          if (newAccess.isEmpty) return RefreshOutcome.rejected;
+          await saveTokens(
+            newAccess,
+            (data['refresh_token'] as String?) ?? rt,
+          );
+          return RefreshOutcome.success;
+        }
+        return RefreshOutcome.rejected;
+      } catch (e) {
+        final outcome = classifyRefreshError(e);
+        if (outcome == RefreshOutcome.rejected) {
+          _logHttp('!!! 刷新令牌被服务端拒绝 → 需要重新登录（$e）');
+          return RefreshOutcome.rejected;
+        }
+        _logHttp('!!! 刷新令牌失败（第 $attempt/$kRefreshMaxAttempts 次，传输层）: $e');
+        if (attempt == kRefreshMaxAttempts) break;
+        await Future<void>.delayed(refreshBackoff(attempt));
+      }
+    }
+    // 全部尝试都是传输层失败 → **绝不能**据此登出：客户多半只是网络/代理抖了一下
+    return RefreshOutcome.transient;
+  }
+
+  /// 读 refresh token，存储异常时重试一次。
+  /// 旧实现一次读失败就返回 null → 被当成「会话失效」→ 直接回登录页。
+  Future<String?> _readRefreshTokenWithRetry() async {
+    for (var i = 0; i < 2; i++) {
+      final t = await readRefreshToken();
+      if (t != null && t.isNotEmpty) return t;
+      if (i == 0) await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    return null;
   }
 
   /// HTTP 日志文件（跨平台正确路径，惰性解析一次并缓存）。
