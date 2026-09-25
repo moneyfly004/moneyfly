@@ -71,19 +71,35 @@ RefreshOutcome classifyRefreshSuccessBody(Object? data) {
 bool shouldEndSession(RefreshOutcome outcome) =>
     outcome == RefreshOutcome.rejected;
 
+/// 响应正文是否来自**本服务端**（统一 JSON 信封：`success` + `code` 两个字段）。
+///
+/// 用途：网关 / WAF / 维护页返回的 4xx 正文往往是 HTML、或别家网关的 JSON
+/// （Cloudflare 拦截页、nginx 默认页…），它们**不代表**会话失效。
+/// 只有正文确实是本服务端的信封时，才允许据状态码终结会话。
+bool isAppErrorEnvelope(Object? data) {
+  if (data is! Map) return false;
+  return data.containsKey('success') && data.containsKey('code');
+}
+
 /// 把刷新接口的失败归类。
 ///
 /// 判据用**HTTP 状态码**而不是异常文本：
 ///   - 401 / 400：服务端明确说令牌不可用（「刷新令牌已失效，请重新登录」/
-///     「缺少刷新令牌」）→ rejected（不重试，重试也没用）；
+///     「缺少刷新令牌」/「刷新令牌已过期」/「令牌类型错误」）→ rejected
+///     （不重试，重试也没用）。这就是本服务端 `/auth/refresh` 的全部拒绝语义。
+///   - **403：本服务端刷新接口从来不会返回 403**（见后端 handlers/auth.go 的
+///     RefreshToken：只有 400/401）。命中 403 基本是 CDN/WAF/维护页/反代。
+///     旧实现一律当「账户被禁用」→ 登出，与「无故退出」同族（主域名走
+///     Cloudflare 时尤其容易命中）。现在只有正文是本服务端信封时才认账。
 ///   - 其它状态码（429/5xx/502/504…）：服务端可达但当前不可用 → transient；
 ///   - 没有 response（超时/连不上/DNS/TLS 失败）→ transient。
 RefreshOutcome classifyRefreshError(Object error) {
   if (error is DioException) {
     final status = error.response?.statusCode;
     if (status == 401 || status == 400) return RefreshOutcome.rejected;
-    // 403：账户被禁用 → 需要重新登录/联系客服，同样不该原地重试
-    if (status == 403) return RefreshOutcome.rejected;
+    if (status == 403 && isAppErrorEnvelope(error.response?.data)) {
+      return RefreshOutcome.rejected;
+    }
     return RefreshOutcome.transient;
   }
   // 非 Dio 异常（本地存储读写失败等）：不据它登出，交给重试/下次再试

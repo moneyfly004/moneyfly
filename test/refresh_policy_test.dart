@@ -22,7 +22,10 @@ String _jwt({required Duration validFor, DateTime? from}) {
   return '${seg({'alg': 'HS256', 'typ': 'JWT'})}.${seg({'sub': 2, 'exp': exp})}.sig';
 }
 
-DioException _err({int? status, DioExceptionType type = DioExceptionType.badResponse}) {
+DioException _err(
+    {int? status,
+    DioExceptionType type = DioExceptionType.badResponse,
+    Object? body}) {
   final opts = RequestOptions(path: '/auth/refresh', method: 'POST');
   return DioException(
     requestOptions: opts,
@@ -30,7 +33,9 @@ DioException _err({int? status, DioExceptionType type = DioExceptionType.badResp
     response: status == null
         ? null
         : Response<dynamic>(
-            requestOptions: opts, statusCode: status, data: {'message': 'x'}),
+            requestOptions: opts,
+            statusCode: status,
+            data: body ?? {'message': 'x'}),
   );
 }
 
@@ -42,9 +47,33 @@ void main() {
       expect(shouldEndSession(o), isTrue);
     });
 
-    test('400（缺少刷新令牌）/ 403（账户被禁用）→ rejected', () {
+    test('400（缺少刷新令牌）→ rejected，允许登出', () {
       expect(classifyRefreshError(_err(status: 400)), RefreshOutcome.rejected);
-      expect(classifyRefreshError(_err(status: 403)), RefreshOutcome.rejected);
+    });
+
+    test('403 且正文不是本服务端信封（CDN/WAF/维护页）→ transient，绝不登出', () {
+      // 后端 /auth/refresh 只返回 400/401（见 handlers/auth.go），命中 403 基本都是
+      // 网关/反代；旧实现一律当「账户被禁用」→ 登出，与「无故退出」同族。
+      for (final body in <Object?>[
+        '<html><head><title>403 Forbidden</title></head></html>',
+        {'message': 'Forbidden'},
+        {'errors': []},
+        'Just a moment...',
+      ]) {
+        final o = classifyRefreshError(_err(status: 403, body: body));
+        expect(o, RefreshOutcome.transient, reason: '正文=$body 不该终结会话');
+        expect(shouldEndSession(o), isFalse, reason: '正文=$body 登出会误伤客户');
+      }
+    });
+
+    test('403 且正文确是本服务端信封 → rejected（保留真实拒绝语义）', () {
+      final o = classifyRefreshError(_err(status: 403, body: {
+        'success': false,
+        'code': 403,
+        'message': '账户已被禁用',
+      }));
+      expect(o, RefreshOutcome.rejected);
+      expect(shouldEndSession(o), isTrue);
     });
 
     test('连不上 / 超时 / DNS 失败（没有 response）→ transient，禁止登出', () {
