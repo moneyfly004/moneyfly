@@ -26,10 +26,29 @@ void main() {
     test('normalizeBase：补 https、补 /api/v1、去尾斜杠', () {
       expect(ServerPool.normalizeBase('example.com'), 'https://example.com/api/v1');
       expect(ServerPool.normalizeBase('https://example.com/'), 'https://example.com/api/v1');
-      expect(ServerPool.normalizeBase('http://a.b.c/api/v1/'), 'http://a.b.c/api/v1');
       expect(ServerPool.normalizeBase('  sub.example.com  '), 'https://sub.example.com/api/v1');
       expect(ServerPool.normalizeBase(''), '');
       expect(ServerPool.normalizeBase('   '), '');
+    });
+
+    test('公网明文 http 一律拒绝：令牌是 Bearer 明文头，走 http 等于送人', () {
+      expect(ServerPool.normalizeBase('http://a.b.c/api/v1/'), '');
+      expect(ServerPool.normalizeBase('http://panel.example.com'), '');
+      expect(ServerPool.normalizeBase('ftp://a.b.c/api/v1'), '');
+      expect(ServerPool.normalizeBase('file:///tmp/x'), '');
+    });
+
+    test('回环 / 私有网段仍允许 http（内网自建面板、本机调试不出公网）', () {
+      expect(ServerPool.normalizeBase('http://127.0.0.1:8000/api/v1'),
+          'http://127.0.0.1:8000/api/v1');
+      expect(ServerPool.normalizeBase('http://localhost:8000'),
+          'http://localhost:8000/api/v1');
+      expect(ServerPool.normalizeBase('http://192.168.1.5'),
+          'http://192.168.1.5/api/v1');
+      expect(ServerPool.normalizeBase('http://10.0.0.9/api/v1'),
+          'http://10.0.0.9/api/v1');
+      expect(ServerPool.normalizeBase('http://172.16.3.4/api/v1'),
+          'http://172.16.3.4/api/v1');
     });
 
     test('默认走主域名；markWorking 记住可用域名并可恢复', () async {

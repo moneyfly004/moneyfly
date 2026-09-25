@@ -138,8 +138,33 @@ class ServerPool {
     } catch (_) {}
   }
 
+  /// 主机是否为回环地址或私有网段 —— 这些地址上的明文 http 可以接受
+  /// （内网自建面板、本机调试），因为它们不出公网。
+  static bool isLoopbackOrPrivateHost(String host) {
+    final h = host.toLowerCase();
+    if (h == 'localhost' || h.endsWith('.localhost')) return true;
+    if (h == '::1' || h.startsWith('fe80:') || h.startsWith('fc') ||
+        h.startsWith('fd')) {
+      return true; // IPv6 回环 / 链路本地 / ULA
+    }
+    final p = h.split('.');
+    if (p.length != 4) return false;
+    final a = int.tryParse(p[0]);
+    final b = int.tryParse(p[1]);
+    if (a == null || b == null) return false;
+    if (a == 127 || a == 10) return true;
+    if (a == 192 && b == 168) return true;
+    if (a == 172 && b >= 16 && b <= 31) return true;
+    if (a == 169 && b == 254) return true;
+    return false;
+  }
+
   /// 把用户输入规整成基底地址：
-  /// `example.com` → `https://example.com/api/v1`；`http://x/api/v1/` → `http://x/api/v1`
+  /// `example.com` → `https://example.com/api/v1`；`https://x/api/v1/` → `https://x/api/v1`
+  ///
+  /// 公网主机**只接受 https**：令牌是 Bearer 明文头，走 http 会被中间人直接拿走
+  /// （账号密码、订阅链接同理）。回环/私有网段仍允许 http，方便内网自建服务器。
+  /// 公网 http（以及非 http(s) 的 scheme）一律返回空串，由调用方按「地址无效」拒绝。
   static String normalizeBase(String input) {
     var v = input.trim();
     if (v.isEmpty) return '';
@@ -151,9 +176,14 @@ class ServerPool {
     // 只给了主机名（或带路径但不是 /api/v1）时补上接口前缀
     final u = Uri.tryParse(v);
     if (u == null || u.host.isEmpty) return '';
+    final scheme = u.scheme.toLowerCase();
+    if (scheme != 'https' && scheme != 'http') return '';
+    if (scheme == 'http' && !isLoopbackOrPrivateHost(u.host)) return '';
     final path = u.path.replaceAll(RegExp(r'/+$'), '');
     if (path.isEmpty) {
-      return '${u.scheme}://${u.host}/api/v1';
+      // 用 authority（含端口）而不是 host：否则 `http://host:8000` 会被重建为
+      // `http://host/api/v1`，端口丢失 → 自建服务器在非标准端口上必然连错。
+      return '${u.scheme}://${u.authority}/api/v1';
     }
     return v;
   }
