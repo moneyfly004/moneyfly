@@ -51,6 +51,22 @@ Duration refreshBackoff(int attempt) {
   }
 }
 
+/// 刷新请求**成功返回（HTTP 2xx）**时，正文到底算不算「拿到了新令牌」。
+///
+/// 为什么不能把「200 但正文看不懂」也算成 rejected：网关/WAF/运营商拦截页、
+/// 维护页、后端改字段名（`token` 而非 `access_token`）都会返回 200 + 非标准正文。
+/// 判成 rejected 就是**登出**（旧实现如此，与本文件头描述的故障同族）；
+/// 判成 transient 则只是退避重试 + 保留会话，客户最多多等几秒。
+RefreshOutcome classifyRefreshSuccessBody(Object? data) {
+  if (data is Map) {
+    final token = data['access_token'];
+    if (token != null && token.toString().isNotEmpty) {
+      return RefreshOutcome.success;
+    }
+  }
+  return RefreshOutcome.transient;
+}
+
 /// 只有「服务端明确拒绝」才终结会话。
 bool shouldEndSession(RefreshOutcome outcome) =>
     outcome == RefreshOutcome.rejected;

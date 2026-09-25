@@ -76,6 +76,34 @@ void main() {
     });
   });
 
+  group('2xx 但正文不可解析 → 保留会话（不登出）', () {
+    test('标准信封 + access_token → success', () {
+      expect(
+        classifyRefreshSuccessBody({'access_token': 'a.b.c', 'refresh_token': 'r'}),
+        RefreshOutcome.success,
+      );
+    });
+
+    test('网关/WAF 页（HTML 字符串）→ transient', () {
+      expect(classifyRefreshSuccessBody('<html><body>502 Bad Gateway</body></html>'),
+          RefreshOutcome.transient);
+      expect(classifyRefreshSuccessBody('{"code":401,"message":"令牌失效"}'),
+          RefreshOutcome.transient, reason: '非标准信封（无 data/access_token）');
+    });
+
+    test('access_token 为空串 / null / 字段改名 → transient', () {
+      expect(classifyRefreshSuccessBody({'access_token': ''}), RefreshOutcome.transient);
+      expect(classifyRefreshSuccessBody({'access_token': null}), RefreshOutcome.transient);
+      expect(classifyRefreshSuccessBody({'token': 'a.b.c'}), RefreshOutcome.transient);
+      expect(classifyRefreshSuccessBody(null), RefreshOutcome.transient);
+      expect(classifyRefreshSuccessBody([1, 2, 3]), RefreshOutcome.transient);
+    });
+
+    test('transient 不终结会话（只有 rejected 才登出）', () {
+      expect(shouldEndSession(classifyRefreshSuccessBody('nope')), isFalse);
+    });
+  });
+
   group('退避重试', () {
     test('首次 0.5s → 1.5s → 3s，且不超过 3 次', () {
       expect(kRefreshMaxAttempts, 3);

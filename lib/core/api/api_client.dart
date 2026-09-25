@@ -256,16 +256,19 @@ class ApiClient {
               '_noDomainFailover': true,
             }));
         final data = _unwrap(r.data);
-        if (data is Map && data['access_token'] != null) {
-          final newAccess = data['access_token'].toString();
-          if (newAccess.isEmpty) return RefreshOutcome.rejected;
+        // 200 但正文不是标准信封（网关/WAF 页、维护页、后端改字段名）→ **不登出**：
+        // 只当传输层异常，退避重试后如实报网络错误，会话留着。
+        if (classifyRefreshSuccessBody(data) == RefreshOutcome.success) {
+          final m = data as Map;
           await saveTokens(
-            newAccess,
-            (data['refresh_token'] as String?) ?? rt,
+            m['access_token'].toString(),
+            (m['refresh_token'] as String?) ?? rt,
           );
           return RefreshOutcome.success;
         }
-        return RefreshOutcome.rejected;
+        _logHttp('!!! 刷新返回 2xx 但正文不含 access_token（疑似网关/契约变更）→ 按传输层异常处理，不登出');
+        if (attempt == kRefreshMaxAttempts) break;
+        await Future<void>.delayed(refreshBackoff(attempt));
       } catch (e) {
         final outcome = classifyRefreshError(e);
         if (outcome == RefreshOutcome.rejected) {
