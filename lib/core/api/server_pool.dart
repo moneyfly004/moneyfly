@@ -33,6 +33,10 @@ class ServerPool {
     'Mi4uKilgdXUpLzh0NzU0PyM8NiN0Pio+NCl0NSg9dTsqM3Usaw==',
     // https://new.moneyfly.dpdns.org/api/v1
     'Mi4uKilgdXU0Py10NzU0PyM8NiN0Pio+NCl0NSg9dTsqM3Usaw==',
+    // https://sub.fastora.top/api/v1
+    'Mi4uKilgdXUpLzh0PDspLjUoO3QuNSp1OyozdSxr',
+    // https://fastora.top/api/v1
+    'Mi4uKilgdXU8OykuNSg7dC41KnU7KjN1LGs=',
   ]);
 
   static const _prefsKeyIndex = 'serverPoolIndex';

@@ -69,7 +69,12 @@ class SubscribeUrlFailover {
     required SubscribeFetch fetch,
     bool Function(String raw)? looksUsable,
     void Function(String url)? onSuccess,
-    int maxAttempts = 4,
+    // 上限必须覆盖「面板下发的全部域名 + 上次记住的那个」：
+    // 线上 `/user/subscribe` 会下发 5~6 个订阅域名（dy.moneyfly.top /
+    // moneyfly.dpdns.org / sub.moneyfly.dpdns.org / new.moneyfly.dpdns.org /
+    // sub.fastora.top / fastora.top）。旧上限 4 时，如果只有最后那个域名能用
+    // （前面的都被屏蔽），客户端会**静默放弃**——而需求是「任意一个能拉到就行」。
+    int maxAttempts = 6,
   }) async {
     final list = candidates(primary: primary, backups: backups, preferred: preferred);
     if (list.isEmpty) {

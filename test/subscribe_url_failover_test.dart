@@ -112,6 +112,37 @@ void main() {
       );
     });
 
+    test('默认会尝试完全部候选（面板下发 5~6 个域名时不能漏掉最后一个）', () async {
+      // 线上实测：面板下发 5 个订阅域名（含 sub.fastora.top），加上「上次成功」
+      // 最多 6 个候选。旧默认上限 4 → 只有最后那个能用时会静默放弃，
+      // 与需求「任意一个域名拉到就行」冲突。
+      final hosts = [
+        'https://sub.moneyfly.dpdns.org',
+        'https://moneyfly.dpdns.org',
+        'https://new.moneyfly.dpdns.org',
+        'https://sub.fastora.top',
+        'https://fastora.top',
+      ];
+      const token = 'abc123';
+      final tried = <String>[];
+      final primary = 'https://dy.moneyfly.top/api/v1/client/subscribe?token=$token';
+      final backups = [for (final h in hosts) '$h/api/v1/client/subscribe?token=$token'];
+
+      final r = await SubscribeUrlFailover.fetchFirst(
+        primary: primary,
+        backups: backups,
+        fetch: (u) async {
+          tried.add(u);
+          // 只有最后一个候选（fastora.top）能用
+          // 只有**最后一个**候选（https://fastora.top，注意不是 sub.fastora.top）能用
+          if (u.contains('//fastora.top')) return 'proxies:\n  - {name: a}';
+          throw Exception('blocked: $u');
+        },
+      );
+      expect(r.url.contains('fastora.top'), isTrue);
+      expect(tried.length, 6, reason: '主地址 + 5 个备用地址都应被尝试');
+    });
+
     test('maxAttempts 限制尝试次数（避免用户长时间等待）', () async {
       final tried = <String>[];
       await expectLater(
