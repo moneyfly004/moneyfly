@@ -66,30 +66,74 @@ void main() async {
   // 在创建窗口之前拦截：第二进程连窗口都不会创建就退出。这里不再做 Dart 侧
   // 检查——否则第一个实例会被自己持有的原生 mutex 误判成「已有实例」而自杀。
   WidgetsFlutterBinding.ensureInitialized();
-  // macOS/Linux 没有原生入口层可挂，用排他文件锁补上单实例守卫。
-  // 必须**早于**任何系统代理/内核清扫与 runApp：否则第二个实例的启动巡检
-  // 已经在动第一个实例的内核与系统代理了（多开互相打架的源头）。
-  final isDesktopRuntime = !Platform.environment.containsKey('FLUTTER_TEST') &&
+  final isTest = Platform.environment.containsKey('FLUTTER_TEST');
+  final isDesktopRuntime = !isTest &&
       (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+
+  // ⚠️ 这一段（runApp 之前）**绝不能卡住、也绝不能抛错**：
+  // Flutter 的 Windows 模板要等**第一帧渲染完成**才显示窗口
+  // （windows/runner/flutter_window.cpp 的 SetNextFrameCallback → Show()），
+  // 所以只要这里被挂住或异常抛出，客户看到的就是「装完了打不开、没有任何窗口」，
+  // 而进程还活在任务管理器里 —— 正是客服报障最难定位的那种。
+  // 因此：单实例守卫加超时兜底，窗口管理器初始化失败也只记日志；
+  // 其余启动任务（插件初始化 / 线路池 / 数据清理 / 自启自愈）全部挪到
+  // runApp 之后的首帧之后再跑（见 _postLaunchInit），任何一个失败都不影响出窗口。
+
+  // macOS/Linux 没有原生入口层可挂，用排他文件锁补上单实例守卫。
+  // 必须**早于**任何系统代理/内核清扫：否则第二个实例的启动巡检已经在动第一个
+  // 实例的内核与系统代理了（多开互相打架的源头）。
   if (isDesktopRuntime && !Platform.isWindows) {
-    if (!await SingleInstance.acquire()) {
+    var acquired = true; // 兜底：守卫本身出问题时**放行**（出窗口优先）
+    try {
+      acquired = await SingleInstance.acquire()
+          .timeout(const Duration(seconds: 3), onTimeout: () => true);
+    } catch (e) {
+      AppLog.error('single instance guard failed (放行): $e');
+    }
+    if (!acquired) {
       AppLog.log('APP', 'another instance is running, exit this one');
       exit(0);
     }
   }
   // 桌面端窗口管理（关闭=隐藏到托盘，不退出进程）
-  if (!Platform.environment.containsKey('FLUTTER_TEST') &&
-      (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
-    await windowManager.ensureInitialized();
-    unawaited(windowManager.setPreventClose(true));
-    unawaited(windowManager.setTitle('MoneyFly'));
-    unawaited(windowManager.setMinimumSize(const Size(380, 620)));
+  if (isDesktopRuntime) {
+    try {
+      await windowManager.ensureInitialized();
+      unawaited(windowManager.setPreventClose(true));
+      unawaited(windowManager.setTitle('MoneyFly'));
+      unawaited(windowManager.setMinimumSize(const Size(380, 620)));
+    } catch (e) {
+      AppLog.error('windowManager 初始化失败（不阻塞启动）: $e');
+    }
   }
+
+  // 先把 UI 起起来 —— 第一帧只依赖上面的最小初始化，不依赖任何网络/文件任务
+  runApp(const MoneyFlyApp());
+  unawaited(_postLaunchInit(isDesktopRuntime));
+}
+
+/// 首帧之后的启动任务：每一个都独立兜底。
+/// 顺序保留了原有的语义（UA/设备信息要早于首个 API 请求；线路池要早于首个请求），
+/// 但它们不再挡在 runApp 前面 —— 旧实现把它们按 await 串在 runApp 之前，
+/// 任何一步抛异常或卡住都会导致「进程在、窗口不出现」。
+Future<void> _postLaunchInit(bool isDesktopRuntime) async {
   // UA + 设备信息必须在首个 API 请求前就绪（登录 UA 不再为裸版本号）
-  await UpdateService.instance.init();
-  // 恢复上次可用的服务器线路（某些地区官网域名被墙时，用户上次切到的备用域名要延续使用；
-  // 未切换过则默认主域名）。必须在首个 API 请求前完成，见 core/api/server_pool.dart。
-  await ServerPool.instance.ensureLoaded();
+  try {
+    await UpdateService.instance
+        .init()
+        .timeout(const Duration(seconds: 10));
+  } catch (e) {
+    AppLog.error('UpdateService.init 失败（不阻塞启动）: $e');
+  }
+  // 恢复上次可用的服务器线路（某些地区官网域名被墙时，用户上次切到的备用域名要
+  // 延续使用；未切换过则默认主域名）。见 core/api/server_pool.dart。
+  try {
+    await ServerPool.instance
+        .ensureLoaded()
+        .timeout(const Duration(seconds: 5));
+  } catch (e) {
+    AppLog.error('ServerPool.ensureLoaded 失败（用默认主域名继续）: $e');
+  }
   // 后台静默检查更新：有新版则点亮全局红点（底部「我的」tab / 设置「版本更新」行）
   // 并（默认开启）在后台把匹配本机的安装包预下载好 —— 用户点「立即更新」时无需等待。
   unawaited(() async {
@@ -105,11 +149,16 @@ void main() async {
   // 全新安装检测：卸载残留/数据被清 → 清空旧配置、旧 token、旧缓存，
   // 保证重装后必须重新登录并重新拉取订阅（不沿用旧配置）；版本升级 →
   // 仅清理旧版本拉到的订阅缓存（下次启动强制重拉）。
-  await AppDataCleaner.cleanupOnLaunch();
+  try {
+    await AppDataCleaner.cleanupOnLaunch()
+        .timeout(const Duration(seconds: 15));
+  } catch (e) {
+    AppLog.error('AppDataCleaner.cleanupOnLaunch 失败（跳过清理）: $e');
+  }
   AppLog.log('APP', 'launched v${UpdateInfo.currentVersion}, ${Platform.operatingSystem}');
   // 开机自启自愈：Windows 注册的是 **exe 绝对路径**，换目录安装/手动移动目录、
   // 或被任务管理器清掉后这条会失效 —— 设置里开着但系统里没有就补注册（失败只记
-  // 日志，不影响启动）。旧实现连注册都没发生过，见 AutostartService 注释。
+  // 日志，不影响启动）。
   if (isDesktopRuntime) {
     unawaited(() async {
       try {
@@ -119,7 +168,6 @@ void main() async {
       } catch (_) {}
     }());
   }
-  runApp(const MoneyFlyApp());
 }
 
 class MoneyFlyApp extends StatefulWidget {
@@ -161,6 +209,22 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     WidgetsBinding.instance.addObserver(this);
     if (_isDesktopRuntime) {
       windowManager.addListener(this);
+      // 窗口可见性自愈（Windows 客服报障：「装完打不开、没有窗口」）：
+      // 原生侧已有「首帧 3 秒兜底显示」，但若 Dart 侧某一步把窗口藏了/没显示成功，
+      // 这里 4 秒后再确认一次 —— 启动 4 秒内不可能有用户主动「关到托盘」，
+      // 所以强制显示不会误伤。失败只记日志。
+      _windowWatchdog = Timer(const Duration(seconds: 4), () async {
+        try {
+          final visible = await windowManager.isVisible();
+          if (!visible) {
+            AppLog.error('窗口启动 4 秒后仍不可见 → 强制显示（自愈）');
+            await windowManager.show();
+            await windowManager.focus();
+          }
+        } catch (e) {
+          AppLog.error('窗口可见性自愈失败: $e');
+        }
+      });
       TrayService.instance.init(
         showWindow: () async {
           await windowManager.show();
@@ -248,6 +312,7 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (_isDesktopRuntime) {
+      _windowWatchdog?.cancel();
       windowManager.removeListener(this);
     }
     _session.removeListener(_onSessionChanged);
@@ -256,6 +321,9 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
 
   /// 防重复退出/关闭处理
   bool _quitting = false;
+
+  /// 窗口可见性自愈定时器（桌面端）：见 initState 里的说明
+  Timer? _windowWatchdog;
 
   /// 真正退出：先断开连接（停内核 + 恢复系统代理，避免残留内核占端口/
   /// cache 锁导致下次启动失败），再关闭窗口并结束进程。
