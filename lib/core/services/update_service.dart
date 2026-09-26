@@ -124,6 +124,10 @@ class UpdateService {
     headers: {'Accept': 'application/json', 'User-Agent': ApiClient.userAgent},
   ));
 
+  /// 上一次 check() 是否**因为失败**而没拿到结果（网络全不通 / 面板不可用），
+  /// 与「已是最新版本」是两件事：UI 必须据此显示「检查更新失败」而不是「已是最新」。
+  bool lastCheckFailed = false;
+
   /// 测试缝：替换 GitHub 裸客户端（单测用假适配器覆盖「直连不通 → 走镜像」分支）
   @visibleForTesting
   static Dio? debugGhDio;
@@ -209,8 +213,16 @@ class UpdateService {
       return _cacheInfo;
     }
     // 先问 GitHub（信息最全）；直连不通时再问自己的面板（见 _checkViaPanel）
+    lastCheckFailed = false;
     final info = await _checkViaGitHub() ?? await _checkViaPanel();
-    if (info == null) return null;
+    if (info == null) {
+      // 两条路都没拿到结果 = **检查失败**，不是「已是最新」。
+      // 旧实现在这里直接 return null，而 UI 只在抛异常/超时时才判 failed，
+      // 于是国内网络（GitHub + 4 个镜像 + 面板全不通）会看到
+      // 「已是最新版本」，实际早有新版 —— 用户永远停在旧版还自认为最新。
+      lastCheckFailed = true;
+      return null;
+    }
     _cacheInfo = info;
     _cacheAt = DateTime.now();
     hasUpdate.value = info.isNewer;

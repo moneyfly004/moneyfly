@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/models.dart';
 import '../../core/services/account_service.dart';
+import '../../core/services/app_log.dart';
 import '../../core/services/order_service.dart';
 import '../../core/services/payment_service.dart';
 import '../../core/proxy/proxy_core.dart';
@@ -135,16 +136,30 @@ class _UpgradeDevicesPageState extends State<UpgradeDevicesPage> {
       if (orderId == 0) throw Exception(AppStrings.t('order_failed'));
 
       // 开通并刷新（付款成功 / 余额抵扣直接开通 共用）
+      //
+      // 【涉及钱，顺序很关键】旧实现先弹「设备升级成功」，再刷新账号与节点，
+      // 而刷新失败被 `catch (_) {}` 整个吞掉 —— 支付回调刚完成时接口抖动/5xx
+      // 很常见，客户于是看到「升级完成」却依旧被「设备已达上限」挡住、设备页
+      // 名额没变，没有任何失败提示或重试入口（有人会因此重复下单）。
+      // 现在：**刷新成功才报成功**；失败则如实提示并留在本页，让用户能再点一次。
       Future<void> activate() async {
         if (!mounted) return;
-        _toast(AppStrings.t('upgrade_done'));
         try {
           final nodes = await AccountService.instance.refreshAfterPurchase();
+          if (!mounted) return;
+          await context.read<ConnectionController>().applySubscriptionNodes(nodes);
           if (mounted) {
-            await context.read<ConnectionController>().applySubscriptionNodes(nodes);
+            _toast(AppStrings.t('upgrade_done'));
+            Navigator.of(context).pop(true);
           }
-        } catch (_) {}
-        if (mounted) Navigator.of(context).pop(true);
+        } catch (e) {
+          AppLog.error('设备升级后刷新账号状态失败: $e');
+          if (mounted) {
+            // 不 pop：留在本页，用户可再点一次「立即支付/开通」，或稍后在
+            // 「我的-设备管理」里确认名额
+            _toast(AppStrings.t('upgrade_paid_refresh_failed'));
+          }
+        }
       }
 
       // 余额/全额抵扣：后端直接置 paid，无需二维码，直接开通

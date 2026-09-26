@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
@@ -130,10 +131,17 @@ class SubscriptionScheduler {
       // 到期或禁用），那也是一次**成功的**响应，不该触发失败退避。
       return true;
     } catch (e) {
-      // 设备被踢下线：后端对该设备的订阅请求返回 403 → 主动断开当前连接，
-      // 让被删设备尽快下线（下次手动刷新/回前台也会再次收到提示）
+      // 设备被踢下线：后端对该设备的订阅请求返回 **403** → 主动断开当前连接，
+      // 让被删设备尽快下线（下次手动刷新/回前台也会再次收到提示）。
+      //
+      // 必须要求 403 这个**结构化证据**：旧实现只看错误文案里的关键词
+      // （含 'removed'/'kicked'/'禁止' 即算），而 errorMsg 可能返回网关/WAF 的
+      // 整页文本 —— 一张恰好含这些词的拦截页就能把客户正在用的连接断开、
+      // 清空订阅缓存，并告诉他「账号已被禁用」。
       final msg = ApiClient.errorMsg(e);
-      if (SubscriptionService.isKickedMessage(msg)) {
+      final serverRejected = e is DioException &&
+          (e.response?.statusCode == 403 || e.response?.statusCode == 401);
+      if (serverRejected && SubscriptionService.isKickedMessage(msg)) {
         SubscriptionService.instance.clearCache();
         final conn = ConnectionController.instance;
         if (conn.status == ConnStatus.connected ||

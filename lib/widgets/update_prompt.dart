@@ -167,10 +167,12 @@ abstract final class UpdatePrompt {
       _busy = false;
     }
     if (!context.mounted) return;
+    // 失败 = 抛异常/超时 **或** UpdateService 明确回报「没拿到结果」
+    final checkFailed = failed || UpdateService.instance.lastCheckFailed;
     if (info == null || !info.isNewer) {
       await _alert(
         context,
-        failed
+        checkFailed
             ? AppStrings.t('update_check_failed')
             : AppStrings.t('update_up_to_date',
                 {'v': UpdateInfo.currentVersion}),

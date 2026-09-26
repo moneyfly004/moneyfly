@@ -120,6 +120,29 @@ void main() {
     });
   });
 
+  group('破坏性判据必须有结构化证据（不认整页 HTML）', () {
+    test('真正的服务端一句话才认', () {
+      expect(
+          SubscriptionService.isKickedMessage(
+              '此设备已被移除并踢下线,如需继续使用请重新登录或联系客服'),
+          isTrue);
+      expect(SubscriptionService.isKickedMessage('device removed'), isTrue);
+    });
+
+    test('网关/WAF 整页正文即使含 removed/kicked 也不认', () {
+      const page = '<!DOCTYPE html><html><body><h1>404 Not Found</h1>'
+          '<p>The requested resource has been removed or kicked from this node.</p>'
+          '<p>Please contact your network administrator for https://wifi.example.com help.</p>'
+          '</body></html>';
+      expect(SubscriptionService.isKickedMessage(page), isFalse,
+          reason: '旧判据会据此断开客户正在用的连接并清空节点缓存');
+    });
+
+    test('超长文本（>160 字）不认', () {
+      expect(SubscriptionService.isKickedMessage('removed ' * 30), isFalse);
+    });
+  });
+
   group('looksLikeSubscription：区分「订阅」与「后端故障页」', () {
     test('常见订阅形态都认得', () {
       // base64 订阅（内含节点链接）
@@ -134,8 +157,27 @@ void main() {
       // 明文节点链接
       expect(SubscriptionService.looksLikeSubscription('vmess://eyJhIjoxfQ=='),
           isTrue);
-      // JSON
-      expect(SubscriptionService.looksLikeSubscription('{"data":[]}'), isTrue);
+      // 带订阅字段的 JSON（不是随便一个 JSON 信封）
+      expect(
+          SubscriptionService.looksLikeSubscription(
+              '{"proxies":[{"name":"a","type":"ss"}]}'),
+          isTrue);
+    });
+
+    test('普通 JSON 信封 / 网关错误页（含 URL）不算订阅 —— 审计发现的关键回归', () {
+      // 审计实证：旧判据「以 { 或 [ 开头即算」「含 :// 即算」会把网关/WAF 的
+      // HTML 拦截页（几乎都带 https://…）当成「合法但空的订阅」，
+      // 于是清空内存线路、覆盖磁盘兜底缓存、还把 _lastIssue 置空（首页零提示）。
+      for (final raw in const [
+        '{"data":[]}', // 后端接口信封，不是订阅
+        '{"code":401,"message":"token invalid"}',
+        '<html><head><meta http-equiv="refresh" content="0;url=http://wifi.login.cn"></head></html>',
+        '<html><body><script src="https://cdn.example.com/a.js"></script>运营商提示页</body></html>',
+        '请访问 https://dy.moneyfly.top 购买套餐',
+      ]) {
+        expect(SubscriptionService.looksLikeSubscription(raw), isFalse,
+            reason: raw);
+      }
     });
 
     test('HTML / 故障页 / 跳登录一律不认（不能被它清空线路）', () {

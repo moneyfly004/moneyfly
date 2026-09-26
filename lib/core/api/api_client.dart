@@ -462,7 +462,17 @@ class ApiClient {
         final msg = d['message'] ?? d['detail'] ?? d['error'];
         if (msg != null && msg.toString().isNotEmpty) return msg.toString();
       }
-      if (d is String && d.isNotEmpty) return d;
+      if (d is String && d.isNotEmpty) {
+        // 只在正文像「一句给人看的错误信息」时透出：短、且不是 HTML。
+        // 网关/WAF/运营商的拦截页原样塞进提示框客户既看不懂，还会被
+        // subscription_service 的关键词判据误用（把正在用的连接断开、清空节点）。
+        final s = d.trim();
+        final looksHtml = s.startsWith('<') ||
+            s.contains('<html') ||
+            s.contains('<!DOCTYPE') ||
+            s.contains('<body');
+        if (!looksHtml && s.length <= 200) return s;
+      }
       switch (e.type) {
         case DioExceptionType.connectionTimeout:
         case DioExceptionType.connectionError:

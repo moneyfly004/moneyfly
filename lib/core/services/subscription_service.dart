@@ -150,27 +150,60 @@ class SubscriptionService {
   ///   1) 后端**故意**下发的占位内容（到期/禁用场景）→ 必须覆盖本地旧配置；
   ///   2) 后端返回了故障页 / HTML 错误页 / 跳登录页 → **绝不能**据此清空用户的
   ///      线路（一次后端抖动就把用户的节点全抹掉，用户只会看到「没有节点」）。
+  /// 订阅原文是否**看起来像**一份订阅（Clash YAML / base64 节点列表 / 明文节点链接 / 带订阅字段的 JSON）。
+  ///
+  /// 判据必须**结构化**。旧实现是「以 `{`/`[` 开头即算」「正文含 `://` 即算」——
+  /// 而网关/WAF/运营商的 HTML 拦截页几乎都带 `https://…`，于是那份错误页被当成
+  /// 「合法但空的订阅」：清空内存线路、**覆盖磁盘离线兜底缓存**，还把 `_lastIssue`
+  /// 置空（首页一句提示都没有）→ 客户下次断网冷启动真的一片空白。
   static bool looksLikeSubscription(String raw) {
     final t = raw.trim();
     if (t.isEmpty) return false; // 空正文单独按「空订阅」处理，不算异常
-    if (t.startsWith('{') || t.startsWith('[')) return true; // JSON
     final lower = t.toLowerCase();
-    if (lower.contains('proxies:') ||
-        lower.contains('proxy-groups:') ||
-        lower.contains('proxy-providers:')) {
+    // ① Clash 形态：必须是**行首的段名**（HTML/注释里出现的同名文字不算）
+    if (RegExp(r'^\s*proxies\s*:', multiLine: true).hasMatch(t) ||
+        RegExp(r'^\s*proxy-providers\s*:', multiLine: true).hasMatch(t) ||
+        lower.contains('"proxies"')) {
       return true;
     }
-    if (t.contains('://')) return true; // vmess:// ss:// trojan:// ...
-    // base64 订阅：解出来含节点才算
+    // ② 明文节点链接：要求**行首**是已知协议（HTML 里的 href 不会在行首成段）
+    if (_linkLineRe.hasMatch(t)) return true;
+    // ③ base64 订阅：解出来必须含节点链接或 proxies: 段才算
     final compact = t.replaceAll(RegExp(r'\s'), '');
     if (compact.length > 24 &&
         RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(compact)) {
       try {
-        final dec = utf8.decode(base64.decode(base64.normalize(compact)));
-        return dec.contains('://') || dec.contains('proxies:');
+        final dec = utf8.decode(base64.decode(base64.normalize(compact)),
+            allowMalformed: true);
+        return _linkLineRe.hasMatch(dec) || dec.contains('proxies:');
       } catch (_) {}
     }
+    // ④ 其余（JSON 信封、HTML 故障页、跳登录页…）一律不算订阅 —— 宁可当成
+    //    「内容异常」保留用户已有线路，也不要拿错误页去覆盖它。
     return false;
+  }
+
+  /// 「行首是已知节点协议」的判据（多行；大小写不敏感）
+  static final RegExp _linkLineRe = RegExp(
+    r'^(vmess|vless|trojan|ss|ssr|socks|socks5|hysteria|hysteria2|hy2|tuic|anytls|wireguard)://',
+    multiLine: true,
+    caseSensitive: false,
+  );
+
+  /// 服务端给的**一句话**（JSON message 或短文本），而不是网关/WAF 的整页 HTML。
+  /// 破坏性动作（断连 / 清缓存 / 拉黑）只允许在这句话上触发：旧实现在任意响应体
+  /// 上做关键词匹配，一张恰好含 "removed" 的拦截页就能把客户正在用的连接断开。
+  static bool _isServerSentence(String msg) {
+    final s = msg.trim();
+    if (s.isEmpty || s.length > 160) return false;
+    if (s.startsWith('<') ||
+        s.contains('<html') ||
+        s.contains('<!DOCTYPE') ||
+        s.contains('<body') ||
+        s.contains('</')) {
+      return false;
+    }
+    return true;
   }
 
   /// 获取订阅信息（XBoard 兼容 /user/subscribe）
@@ -269,10 +302,11 @@ class SubscriptionService {
   /// 错误文案是否命中「设备被踢下线」（后端删除设备后的订阅 403 提示）。
   /// 供 UI/调度器识别后断开连接、清空节点并提示用户。
   static bool isKickedMessage(String msg) =>
-      msg.contains('已被移除') ||
-      msg.contains('踢下线') ||
-      msg.toLowerCase().contains('removed') ||
-      msg.toLowerCase().contains('kicked');
+      _isServerSentence(msg) &&
+      (msg.contains('已被移除') ||
+       msg.contains('踢下线') ||
+       msg.toLowerCase().contains('removed') ||
+       msg.toLowerCase().contains('kicked'));
 
   /// 拉取订阅原文 → 后台解析 → 校验 epoch/请求序号后覆盖内存与磁盘缓存
   Future<List<ProxyNode>> _pullAndCache(
@@ -366,6 +400,7 @@ class SubscriptionService {
   /// 判定错误文案是否命中「禁用/封禁」（账号不可用类，需与
   /// [AccountService] 判定口径一致；放这里避免循环依赖）
   static bool _isDisableMessage(String msg) {
+    if (!_isServerSentence(msg)) return false;
     final m = msg.toLowerCase();
     return msg.contains('禁用') ||
         msg.contains('禁止') ||

@@ -77,10 +77,31 @@ class SystemProxyManager {
   /// 残留代理指向死端口 → 无内核时会导致断网）
   static Future<bool> pointsToLocal(int port) async {
     try {
+      // macOS：**直接枚举系统当前状态**，不依赖进程内 _original。
+      // 启动巡检在新进程里跑（_original / _applied 都是空的）：
+      //   · 用依赖 _original 的探针 → 空集合被当成「正常」→ 真残留清不掉 → 整机断网；
+      //   · 无条件返回 true → 又会误关「别的代理软件指向 127.0.0.1:2080」的活配置。
+      // 只有看真实系统状态，两个错都不会犯。
+      if (_isMacOS) return await _macSystemProxyPointsTo(port);
       return await _osProxyPointsTo(port);
     } catch (_) {
       return false;
     }
+  }
+
+  /// macOS：枚举全部网络服务，看是否有任一服务的 web/secureweb/socks 代理
+  /// 指向 `127.0.0.1:port`（我们的形状）。与进程内状态无关，供启动巡检使用。
+  static Future<bool> _macSystemProxyPointsTo(int port) async {
+    final services = await _macServices();
+    var hit = false;
+    await Future.wait([
+      for (final svc in services)
+        for (final kind in ['web', 'secureweb', 'socksfirewall'])
+          Process.run('networksetup', ['-get${kind}proxy', svc]).then((r) {
+            if (_isSelfResidual(r.stdout as String, port)) hit = true;
+          }).catchError((_) {}),
+    ]);
+    return hit;
   }
 
   /// 启动巡检：清理「上次异常退出（强杀 / 注销 / 关机）残留」的系统代理。
@@ -134,6 +155,27 @@ class SystemProxyManager {
   /// 残留清扫的决策（纯函数，便于单测）：只有「指向本机端口」**且**
   /// 「该端口已经没人监听」才算残留。[force] 跳过探活（调用方明确知道要清）。
   @visibleForTesting
+  /// 保活是否需要重新 apply（纯函数，可单测）。
+  ///
+  /// macOS 的系统代理是**按网络服务**生效的，所以保活必须覆盖两件事：
+  ///   · 还没捕获过任何服务 → 状态未知 → 需要 apply；
+  ///   · 出现了未覆盖的**活跃**服务（换 Wi-Fi / 插网线 / 开热点 / 开热点共享）
+  ///     → 需要 apply，否则新接口没有代理项。
+  ///
+  /// 旧实现两条都不查：`_original` 为空时探针直接返回 true（未知当正常），
+  /// 新接入的服务也从不在 `_original` 里 → 探针恒说「正常」→ 客户看到
+  /// 「首页已连接、速率为 0」，甚至以本机 IP 直连出网（以为走了代理）。
+  static bool macProxyNeedsApply({
+    required Set<String> captured,
+    required List<String> activeServices,
+  }) {
+    if (captured.isEmpty) return true;
+    for (final svc in activeServices) {
+      if (!captured.contains(svc)) return true;
+    }
+    return false;
+  }
+
   static bool shouldClearResidual({
     required bool proxyPointsToLocal,
     required bool portAlive,
@@ -366,8 +408,16 @@ class SystemProxyManager {
   /// 只读探测：apply 时设置过的活跃服务（_original.keys）三种代理是否都仍
   /// 指向本地端口。只查我们真正设过的少数服务，全并行（~0.1s）。
   static Future<bool> _macProxyPointsTo(int port) async {
-    final services = _original.keys.toList();
-    if (services.isEmpty) return true;
+    final services = _original.keys.toSet();
+    // 「未知」不等于「正常」：还没捕获过任何服务时返回 false，
+    // 让保活走 reassert 重新 apply（旧实现返回 true → 探针永远说正常 → 修不回来）。
+    if (services.isEmpty) return false;
+    // 出现未覆盖的**活跃**服务（换 Wi-Fi / 插网线 / 开热点）→ 同样视为「不 OK」，
+    // 由保活补写代理（判据抽成纯函数，见 macProxyNeedsApply 的单测）。
+    final active = await _macActiveServices();
+    if (macProxyNeedsApply(captured: services, activeServices: active)) {
+      return false;
+    }
     try {
       final results = await Future.wait([
         for (final svc in services)
@@ -442,29 +492,45 @@ class SystemProxyManager {
   /// 用户机器上常有大量残留虚拟网卡（其他 VPN 软件遗留），串行 networksetup
   /// 会让连接卡 2~3s；并行后降到 ~0.3s。每个 networksetup 调用相互独立，
   /// 并行无副作用。
-  static Future<void> _applyMacOS(int port, List<String> bypass) async {
-    // 1) 首次：筛活跃服务 + 捕获原状态（仅一次）。之后的服务集合固定为
-    //    _original.keys —— reassert/restore/探测三者共用，保证一致。
-    if (!_captured) {
-      final active = await _macActiveServices();
-      await Future.wait([
-        for (final svc in active)
-          for (final kind in ['web', 'secureweb', 'socksfirewall'])
-            Process.run('networksetup', ['-get${kind}proxy', svc]).then((r) {
-              var state = (r.stdout as String).trim();
-              if (_isSelfResidual(state, port)) state = 'Enabled: No';
-              (_original[svc] ??= <String, String>{})[kind] = state;
-            }),
-        // 同时捕获 bypass domains 原值（restore 时还原）。旧实现从不设置
-        // 该值，也就没捕获 —— 结果是 localhost / 内网 / 本地控制端口
-        // 全部被塞进代理，内核未起来时连本机服务都访问不了。
-        for (final svc in active)
-          Process.run('networksetup', ['-getproxybypassdomains', svc])
-              .then((r) {
-            (_original[svc] ??= <String, String>{})['bypass'] =
-                (r.stdout as String).trim();
+  /// 捕获若干 macOS 网络服务的「原始代理状态」（restore 时按此还原）。
+  /// 已捕获过的服务不覆盖：保活 reassert 时不能把「我们自己写入的状态」当成原值。
+  static Future<void> _captureMacOriginals(
+      List<String> services, int port) async {
+    await Future.wait([
+      for (final svc in services)
+        for (final kind in ['web', 'secureweb', 'socksfirewall'])
+          Process.run('networksetup', ['-get${kind}proxy', svc]).then((r) {
+            var state = (r.stdout as String).trim();
+            // 上次强杀留下的「指向本机端口」的残留，记录为「关闭」，
+            // restore 时恢复成关闭而不是把残留还原回来。
+            if (_isSelfResidual(state, port)) state = 'Enabled: No';
+            (_original[svc] ??= <String, String>{})[kind] = state;
           }).catchError((_) {}),
-      ]);
+      // bypass domains 原值（restore 时还原）。旧实现从不设置该值、也没捕获 ——
+      // 结果是 localhost / 内网 / 本地控制端口全被塞进代理，内核没起来时连本机
+      // 服务都访问不了。
+      for (final svc in services)
+        Process.run('networksetup', ['-getproxybypassdomains', svc])
+            .then((r) {
+          (_original[svc] ??= <String, String>{})['bypass'] =
+              (r.stdout as String).trim();
+        }).catchError((_) {}),
+    ]);
+  }
+
+  static Future<void> _applyMacOS(int port, List<String> bypass) async {
+    // 1) **每次 apply 都重新枚举活跃服务**（不只首次）。
+    //    换 Wi-Fi / 插网线 / 开热点后 macOS 会启用另一个网络服务，而系统代理是
+    //    **按服务**生效的：旧实现只在首次捕获一次、之后永远只写 _original.keys，
+    //    新服务拿不到代理 → 客户看到「首页显示已连接、速率为 0」，甚至以本机 IP
+    //    直连出网（以为自己走了代理）。新出现的服务在这里补捕获原状态，
+    //    restore 才能把它正确还原。
+    final active = await _macActiveServices();
+    final toCapture = _captured
+        ? active.where((s) => !_original.containsKey(s)).toList()
+        : active;
+    if (toCapture.isNotEmpty) {
+      await _captureMacOriginals(toCapture, port);
       _captured = true;
     }
     // 2) 设置代理 on + 127.0.0.1:port。
