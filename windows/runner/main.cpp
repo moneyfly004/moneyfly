@@ -20,10 +20,10 @@ static void BootLog(const wchar_t* msg) {
   if (n == 0 || n >= MAX_PATH) {
     ::GetTempPathW(MAX_PATH, dir);
   } else {
-    ::CreateDirectoryW((std::wstring(dir) + L"\MoneyFly").c_str(), nullptr);
-    wcscat_s(dir, L"\MoneyFly");
+    ::CreateDirectoryW((std::wstring(dir) + L"\\MoneyFly").c_str(), nullptr);
+    wcscat_s(dir, L"\\MoneyFly");
   }
-  std::wstring path = std::wstring(dir) + L"\boot.log";
+  std::wstring path = std::wstring(dir) + L"\\boot.log";
   HANDLE f = ::CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
                            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (f == INVALID_HANDLE_VALUE) return;
