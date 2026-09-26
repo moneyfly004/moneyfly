@@ -32,6 +32,10 @@ class SubscribeUrlFailover {
     required String primary,
     Iterable<String> backups = const [],
     String? preferred,
+    /// 可选的「主机快慢」判据（越小越快，来自客户端域名实测）。
+    /// 传入时：候选按快慢排序（上次成功的仍排最前）—— 国内各地 ISP 差别大，
+    /// 「哪个快用哪个」必须由实测决定，不能写死主地址优先。
+    int Function(String url)? hostPriority,
   }) {
     final out = <String>[];
     void add(String? u) {
@@ -47,12 +51,26 @@ class SubscribeUrlFailover {
     if (preferredToken.isNotEmpty && preferredToken == primaryToken) {
       add(preferred);
     }
-    add(primary);
+    final rest = <String>[primary];
     for (final b in backups) {
       final t = tokenOf(b);
       // 备用地址必须与主地址同 token；不同 token 的一律跳过（可能是别的订阅/别的账号）
       if (t.isNotEmpty && primaryToken.isNotEmpty && t != primaryToken) continue;
-      add(b);
+      rest.add(b);
+    }
+    if (hostPriority != null) {
+      // 稳定排序：快的在前（实测结果），相同则保持面板给的顺序
+      final indexed = <({String url, int pri, int idx})>[
+        for (var i = 0; i < rest.length; i++)
+          (url: rest[i], pri: hostPriority(rest[i]), idx: i),
+      ]..sort((a, b) => a.pri != b.pri ? a.pri.compareTo(b.pri) : a.idx.compareTo(b.idx));
+      for (final e in indexed) {
+        add(e.url);
+      }
+    } else {
+      for (final u in rest) {
+        add(u);
+      }
     }
     return out;
   }
@@ -66,6 +84,7 @@ class SubscribeUrlFailover {
     required String primary,
     Iterable<String> backups = const [],
     String? preferred,
+    int Function(String url)? hostPriority,
     required SubscribeFetch fetch,
     bool Function(String raw)? looksUsable,
     void Function(String url)? onSuccess,
@@ -76,7 +95,11 @@ class SubscribeUrlFailover {
     // （前面的都被屏蔽），客户端会**静默放弃**——而需求是「任意一个能拉到就行」。
     int maxAttempts = 6,
   }) async {
-    final list = candidates(primary: primary, backups: backups, preferred: preferred);
+    final list = candidates(
+        primary: primary,
+        backups: backups,
+        preferred: preferred,
+        hostPriority: hostPriority);
     if (list.isEmpty) {
       throw StateError('没有可用的订阅地址');
     }

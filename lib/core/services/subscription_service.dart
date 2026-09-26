@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
 
 import '../api/api_client.dart';
+import '../api/server_pool.dart';
 import '../api/endpoints.dart';
 import '../models/models.dart';
 import 'settings_store.dart';
@@ -333,6 +334,9 @@ class SubscriptionService {
         primary: info.subscribeUrl,
         backups: info.subscribeUrls,
         preferred: preferred,
+        // 谁快用谁：用客户端域名实测结果排序（国内各地 ISP 差别大，实测优先）
+        hostPriority: (u) =>
+            ServerPool.instance.priorityOfHost(Uri.tryParse(u)?.host ?? ''),
         fetch: (u) async => ApiClient.instance
             .fetchText(u, ua: await _subscriptionUa()),
         // 连上了但返回的不是订阅内容（机房拦截页/运营商提示页常是 200 + HTML）

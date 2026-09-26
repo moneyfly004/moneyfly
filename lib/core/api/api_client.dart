@@ -295,6 +295,46 @@ class ApiClient {
     return null;
   }
 
+  /// 逐域名实测延迟，返回**快到慢**的基底列表（失败/超时的排在后面）。
+  ///
+  /// 为什么必须客户端自测（2026-09-26 需求）：客户都是国内用户，各地 ISP 对
+  /// 各域名的封锁与劣化完全不同 —— 在我这台机器上快的不等于在客户那儿快。
+  /// 用公开的小接口（software-config，约 1KB，无需登录）做探测，避免为了排序
+  /// 去拉 457KB 的订阅正文。
+  ///
+  /// 不经过本类拦截器（用一次性裸 Dio）：探测本身不该触发 401 刷新/域名轮换，
+  /// 否则会互相递归。
+  static Future<List<String>> probeDomainLatency({
+    Duration timeout = const Duration(seconds: 3),
+    List<String>? bases,
+  }) async {
+    final list = bases ?? ServerPool.instance.all;
+    final dio = Dio(BaseOptions(
+      connectTimeout: timeout,
+      receiveTimeout: timeout,
+      headers: {'Accept': 'application/json', 'User-Agent': userAgent},
+    ));
+    final ok = <({String base, int ms})>[];
+    for (final base in list) {
+      final sw = Stopwatch()..start();
+      try {
+        final r = await dio.getUri<List<int>>(
+          Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/software-config'),
+          options: Options(responseType: ResponseType.bytes),
+        );
+        sw.stop();
+        if ((r.statusCode ?? 0) == 200) {
+          ok.add((base: base, ms: sw.elapsedMilliseconds));
+        }
+      } catch (_) {
+        // 探测失败的不参与排名（会被排到已知可用的后面）
+      }
+    }
+    ok.sort((a, b) => a.ms.compareTo(b.ms));
+    dio.close(force: true);
+    return [for (final e in ok) e.base];
+  }
+
   /// HTTP 日志文件（跨平台正确路径，惰性解析一次并缓存）。
   /// 旧实现每次请求同步 existsSync/createSync/writeAsStringSync：
   ///  - 阻塞调用 isolate（拦截器在主 isolate 跑）；

@@ -134,6 +134,16 @@ Future<void> _postLaunchInit(bool isDesktopRuntime) async {
   } catch (e) {
     AppLog.error('ServerPool.ensureLoaded 失败（用默认主域名继续）: $e');
   }
+  // 域名实测排序（不阻塞首帧、失败只记日志）：国内各地 ISP 对各域名的封锁/速度
+  // 差别很大，谁快用谁 —— 结果持久化，下次启动直接按它来（见 ServerPool）。
+  unawaited(() async {
+    try {
+      final ranked = await ApiClient.probeDomainLatency();
+      if (ranked.isNotEmpty) await ServerPool.instance.applyLatencyRanking(ranked);
+    } catch (e) {
+      AppLog.error('域名测速排序失败（沿用上次结果）: $e');
+    }
+  }());
   // 后台静默检查更新：有新版则点亮全局红点（底部「我的」tab / 设置「版本更新」行）
   // 并（默认开启）在后台把匹配本机的安装包预下载好 —— 用户点「立即更新」时无需等待。
   unawaited(() async {

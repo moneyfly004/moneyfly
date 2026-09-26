@@ -40,6 +40,11 @@ class ServerPool {
   ]);
 
   static const _prefsKeyIndex = 'serverPoolIndex';
+  /// 实测延迟排名（逗号分隔的域名下标，快到慢）。国内各地 ISP 封锁/劣化不同，
+  /// 所以顺序必须由**客户端自己实测**得出，不能写死。
+  static const _prefsKeyRank = 'serverPoolRank';
+  /// 是否已经有过「实测可用」的域名（决定启动时用实测最快的还是上次可用的）
+  static const _prefsKeyHasWorking = 'serverPoolHasWorking';
   static const _prefsKeyCustom = 'serverPoolCustomBase';
 
   static List<String> _decodeAll(List<String> encoded) => [
@@ -52,6 +57,8 @@ class ServerPool {
   int _index = 0;
   String _custom = '';
   bool _loaded = false;
+  bool _hasWorking = false;
+  List<int> _rank = const [];
 
   /// 池内域名（主域名在前）
   List<String> get all => List.unmodifiable(domains);
@@ -61,7 +68,54 @@ class ServerPool {
   bool get usingCustom => _custom.isNotEmpty;
 
   /// 当前生效的基底地址（形如 https://xxx/api/v1）
-  String get activeBase => _custom.isNotEmpty ? _custom : domains[_index];
+  String get activeBase {
+    if (_custom.isNotEmpty) return _custom;
+    // 还没实测出可用域名时，直接用**实测最快**的那个；一旦有过成功记录，
+    // 就用上次成功的那个（它已被证明在本机网络可用）。
+    if (!_hasWorking && _rank.isNotEmpty) return _ordered[_rank.first];
+    return domains[_index];
+  }
+
+  /// 轮换顺序：实测排名（快到慢）→ 池内其余域名按原顺序补齐
+  List<String> get _ordered {
+    final out = <String>[];
+    final seen = <int>{};
+    for (final i in _rank) {
+      if (i >= 0 && i < domains.length && seen.add(i)) out.add(domains[i]);
+    }
+    for (var i = 0; i < domains.length; i++) {
+      if (seen.add(i)) out.add(domains[i]);
+    }
+    return out;
+  }
+
+  /// 某个主机在实测排名里的位次（越小越快）；未知主机的排在已知的后面。
+  /// 供订阅地址轮换按「同一套实测结果」排序（订阅域名与接口域名是同一批）。
+  int priorityOfHost(String host) {
+    final h = host.trim().toLowerCase();
+    if (h.isEmpty) return 1 << 20;
+    final ordered = _ordered;
+    for (var i = 0; i < ordered.length; i++) {
+      if (Uri.tryParse(ordered[i])?.host.toLowerCase() == h) return i;
+    }
+    return (1 << 20) + h.hashCode.abs() % 1000;
+  }
+
+  /// 用一次实测结果重排（[fastestFirst] 为域名基底，按快到慢），并持久化。
+  /// 只认池内域名；池外/自定义域名不参与排名（避免把用户手填的地址排进去）。
+  Future<void> applyLatencyRanking(List<String> fastestFirst) async {
+    final rank = <int>[];
+    for (final base in fastestFirst) {
+      final i = domains.indexOf(normalizeBase(base));
+      if (i >= 0 && !rank.contains(i)) rank.add(i);
+    }
+    if (rank.isEmpty) return;
+    _rank = rank;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_prefsKeyRank, rank.join(','));
+    } catch (_) {}
+  }
 
   /// 当前生效域名的主机名（界面展示用）
   String get activeHost {
@@ -80,6 +134,12 @@ class ServerPool {
       final idx = p.getInt(_prefsKeyIndex) ?? 0;
       if (idx >= 0 && idx < domains.length) _index = idx;
       _custom = (p.getString(_prefsKeyCustom) ?? '').trim();
+      _hasWorking = p.getBool(_prefsKeyHasWorking) ?? false;
+      _rank = (p.getString(_prefsKeyRank) ?? '')
+          .split(',')
+          .map((e) => int.tryParse(e.trim()) ?? -1)
+          .where((i) => i >= 0 && i < domains.length)
+          .toList();
     } catch (_) {
       // 读取失败按默认（主域名）处理，不影响使用
     }
@@ -93,6 +153,7 @@ class ServerPool {
     if (i >= 0) {
       _index = i;
       _custom = '';
+      _hasWorking = true;
     } else {
       _custom = normalized;
     }
@@ -100,6 +161,7 @@ class ServerPool {
       final p = await SharedPreferences.getInstance();
       await p.setInt(_prefsKeyIndex, _index);
       await p.setString(_prefsKeyCustom, _custom);
+      await p.setBool(_prefsKeyHasWorking, _hasWorking);
     } catch (_) {}
   }
 
@@ -108,9 +170,15 @@ class ServerPool {
   /// [tried] 是本次请求已尝试过的基底列表（由重试拦截器维护），
   /// 这样一轮重试里每个域名只会被打一次。
   String? nextUntried(List<String> tried) {
-    final candidates = _custom.isNotEmpty ? <String>[_custom, ...domains] : domains;
-    for (var step = 1; step <= candidates.length; step++) {
-      final candidate = candidates[(_index + step) % candidates.length];
+    // 顺序 = 当前生效域名 → 实测排名（快到慢）→ 其余
+    final current = activeBase;
+    final candidates = <String>[
+      if (_custom.isNotEmpty) _custom,
+      current,
+      ..._ordered,
+      ...domains,
+    ];
+    for (final candidate in candidates) {
       if (!tried.contains(candidate)) return candidate;
     }
     return null;
@@ -120,6 +188,7 @@ class ServerPool {
   Future<void> reset() async {
     _index = 0;
     _custom = '';
+    _hasWorking = false;
     try {
       final p = await SharedPreferences.getInstance();
       await p.setInt(_prefsKeyIndex, 0);

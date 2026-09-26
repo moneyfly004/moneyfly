@@ -112,6 +112,34 @@ void main() {
       );
     });
 
+    test('实测快慢判据：快的排前面（上次成功的仍最前）', () {
+      const t = 'abc';
+      const fast = 'https://fast.example.com/api/v1/client/subscribe?token=$t';
+      const mid = 'https://mid.example.com/api/v1/client/subscribe?token=$t';
+      const slow = 'https://slow.example.com/api/v1/client/subscribe?token=$t';
+      // 面板顺序：slow(主) → fast → mid；实测：fast 最快、mid 次之、slow 最慢
+      final list = SubscribeUrlFailover.candidates(
+        primary: slow,
+        backups: const [fast, mid],
+        hostPriority: (u) => u.contains('fast')
+            ? 0
+            : u.contains('mid')
+                ? 1
+                : 9,
+      );
+      expect(list.first, fast);
+      expect(list[1], mid);
+      expect(list.last, slow);
+    });
+
+    test('实测判据缺失时保持原顺序（主地址优先）', () {
+      const t = 'abc';
+      const p1 = 'https://a.example.com/api/v1/client/subscribe?token=$t';
+      const p2 = 'https://b.example.com/api/v1/client/subscribe?token=$t';
+      final list = SubscribeUrlFailover.candidates(primary: p1, backups: const [p2]);
+      expect(list, [p1, p2]);
+    });
+
     test('默认会尝试完全部候选（面板下发 5~6 个域名时不能漏掉最后一个）', () async {
       // 线上实测：面板下发 5 个订阅域名（含 sub.fastora.top），加上「上次成功」
       // 最多 6 个候选。旧默认上限 4 → 只有最后那个能用时会静默放弃，
