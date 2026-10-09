@@ -398,6 +398,37 @@ class DeviceInfo {
   String get displayName => deviceName.isNotEmpty ? deviceName : (osName.isNotEmpty ? osName : '未知设备');
 }
 
+/// 设备列表响应里的「是否允许用户删除设备」开关（后台：系统设置 → 用户与注册）。
+///
+/// 后端在 `GET /subscriptions/devices` 的 data 里随列表实时下发
+/// `allow_delete_device`（true = 用户端显示删除按钮；false = 不显示，改为引导
+/// 升级设备数量）。后端 `DELETE /devices/:id` 也会按同一开关做服务端拦截。
+///
+/// **安全默认 false**：字段缺失（旧后端 / XBoard 兼容返回 / 无订阅时后端返回
+/// 空数组）或类型异常时一律按「不可删除」处理 —— 宁可不显示删除入口，也不能
+/// 让用户点了才被 403 拒绝（那种「按钮点了报错」的体验等同于 bug）。
+bool parseAllowDeleteDevice(dynamic body) {
+  if (body is! Map) return false;
+  final v = body['allow_delete_device'];
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) return v.trim().toLowerCase() == 'true';
+  return false;
+}
+
+/// 设备列表 + 删除策略：一次请求同时拿到列表与开关，避免页面渲染时
+/// 「列表已到、开关未到」的中间态（否则会出现删除按钮闪一下又消失）。
+class DeviceListResult {
+  const DeviceListResult({required this.devices, required this.allowDelete});
+
+  final List<DeviceInfo> devices;
+
+  /// 是否允许删除设备（见 [parseAllowDeleteDevice]，默认 false）。
+  final bool allowDelete;
+
+  static const empty = DeviceListResult(devices: [], allowDelete: false);
+}
+
 // ============ 通知 ============
 class AppNotification {
   final int id;

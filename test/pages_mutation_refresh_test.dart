@@ -292,7 +292,11 @@ void main() {
         if (o.method == 'GET' && ep == '/subscriptions/devices') {
           listCalls++;
           if (listCalls >= 2) await gate.future; // 静默刷新的那次挂起
-          return _ok({'devices': devices, 'total': devices.length, 'page': 1, 'size': 100});
+          // allow_delete_device=true：本用例验证「删除后静默刷新」，
+          // 需要后台开关处于「允许删除」状态才会渲染删除按钮
+          // （开关关闭时设备卡片上只有「升级设备数量」入口，见 devices_page.dart）
+          return _ok({'devices': devices, 'total': devices.length, 'page': 1, 'size': 100,
+              'allow_delete_device': true});
         }
         if (o.method == 'DELETE' && ep == '/devices/11') {
           devices.removeAt(0);

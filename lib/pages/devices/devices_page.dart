@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
@@ -21,6 +22,13 @@ import '../package/upgrade_devices_page.dart';
 /// 顶部常驻「升级设备数量」入口（无论是否超限都可点：客户可增加设备名额并
 /// 顺带延长到期时间）；设备在线状态以后端按最近活跃窗口计算的 online 为准
 /// （不再用只增不减的 is_active 显示「永久在线」）。
+///
+/// **删除按钮由后台开关决定**（`allow_delete_device`，随设备列表接口实时下发）：
+///   - 允许 → 每台设备显示「删除」（踢下线）；
+///   - 不允许 → 不渲染删除入口，改为「升级设备数量」按钮 + 顶部原因说明，
+///     引导用户升级名额去接新设备（后台 `DELETE /devices/:id` 同源拦截，
+///     客户端不显示入口是为了不给用户「点了才被 403 拒绝」的坏体验）。
+/// 开关字段缺失（旧后端）按不可删除处理，详见 `parseAllowDeleteDevice`。
 class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key});
 
@@ -57,6 +65,10 @@ class _DevicesPageState extends State<DevicesPage> {
   int? _savingRemarkId;
   String? _error; // 加载失败原因（失败≠没设备：错误态与空态分流）
 
+  /// 是否允许删除设备（后台开关，随列表实时下发）。初值 false = 安全默认：
+  /// 首屏还没拿到响应时绝不会先闪一个删除按钮出来。
+  bool _allowDelete = false;
+
   @override
   void initState() {
     super.initState();
@@ -74,8 +86,15 @@ class _DevicesPageState extends State<DevicesPage> {
       _error = null;
     });
     try {
-      final list = await DeviceService.instance.list();
-      if (mounted) setState(() => _devices = list);
+      final result = await DeviceService.instance.listWithPolicy();
+      // 列表与开关同一次 setState 落地：避免「列表已渲染、开关还没生效」时
+      // 删除按钮闪一下再消失
+      if (mounted) {
+        setState(() {
+          _devices = result.devices;
+          _allowDelete = result.allowDelete;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       // 首屏/主动刷新失败 → 错误态（带重试），不要显示成「暂无设备」
@@ -147,7 +166,14 @@ class _DevicesPageState extends State<DevicesPage> {
       // 否则「设备已达上限」的横幅与门禁会停留在旧判定上（用户删完还是连不上）
       unawaited(_refreshAccountAndSub());
     } catch (e) {
-      if (mounted) _toast(ApiClient.errorMsg(e));
+      if (mounted) {
+        _toast(ApiClient.errorMsg(e));
+        // 403 = 后台在我们拉完列表之后把开关关掉了（页面上的开关只是拉取时的
+        // 快照）。立刻重新拉一次，把开关同步成「不可删除」：删除入口换成升级
+        // 入口，别让用户对着一个已经失效的按钮反复点。
+        final code = e is DioException ? e.response?.statusCode : null;
+        if (code == 403) await _load(spinner: false);
+      }
     } finally {
       if (mounted) setState(() => _deletingId = null);
     }
@@ -259,6 +285,12 @@ class _DevicesPageState extends State<DevicesPage> {
                 padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
                 children: [
                   _buildUpgradeEntry(),
+                  // 删除被后台关闭时补一句原因说明：让用户知道「不是按钮坏了，
+                  // 是这个套餐不支持自助删除」，并给出可执行的下一步。
+                  if (!_allowDelete) ...[
+                    const SizedBox(height: 10),
+                    _buildDeleteDisabledNotice(),
+                  ],
                   const SizedBox(height: 12),
                   if (_devices.isEmpty)
                     Padding(
@@ -279,6 +311,37 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
+  /// 进入既有的「升级设备数量」页（顶部卡片与每台设备的按钮共用）
+  void _openUpgradeDevices() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const UpgradeDevicesPage()));
+  }
+
+  /// 删除被后台关闭时的原因说明（未开启删除 → 设备卡片上只有「升级设备数量」）。
+  /// 明确写清「当前套餐不支持删除设备」+ 出路，避免用户以为软件出故障。
+  Widget _buildDeleteDisabledNotice() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: MFColors.amber.withValues(alpha: .10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: MFColors.amber.withValues(alpha: .38)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.info_outline, size: 15, color: MFColors.amber),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                AppStrings.t('device_delete_disabled_notice'),
+                style:
+                    TextStyle(fontSize: 11.5, color: MFColors.txt2, height: 1.5),
+              ),
+            ),
+          ],
+        ),
+      );
+
   /// 常驻「升级设备数量」入口：无论是否超限都显示。
   /// 副文案展示当前 已用/上限 + 到期时间（升级可顺带加时长）。
   Widget _buildUpgradeEntry() {
@@ -290,21 +353,24 @@ class _DevicesPageState extends State<DevicesPage> {
         ? '—'
         : formatDateYmd(expire); // 统一日期口径（见 app_theme.dart）
     final full = limit > 0 && used >= limit;
+    // 删除被关闭时，这个入口就是用户换设备的唯一出路 → 用品牌色高亮强调，
+    // 不再因「名额已满」切成琥珀色（否则页面里最强的视觉信号变成了告警色，
+    // 而真正要引导用户点的地方反而被弱化）。
+    final emphasize = !_allowDelete;
+    final accent = (full && !emphasize) ? MFColors.amber : MFColors.brand;
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const UpgradeDevicesPage())),
+      onTap: _openUpgradeDevices,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         decoration: BoxDecoration(
           gradient: LinearGradient(
               colors: [
-                full ? MFColors.amber : MFColors.brand,
+                accent,
                 MFColors.brand.withValues(alpha: .06),
-              ].map((c) => c.withValues(alpha: full ? .18 : .12)).toList()),
+              ].map((c) => c.withValues(alpha: emphasize ? .20 : (full ? .18 : .12))).toList()),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-              color: (full ? MFColors.amber : MFColors.brand)
-                  .withValues(alpha: .5)),
+              color: accent.withValues(alpha: emphasize ? .70 : .5)),
         ),
         child: Row(
           children: [
@@ -438,7 +504,11 @@ class _DevicesPageState extends State<DevicesPage> {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
+          // Wrap 而非 Row：删除入口换成「升级设备数量」后文案更长，最小窗口
+          // （380 宽）下允许换行，避免 RenderFlex overflow。
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _ActionBtn(
                 icon: Icons.edit_outlined,
@@ -447,14 +517,25 @@ class _DevicesPageState extends State<DevicesPage> {
                 loading: _savingRemarkId == d.id,
                 onTap: () => _editRemark(d),
               ),
-              const SizedBox(width: 8),
-              _ActionBtn(
-                icon: Icons.delete_outline,
-                label: AppStrings.t('delete'),
-                color: MFColors.red,
-                loading: _deletingId == d.id,
-                onTap: () => _deleteDevice(d),
-              ),
+              // 后台开关决定这里的入口：允许删除 → 删除（踢下线）；
+              // 不允许 → 整个删除入口不渲染，换成「升级设备数量」。
+              // 不做「禁用置灰」：灰按钮点了没反应，用户同样会以为软件坏了，
+              // 而且删除是破坏性操作，宁可彻底不暴露。
+              if (_allowDelete)
+                _ActionBtn(
+                  icon: Icons.delete_outline,
+                  label: AppStrings.t('delete'),
+                  color: MFColors.red,
+                  loading: _deletingId == d.id,
+                  onTap: () => _deleteDevice(d),
+                )
+              else
+                _ActionBtn(
+                  icon: Icons.add_circle_outline,
+                  label: AppStrings.t('upgrade_devices_btn'),
+                  color: MFColors.brand,
+                  onTap: _openUpgradeDevices,
+                ),
             ],
           ),
         ],

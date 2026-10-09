@@ -434,6 +434,9 @@ class AppStrings {
     'device_deleted': '设备已删除并下线',
     'remark': '备注',
     'edit_remark_btn': '改备注',
+    // 后台关闭「允许用户删除设备」时：删除入口整体换成升级设备数量入口
+    'upgrade_devices_btn': '升级设备数量',
+    'device_delete_disabled_notice': '当前套餐不支持删除设备。如需更换或增加设备，请升级设备数量。',
     // 订单页
     'my_orders': '我的订单',
     'no_orders': '暂无订单',
@@ -1138,6 +1141,9 @@ class AppStrings {
     'device_deleted': 'Device deleted & kicked offline',
     'remark': 'Remark',
     'edit_remark_btn': 'Edit',
+    // Device deletion disabled by the backend → swap the delete entry for "Add Devices"
+    'upgrade_devices_btn': 'Add Devices',
+    'device_delete_disabled_notice': 'Deleting devices is unavailable on your current plan. To replace or add a device, add more device slots.',
     // 订单页
     'my_orders': 'My Orders',
     'no_orders': 'No orders',

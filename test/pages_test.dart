@@ -251,6 +251,8 @@ void main() {
 
     testWidgets('列表渲染 + 删除确认弹窗', (tester) async {
       ApiClient.debugDio = mockDio((a) {
+        // allow_delete_device=true：模拟后台「允许用户删除设备」——
+        // 只有此时设备卡片才渲染删除按钮（开关关闭时换成「升级设备数量」入口）
         a.onGet('/subscriptions/devices', (s) => s.reply(200, env({'devices': [
           {
             'id': 11, 'device_name': 'iPhone 15', 'os_name': 'iOS', 'os_version': '18.0',
@@ -260,7 +262,7 @@ void main() {
             'software_name': 'MoneyFly', 'software_version': '1.0.0', 'is_allowed': true,
             'first_seen': '', 'last_access': '', 'created_at': '', 'subscription_id': 1,
           },
-        ]})));
+        ], 'allow_delete_device': true})));
         a.onDelete('/devices/11', (s) => s.reply(200, env(null)));
       });
       await pumpPage(tester, _wrap(const DevicesPage()));

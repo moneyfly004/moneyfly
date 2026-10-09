@@ -31,14 +31,26 @@ class DeviceService {
   /// 后端单页上限（utils.ParsePagination size 最大 100）
   static const _pageSize = 100;
 
-  Future<List<DeviceInfo>> list() async {
+  /// 设备列表（全量）+ 后端下发的删除开关。
+  ///
+  /// `allow_delete_device` 由后端每次请求实时下发（不缓存），所以翻页时每页都
+  /// 带着同一个值；这里只在首页取值，后续页不再覆盖（避免中途开关变化导致
+  /// 同一个页面里按钮一会儿有一会儿没有）。后端返回空数组（用户还没有订阅）
+  /// 时开关按安全默认 false 处理。
+  Future<DeviceListResult> listWithPolicy() async {
     final all = <DeviceInfo>[];
+    var allowDelete = false;
+    var sawFlag = false;
     var page = 1;
     while (true) {
-      // /subscriptions/devices 返回 {devices:[...], total, page, size}，
-      // 且 location 有真实地理位置
+      // /subscriptions/devices 返回 {devices:[...], total, page, size,
+      // allow_delete_device}，且 location 有真实地理位置
       final data = await ApiClient.instance.get(Endpoints.subscriptionsDevices,
           query: {'page': '$page', 'size': '$_pageSize'});
+      if (!sawFlag) {
+        allowDelete = parseAllowDeleteDevice(data);
+        sawFlag = true;
+      }
       final list = data is List ? data : (data is Map ? data['devices'] : null);
       if (list is! List) break;
       all.addAll(list
@@ -48,8 +60,11 @@ class DeviceService {
       if (total <= 0 || all.length >= total) break;
       page++;
     }
-    return all;
+    return DeviceListResult(devices: all, allowDelete: allowDelete);
   }
+
+  /// 只要列表（不带开关）的便捷入口，语义等价于 [listWithPolicy]。
+  Future<List<DeviceInfo>> list() async => (await listWithPolicy()).devices;
 
   Future<void> delete(int deviceId) async {
     await ApiClient.instance.delete('${Endpoints.devices}/$deviceId');

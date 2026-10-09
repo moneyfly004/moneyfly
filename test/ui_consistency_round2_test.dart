@@ -201,6 +201,9 @@ void main() {
             'total': 1,
             'page': 1,
             'size': 100,
+            // allow_delete_device=true：本用例要断言「删除按钮」的命中区，
+            // 必须先让后台开关处于「允许删除」（关闭时该按钮换成「升级设备数量」）
+            'allow_delete_device': true,
           }));
       await _pump(tester, const DevicesPage());
       // 命中区：备注 / 删除按钮（用文案定位到具体那颗按钮，而不是数页面里
