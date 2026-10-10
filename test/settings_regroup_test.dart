@@ -74,19 +74,38 @@ const _allRows = <String>[
   'settings_licenses',
 ];
 
-/// 桌面独占行（仅桌面平台断言）
-const _desktopOnlyRows = <String>[
+/// 桌面独占行（macOS/Windows/Linux 才显示；Android/iOS 隐藏）
+const _desktopRows = <String>[
   'settings_launch_startup',
   'close_action',
   'settings_tun',
-  'settings_auto_download_update',
 ];
+
+/// 只在 Android/Windows/macOS 显示的桌面平台行（**Linux 上本来就不显示**，
+/// 与重排无关 —— 见 settings_page 里原来的 `Platform.isAndroid || isWindows || isMacOS`）
+const _autoDownloadRow = 'settings_auto_download_update';
 
 /// Android 独占行
 const _androidOnlyRows = <String>[
   'settings_tun_stack',
   'settings_access',
 ];
+
+/// 当前平台应该**看不到**的行（平台门控，防止重排时误把某平台的隐藏行放出来）
+List<String> _expectedAbsentRows() => <String>[
+      if (Platform.isAndroid || Platform.isIOS) ..._desktopRows,
+      if (Platform.isLinux) _autoDownloadRow,
+      if (!Platform.isAndroid) ..._androidOnlyRows,
+    ];
+
+/// 当前平台应该**看得到**的行（与页面里的 Platform 条件一一对应）
+List<String> _expectedRows() => <String>[
+      ..._allRows,
+      if (!Platform.isAndroid && !Platform.isIOS) ..._desktopRows,
+      if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS)
+        _autoDownloadRow,
+      if (Platform.isAndroid) ..._androidOnlyRows,
+    ];
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -125,13 +144,10 @@ void main() {
     }
   }, timeout: const Timeout(Duration(seconds: 120)));
 
-  testWidgets('不丢功能：重排前每一个设置行都能在新版页面找到', (tester) async {
+  testWidgets('不丢功能：重排前每一个设置行都能在新版页面找到（按当前平台）', (tester) async {
     await pumpTall(tester);
 
-    final expected = <String>[
-      ..._allRows,
-      if (Platform.isAndroid) ..._androidOnlyRows else ..._desktopOnlyRows,
-    ];
+    final expected = _expectedRows();
     final missing = <String>[];
     final duplicated = <String>[];
     for (final key in expected) {
@@ -140,10 +156,20 @@ void main() {
       if (n == 0) missing.add('$key("$text")');
       if (n > 1) duplicated.add('$key("$text")×$n');
     }
-    debugPrint('[rows] 检查 ${expected.length} 项，缺失 ${missing.length}，重复 ${duplicated.length}');
+    debugPrint('[rows] 平台=${Platform.operatingSystem} 检查 ${expected.length} 项，'
+        '缺失 ${missing.length}，重复 ${duplicated.length}');
     expect(missing, isEmpty, reason: '以下设置项在新版设置页里找不到了：$missing');
     expect(duplicated, isEmpty, reason: '以下设置项在页面上出现了多次（重排时复制粘贴漏删）：$duplicated');
     expect(expected.length, greaterThan(25), reason: '清单本身要有足够覆盖度');
+
+    // 反向：平台门控行不得在本平台出现（重排时误放出来会被这条抓住）
+    final leaked = <String>[];
+    for (final key in _expectedAbsentRows()) {
+      if (find.text(AppStrings.t(key)).evaluate().isNotEmpty) {
+        leaked.add(key);
+      }
+    }
+    expect(leaked, isEmpty, reason: '以下行在当前平台不应显示：$leaked');
   }, timeout: const Timeout(Duration(seconds: 120)));
 
   testWidgets('同类功能集中：测速四项都在「测速」组标题之下', (tester) async {
