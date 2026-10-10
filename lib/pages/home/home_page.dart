@@ -1461,12 +1461,22 @@ class _NodePickerSheetState extends State<_NodePickerSheet> {
                     style: TextStyle(fontSize: 11, color: MFColors.txt3)),
                 const Spacer(),
                 // ⚡实时测速：手动挑节点时不切走（switchToBest:false），
-                // 仅逐个填延迟并重排，最优浮到最上
+                // 仅逐个填延迟并重排，最优浮到最上。
+                // 内核测速失败（未连接且内核拉不起来）必须说出来 ——
+                // 旧实现直接丢弃结果，用户点了没反应却不知道原因。
                 GestureDetector(
                   onTap: conn.speedTesting
                       ? null
-                      : () => conn.retestAll(
-                          switchToBest: false, userInitiated: true),
+                      : () async {
+                          await conn.retestAll(
+                              switchToBest: false, userInitiated: true);
+                          if (!mounted) return;
+                          final err = conn.speedTestError;
+                          if (err != null && err.isNotEmpty) {
+                            _toast(AppStrings.t(
+                                'speed_mode_probe_failed', {'err': err}));
+                          }
+                        },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(

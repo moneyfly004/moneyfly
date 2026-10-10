@@ -564,9 +564,12 @@ class ProxyNode {
 
   /// 是否 UDP-only 协议（hysteria / hysteria2 / tuic / wireguard）。
   /// 这类协议无 TCP 监听，未连接时的「裸 TCP 测速」必然失败而误判离线；
-  /// 真实延迟需连接后走内核 /proxies/{tag}/delay 实测。
+  /// 真实延迟需走内核 /proxies/{tag}/delay 实测。
   bool get isUdpOnly =>
       const {'hysteria', 'hysteria2', 'tuic', 'wireguard'}.contains(type);
+
+  /// 是否为面板展示性伪节点（见 [isPanelPseudoNode]）。
+  bool get isPanelPseudo => isPanelPseudoNode(tag, server);
 
   /// 国家/地区中文名（ISO 3166 两位码）。覆盖 VPN 服务商常见的全部落地区域;
   /// 未收录的合法代码 UI 直接显示代码本身，旗帜由 [flagEmoji] 按码计算，
@@ -1000,4 +1003,22 @@ class ProxyNode {
 
     return 'XX';
   }
+}
+
+/// 面板展示性伪节点判定（📢官网 / ⏰到期 / 📱设备 / 💬客服 / 🎯 等，
+/// `server` 是 `baidu.com:1234` 这类占位地址）。
+///
+/// 为什么要有这个判据：这些条目**不是节点**，只是机场用来在客户端列表里
+/// 显示公告/客服链接的占位项（真实订阅里就有 3~5 个）。
+///
+/// 主过滤点在订阅解析阶段（`SubscriptionService._nodesFromYamlMap`），所以它们
+/// 正常情况下**根本不会出现在节点列表里**。测速侧（[SpeedTester] / 内核探测）
+/// 仍然用同一判据再兜一次，原因是对它们做 TCP 测速会连上**真实的 baidu.com**，
+/// 得到一个「很健康的 8ms」，用户会以为捡到超快节点 —— 一旦哪个入口绕过了
+/// 订阅解析，这就是一个安静的假阳性。
+///
+/// 统一口径：**跳过且不给数字**（延迟 -1），而不是给一个假延迟。
+bool isPanelPseudoNode(String tag, String server) {
+  const markers = ['📢', '⏰', '📱', '💬', '🎯', '🚀', '♻️', '🔯', '🔮', '🛑', '🐟'];
+  return markers.any(tag.contains) || server == 'baidu.com';
 }

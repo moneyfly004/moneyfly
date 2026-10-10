@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../utils/serial_executor.dart';
+import 'speed_test_mode.dart';
 
 /// 设置持久化（shared_preferences，JSON 序列化）。
 ///
@@ -61,6 +62,11 @@ class SettingsStore {
         'clashApiPort': 9090,
         // 测速探测地址（内核 delay 测试；网络环境特殊时可改）
         'testUrl': defaultTestUrl,
+        // 测速方式：kernel=内核测速(真连接，默认) / tcp=仅 TCP 端口连通。
+        // **老用户本地设置里没有这个 key** —— load() 会把 _defaults() 合并进
+        // 读到的快照，缺 key 时自然取到这里的 'kernel'；即使有人手改坏了值，
+        // parseSpeedTestMode 也会回落到内核测速（绝不因缺 key 异常或退回 TCP）。
+        'speedTestMode': speedTestModeKey(defaultSpeedTestMode),
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',

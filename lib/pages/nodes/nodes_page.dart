@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/proxy/proxy_core.dart';
+import '../../core/proxy/speed_probe_kernel.dart';
 import '../../core/services/account_service.dart';
 import '../../core/models/models.dart';
+import '../../core/services/speed_test_mode.dart';
 import '../../core/services/speed_tester.dart';
 import '../../core/services/subscription_service.dart';
 import '../../l10n/app_strings.dart';
@@ -120,7 +122,8 @@ class _NodesPageState extends State<NodesPage> {
     });
   }
 
-  /// 单点测速(点节点行延迟胶囊):已连接走内核 delay,未连接纯 TCP
+  /// 单点测速(点节点行延迟胶囊)：按设置里选定的测速方式走
+  /// （内核测速＝真连接，TCP 测速＝仅端口握手，见 SpeedTestMode）。
   Future<void> _testOne(dynamic n) async {
     if (_testing) return;
     final conn = context.read<ConnectionController>();
@@ -133,15 +136,29 @@ class _NodesPageState extends State<NodesPage> {
       if (idx >= 0) {
         final fresh = conn.nodes[idx].clone()
           ..latencyMs = ms
-          // UDP 协议裸 TCP 测不了，保持在线；真实延迟连接后内核实测
-          ..online = n.isUdpOnly ? true : mfLatencyUsable(ms);
+          // UDP 协议裸 TCP 测不了、面板占位项也不该给数字 → 保持在线、延迟未知
+          ..online =
+              (n.isUdpOnly || n.isPanelPseudo) ? true : mfLatencyUsable(ms);
         final list = List<ProxyNode>.of(conn.nodes);
         list[idx] = fresh;
         await conn.loadNodes(list);
       }
+    } on KernelProbeException catch (e) {
+      // 内核测速不可用（未连接且内核拉不起来）→ 明确告知，绝不静默失败
+      if (mounted) _toast(_probeErrorText(e));
     } finally {
       if (mounted) setState(() => _testingNode.remove(n.tag));
     }
+  }
+
+  /// 内核测速失败的展示文案：带上具体原因，用户据此才能自救
+  /// （先连接 / 去设置改回 TCP 测速）。缺原因时退回通用提示。
+  String _probeErrorText(KernelProbeException e) {
+    final detail = e.detail;
+    if (detail == null || detail.isEmpty) {
+      return AppStrings.t('speed_mode_kernel_needs_connect');
+    }
+    return AppStrings.t('speed_mode_probe_failed', {'err': detail});
   }
 
   /// 当前搜索/筛选命中的节点（与列表展示口径完全一致）。
@@ -192,8 +209,13 @@ class _NodesPageState extends State<NodesPage> {
       if (!mounted) return;
       // 只有真的测了节点才提示"完成"；一个都没测到（连接刚断/被取代）
       // 如实告知，不让用户以为测过了。
+      // 内核测速失败时优先把**具体原因**说出来（speedTestError）：
+      // 否则用户只看到「测速未执行」而不知道是「内核起不来/要先连接」。
       if (tested == 0) {
-        _toast(AppStrings.t('speed_test_none'));
+        final err = conn.speedTestError;
+        _toast(err == null || err.isEmpty
+            ? AppStrings.t('speed_test_none')
+            : AppStrings.t('speed_mode_probe_failed', {'err': err}));
       } else if (filtered) {
         _toast(AppStrings.t('speed_done_filtered', {'n': '$tested'}));
       } else {
@@ -238,8 +260,17 @@ class _NodesPageState extends State<NodesPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 精准订阅：仅 nodes 列表/current 节点变化时重建列表
-    context.select((ConnectionController c) => (n: c.nodes.length, t: c.current?.tag));
+    // 精准订阅：仅这些字段变化时重建列表。
+    // 加入了「测速方式 / 上次测速时刻 / 测速中」：顶部那行测速口径提示
+    // （来源标识）必须随设置切换即时刷新 —— 否则用户切了测速方式，界面还写着
+    // 旧方式，又会让人误以为列表里的旧数字是新方式测出来的。
+    context.select((ConnectionController c) => (
+          n: c.nodes.length,
+          t: c.current?.tag,
+          m: c.speedTestMode,
+          lt: c.lastSpeedTestTime,
+          st: c.speedTesting,
+        ));
     final conn = context.read<ConnectionController>();
     final q = _query.toLowerCase();
     final filtered = _filterNodes(conn.nodes);
@@ -374,6 +405,30 @@ class _NodesPageState extends State<NodesPage> {
                 ],
               ),
             ),
+            // 测速口径提示：**当前方式** + 上次测速时刻。
+            //
+            // 为什么必须有：内核测速与 TCP 测速的数字口径不同（前者是真连接
+            // RTT，后者只是端口握手），用户切了方式后如果界面上没有任何标识，
+            // 就没法判断「这个 12ms 到底可不可信」。切换方式时控制器会清空旧
+            // 延迟，这里再把来源与时刻写明，两种口径永远不会被混着解读。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 22, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _speedSourceText(conn),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          color: MFColors.txt3,
+                          fontFamily: kNumFont),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             // 节点列表：与其它列表页一致的**下拉刷新**（旧实现只有右上角一个小
             // chip，触屏上很难发现）。空态/无匹配分支也保持可滚动，长文案
             // （如服务端下发的禁用原因）在 620 高窗口下能滚不溢出。
@@ -416,9 +471,27 @@ class _NodesPageState extends State<NodesPage> {
   static final _flagRadius = BorderRadius.circular(11);
   static final _latencyRadius = BorderRadius.circular(20);
 
-  /// 延迟胶囊文案：UDP 协议未连接时无法测，提示「连接后测速」而非误导成离线
-  String _latencyLabel(dynamic n) {
-    if (n.isUdpOnly && n.latencyMs < 0) {
+  /// 测速口径提示文案（当前方式 + 上次测速时刻）。
+  String _speedSourceText(ConnectionController conn) {
+    final mode = conn.speedTestMode == SpeedTestMode.tcp
+        ? AppStrings.t('speed_mode_tcp_short')
+        : AppStrings.t('speed_mode_kernel_short');
+    final at = conn.lastSpeedTestTime;
+    if (at == null || at.isEmpty) {
+      return AppStrings.t('speed_mode_label', {'mode': mode});
+    }
+    return AppStrings.t('speed_last_result', {'time': at, 'mode': mode});
+  }
+
+  /// 延迟胶囊文案。
+  ///
+  /// - 面板占位项（📢官网 等）：显示 `— ms`（绝不是数字）；
+  /// - UDP 协议 + **TCP 测速**：裸 TCP 测不了，提示「连接后测速」；
+  ///   内核测速下这类节点是可以测的（内核走它自己的 UDP 传输），不提示；
+  /// - 其余：在线且有数字 → `123 ms`，否则 `— ms`。
+  String _latencyLabel(dynamic n, {bool tcpMode = false}) {
+    if (n.isPanelPseudo) return '— ms';
+    if (n.isUdpOnly && n.latencyMs < 0 && tcpMode) {
       return AppStrings.t('node_need_connect_test');
     }
     if (n.online && n.latencyMs >= 0) return '${n.latencyMs} ms';
@@ -498,7 +571,8 @@ class _NodesPageState extends State<NodesPage> {
                         child: CircularProgressIndicator(
                             strokeWidth: 1.6, color: latencyColor))
                     : Text(
-                        _latencyLabel(n),
+                        _latencyLabel(n,
+                            tcpMode: conn.speedTestMode == SpeedTestMode.tcp),
                         style: TextStyle(
                             fontSize: (n.online && n.latencyMs >= 0) ? 11.5 : 9.5,
                             color: latencyColor,

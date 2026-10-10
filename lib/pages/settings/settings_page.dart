@@ -9,6 +9,7 @@ import '../../core/services/app_log.dart';
 import '../../core/services/autostart.dart';
 import '../../core/services/crash_logger.dart';
 import '../../core/services/settings_store.dart';
+import '../../core/services/speed_test_mode.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/services/update_service.dart';
 import '../../l10n/app_strings.dart';
@@ -130,6 +131,13 @@ class _SettingsPageState extends State<SettingsPage> {
             _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: _testIntervalValue(),
                 onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)),
                     current: _testIntervalValue())),
+            // 测速方式（对标 Shadowrocket 的 Ping / Connect）。
+            // 默认内核测速＝Connect：内核真的通过节点发一次请求，
+            // 凭据/协议/回程全部参与验证 —— 这才是「节点可用」。
+            _row(icon: '📶', title: AppStrings.t('settings_speed_mode'),
+                desc: AppStrings.t('settings_speed_mode_desc'),
+                value: _speedModeLabel(),
+                onTap: _pickSpeedMode),
             _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
                 value: _testUrlHost(),
                 onTap: _pickTestUrl),
@@ -630,6 +638,42 @@ class _SettingsPageState extends State<SettingsPage> {
         helper: AppStrings.t('settings_clash_api_port_desc'));
     if (p == null) return;
     await _applyPortChange('clashApiPort', p);
+  }
+
+  /// 当前测速方式（缺 key / 值损坏都回落内核测速，与 parseSpeedTestMode 一致）。
+  SpeedTestMode get _speedMode =>
+      parseSpeedTestMode(_s['speedTestMode']);
+
+  /// 设置行右侧显示的当前方式（短文案，窄窗口不挤爆 MFRow 的值区）
+  String _speedModeLabel() => _speedMode == SpeedTestMode.tcp
+      ? AppStrings.t('speed_mode_tcp')
+      : AppStrings.t('speed_mode_kernel');
+
+  /// 切换测速方式。
+  ///
+  /// 选项文案带上「真实连接 / 仅端口连通」的取舍说明（放在选项里而不是
+  /// 只放描述行）：用户点开选择器时正是要做决定的那一刻。
+  /// 落盘后 `_set` → `ConnectionController.applySettings` 会检测到方式变化并
+  /// **清空列表里另一种方式测出的延迟**，两种口径的数字绝不会混着显示。
+  Future<void> _pickSpeedMode() async {
+    final kernelLabel = AppStrings.t('speed_mode_kernel');
+    final tcpLabel = AppStrings.t('speed_mode_tcp');
+    final desc = {
+      kernelLabel: AppStrings.t('speed_mode_kernel_desc'),
+      tcpLabel: AppStrings.t('speed_mode_tcp_desc'),
+    };
+    // label → 模式 的映射与 options 同源，避免用字符串比较/identical 反推
+    final modes = <String, SpeedTestMode>{
+      '$kernelLabel · ${desc[kernelLabel]}': SpeedTestMode.kernel,
+      '$tcpLabel · ${desc[tcpLabel]}': SpeedTestMode.tcp,
+    };
+    final options = modes.keys.toList();
+    final current =
+        options.firstWhere((o) => modes[o] == _speedMode, orElse: () => options[0]);
+    await _picker(options, (v) {
+      final mode = modes[v] ?? SpeedTestMode.kernel;
+      unawaited(_set('speedTestMode', speedTestModeKey(mode)));
+    }, current: current);
   }
 
   /// 测速地址（默认谷歌 204；网络环境特殊时可改）

@@ -12,6 +12,7 @@ import 'package:moneyfly/core/models/models.dart';
 import 'package:moneyfly/core/proxy/proxy_core.dart';
 import 'package:moneyfly/core/proxy/proxy_core_cli.dart';
 import 'package:moneyfly/core/services/account_service.dart';
+import 'package:moneyfly/core/services/speed_test_mode.dart';
 import 'package:moneyfly/core/services/speed_tester.dart';
 import 'package:moneyfly/core/services/subscription_service.dart';
 import 'package:moneyfly/l10n/app_strings.dart';
@@ -52,6 +53,12 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     ProxyCoreCli.manageSystemProxy = false;
+    // 本文件验证的是「筛选后只测筛选出的节点」+ 进度/并发这些**与测速方式无关**
+    // 的行为，用 TCP 探测桩（SpeedTester.debugProbeOverride）注入结果。
+    // 自从默认测速方式改成「内核测速（真连接）」后，必须显式选 TCP 才会走桩；
+    // 否则会去拉真实探测内核（测试环境没有内核二进制 → 整轮测速失败、
+    // 桩一次都不被调用）。内核测速路径由 speed_test_mode_test.dart 覆盖。
+    ConnectionController.instance.speedTestMode = SpeedTestMode.tcp;
     probed = <String>[];
     probeDelayMs = 0;
     SpeedTester.debugProbeOverride = (node) async {

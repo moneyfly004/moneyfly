@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'proxy_core.dart';
 import 'geo_assets.dart';
+import 'kernel_delay_api.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
 import 'tun_failure.dart';
@@ -129,7 +130,12 @@ class ProxyCoreCli extends ProxyCore {
   /// 定位 mihomo 可执行文件（优先级：测试注入 → 用户切换/更新的副本
   /// [KernelManager.userActivePath] → 安装内置）。
   /// 用户副本放在应用支持目录，任意安装目录(含只读的 Program Files)都可用。
-  Future<String> resolveBinary() async {
+  Future<String> resolveBinary() => resolveKernelBinary();
+
+  /// [resolveBinary] 的静态形式：测速专用内核（[SpeedProbeKernel]）也要用同一份
+  /// 定位逻辑，否则会出现「连接能找到内核、测速找不到」这种只在部分安装方式下
+  /// 复现的诡异故障（Program Files 只读、用户内核副本、测试注入三处任一不同）。
+  static Future<String> resolveKernelBinary() async {
     final override = Platform.environment['MONEYFLY_MIHOMO'];
     if (override != null && override.isNotEmpty && File(override).existsSync()) {
       return override;
@@ -174,13 +180,18 @@ class ProxyCoreCli extends ProxyCore {
   /// PowerShell 的 `Stop-Process -Force` 终止码正是 -1），随后因为
   /// autoReconnect 默认关闭而不再恢复，用户看到的是「好好的突然断线」。
   /// [livePid] 额外豁免本实例当前跟踪的内核 pid。
-  static Future<void> killStaleKernels({int? livePid}) async {
+  ///
+  /// [tag] 是命令行里用于识别「本 App 的内核」的工作目录片段：连接内核用
+  /// [_workDirTag]，测速专用内核用 [SpeedProbeKernel.workDirTag]。两者分开收，
+  /// 因为 App 启动时只应清理连接内核（探测内核由它自己按空闲超时退出）。
+  static Future<void> killStaleKernels({int? livePid, String? tag}) async {
+    final t = tag ?? _workDirTag;
     try {
       if (Platform.isWindows) {
-        await _reapStaleKernelsWindows(livePid);
+        await _reapStaleKernelsWindows(livePid, t);
         return;
       }
-      await _reapStaleKernelsPosix(livePid);
+      await _reapStaleKernelsPosix(livePid, t);
     } catch (_) {}
   }
 
@@ -214,12 +225,15 @@ class ProxyCoreCli extends ProxyCore {
   ///
   /// 决策放在 Dart（而非整段写在 PowerShell 里）是为了可单测，也避免
   /// 「一个 Where-Object 写错就把活内核全杀了」这类无法回归的脚本 bug。
-  static Future<void> _reapStaleKernelsWindows(int? livePid) async {
+  static Future<void> _reapStaleKernelsWindows(int? livePid, String tag) async {
+    // 原始字符串 + 运行期替换 tag：`$($_.ParentProcessId)`、`$p`、`$_` 必须原样
+    // 交给 PowerShell，绝不能被 Dart 插值（`$p` 会被当成 Dart 变量直接编译报错）。
+    final script = r'''Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'mihomo' -and $_.CommandLine -match '__MF_TAG__' } | ForEach-Object { $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.ParentProcessId)" -ErrorAction SilentlyContinue; "$($_.ProcessId)|$($_.ParentProcessId)|$($p.Name)" }'''
+        .replaceAll('__MF_TAG__', tag);
     final r = await Process.run('powershell', [
       '-NoProfile',
       '-Command',
-      // 原始字符串：`$($_.ParentProcessId)` 必须原样交给 PowerShell，不能被 Dart 插值
-      r'''Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'mihomo' -and $_.CommandLine -match 'moneyfly_core' } | ForEach-Object { $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.ParentProcessId)" -ErrorAction SilentlyContinue; "$($_.ProcessId)|$($_.ParentProcessId)|$($p.Name)" }''',
+      script,
     ]);
     if (r.exitCode != 0) return;
     for (final line in (r.stdout as String).split('\n')) {
@@ -257,7 +271,7 @@ class ProxyCoreCli extends ProxyCore {
 
   /// macOS / Linux：同一份 `ps` 快照里既有候选内核，也有它们父进程的命令行 ——
   /// 父进程是否存活、是否是本 App 都从这一份快照读，不再额外探测（少两次 fork）。
-  static Future<void> _reapStaleKernelsPosix(int? livePid) async {
+  static Future<void> _reapStaleKernelsPosix(int? livePid, String tag) async {
     final r = await Process.run('ps', ['-axo', 'pid,ppid,command'],
         environment: {'PATH': Platform.environment['PATH'] ?? ''});
     if (r.exitCode != 0) return;
@@ -272,7 +286,7 @@ class ProxyCoreCli extends ProxyCore {
       if (pid == null || ppid == null) continue;
       final cmd = m.group(3) ?? '';
       cmdByPid[pid] = cmd;
-      if (cmd.contains('mihomo') && cmd.contains(_workDirTag)) {
+      if (cmd.contains('mihomo') && cmd.contains(tag)) {
         candidates.add((pid: pid, ppid: ppid));
       }
     }
@@ -564,19 +578,18 @@ class ProxyCoreCli extends ProxyCore {
     if (_proc == null) return -1;
     try {
       final r = await _api.get(
-        '/proxies/${Uri.encodeComponent(tag)}/delay',
+        // 节点名必须 URL 编码（emoji/空格/斜杠/中文），见 kernelDelayPath
+        kernelDelayPath(tag),
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': url ?? 'https://www.gstatic.com/generate_204',
+          'url': url ?? defaultKernelDelayUrl,
         },
         options: Options(
             validateStatus: (s) => true,
             receiveTimeout: timeout + const Duration(seconds: 2)),
       );
-      if (r.statusCode == 200 && r.data is Map && r.data['delay'] is num) {
-        return (r.data['delay'] as num).toInt();
-      }
-      return -1; // 超时/不可达 → 内核返回非 200
+      // 只有 200 + {'delay': <num>} 才算成功；超时/不可达 → -1（绝不给假数字）
+      return parseKernelDelayResponse(r.statusCode, r.data);
     } catch (_) {
       return -1;
     }

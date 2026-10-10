@@ -453,11 +453,10 @@ class SubscriptionService {
     }
   }
 
-  /// 面板展示性伪节点过滤（📢官网 / ⏰到期 / 📱设备 / 💬客服 等，server 为 baidu.com 占位）
-  static bool _isPanelPseudoNode(ProxyNode n) {
-    const markers = ['📢', '⏰', '📱', '💬', '🎯', '🚀', '♻️', '🔯', '🔮', '🛑', '🐟'];
-    return markers.any((m) => n.tag.contains(m)) || n.server == 'baidu.com';
-  }
+  /// 面板展示性伪节点过滤（📢官网 / ⏰到期 / 📱设备 / 💬客服 等，server 为 baidu.com 占位）。
+  /// 口径收敛到 [isPanelPseudoNode]：测速侧必须用同一判据跳过这些占位项
+  /// （否则会被当成「超快节点」或在内核里 404，两种测速方式结果互相矛盾）。
+  static bool _isPanelPseudoNode(ProxyNode n) => n.isPanelPseudo;
 
   /// isolate 入口（compute 要求顶层/静态函数）
   static List<ProxyNode> _parseInIsolate(String raw) => parseClashYaml(raw);

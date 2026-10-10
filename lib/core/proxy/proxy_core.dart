@@ -12,8 +12,10 @@ import '../services/local_notify.dart';
 import '../services/local_paths.dart';
 import '../services/settings_store.dart';
 import '../services/subscription_service.dart';
+import '../services/speed_test_mode.dart';
 import '../services/speed_tester.dart';
 import 'geo_assets.dart';
+import 'speed_probe_kernel.dart';
 import 'proxy_core_embedded.dart';
 import 'proxy_core_cli.dart';
 import 'mihomo_config.dart';
@@ -195,6 +197,28 @@ class ConnectionController extends ChangeNotifier {
   /// 迁移的判据（见 SettingsStore.legacyHttpTestUrl），两处必须是同一个常量。
   static const defaultTestUrl = SettingsStore.defaultTestUrl;
   String testUrl = defaultTestUrl;
+
+  /// 当前测速方式（设置页可切；默认内核测速＝真连接）。
+  ///
+  /// Shadowrocket 的 Ping/Connect 对应关系：
+  /// - [SpeedTestMode.kernel]（Connect）：内核真的通过节点发请求，保证可用；
+  /// - [SpeedTestMode.tcp]（Ping）：只测 `服务器:端口` TCP 握手，快但会假阳性。
+  SpeedTestMode speedTestMode = defaultSpeedTestMode;
+
+  /// **产出当前列表里那些延迟数字的**测速方式 + 时刻。
+  ///
+  /// 与 [speedTestMode] 分开的原因：用户切换方式后，列表里旧的数字是另一种
+  /// 方式测出来的，两者不可比。切换时 [applySettings] 会**清空全部延迟**
+  /// 并把这里置空，界面上绝不会把两种方式的数字混着展示
+  /// （另：`lastSpeedTestMode` 也用于 UI 显示「本次数字是怎么来的」）。
+  SpeedTestMode? lastSpeedTestMode;
+
+  /// 最近一次测速失败的**可展示原因**（内核测速启动失败/平台不支持等）。
+  ///
+  /// 存在的意义就是「绝不静默失败」：内核测速不可用时宁可明确报错，
+  /// 也不悄悄退回 TCP 去给用户一个假延迟。
+  String? speedTestError;
+
   bool smartMode = true;
 
   /// Android 模式切换中（自动断开重连期间）：UI 显示「正在切换模式…」
@@ -451,6 +475,24 @@ class ConnectionController extends ChangeNotifier {
     if (s['autoReconnect'] is bool) autoReconnect = s['autoReconnect'] as bool;
     final u = s['testUrl']?.toString();
     if (u != null && u.trim().isNotEmpty) testUrl = u.trim();
+    // 测速方式：缺 key / 值损坏一律回落内核测速（parseSpeedTestMode 的策略）。
+    // 方式**变了**就把列表里旧方式测出的延迟全部清掉 —— 内核测速与 TCP
+    // 测速的数字不可比，混在一起展示等于骗用户（例如切到内核测速后，
+    // 界面上仍留着 TCP 给假阳性节点的「12ms」）。
+    final mode = parseSpeedTestMode(s['speedTestMode']);
+    if (mode != speedTestMode) {
+      final hadLatency = nodes.any((n) => n.latencyMs >= 0);
+      speedTestMode = mode;
+      lastSpeedTestMode = null;
+      lastSpeedTestTime = null;
+      speedTestError = null;
+      if (hadLatency) {
+        for (final n in nodes) {
+          n.latencyMs = -1;
+        }
+        AppLog.log('SPEED', '测速方式切换为 ${speedTestModeKey(mode)}，已清空旧延迟');
+      }
+    }
     // 仅在用户未手动切过模式时应用 defaultMode，避免首页选择被设置页静默重置
     if (!_modeUserSet) {
       if (s['defaultMode'] == 'global') {
@@ -661,6 +703,9 @@ class ConnectionController extends ChangeNotifier {
   /// [fromReconnect] 由断线重连调度发起：失败时继续重试（不中断重连链）。
   /// _epoch 守卫：连接过程中用户断开/再次连接时，旧流程的结果不再覆盖状态
   Future<void> connect({bool runSpeedTest = true, bool fromReconnect = false}) async {
+    // 收掉「测速专用内核」（若有）：真连接期间内核测速直接复用连接中的内核，
+    // 临时探测实例没有存在意义，留着白占内存与一个 socket 端口。
+    unawaited(SpeedProbeKernel.instance.stop());
     // 账号门禁：到期 / 设备满 / 被禁用 / 未开通 —— 一律不允许建立 VPN。
     // 放在最前，自动连接、断线重连、首页点连接都走同一道拦截；
     // 会话内已判定过（AccountService.loaded）才生效，内核 e2e 直连不受影响。
@@ -933,21 +978,140 @@ class ConnectionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 统一测速入口：
-  /// - 已连接(内核在跑)→ 走内核 Clash API delay，真实协议+隧道实测，
-  ///   UDP(hysteria2/tuic)与被墙 TCP 节点都能测准（裸 TCP 直连对这些必失败）。
-  /// - 未连接 → 回退纯 TCP 探测（SpeedTester），至少给个可达性参考。
+  /// 统一测速入口：**按用户选定的测速方式**分流（设置页可切，默认内核测速）。
+  ///
+  /// - [SpeedTestMode.kernel]（内核测速 / 真连接）：
+  ///   1. 已连接且内核在跑 → 直接走内核 Clash API delay（复用连接中的内核）；
+  ///   2. 未连接（桌面端）→ 拉起**测速专用临时内核**再测（可取消、空闲自动回收）；
+  ///   3. 移动端（内核在系统隧道进程里，App 起不了第二个）或临时内核启动失败
+  ///      → 抛 [KernelProbeException]，由调用方明确提示用户「先连接」，
+  ///      **绝不静默退回 TCP**。
+  /// - [SpeedTestMode.tcp]（TCP 测速 / Ping）：始终走纯 TCP 探测，
+  ///   即使已连接也不会偷偷换成内核实测（用户的选择必须被尊重）。
+  ///
   /// [onEach] 每测完一个节点即回调 (tag, 延迟, 在线)，供上层实时回填 UI。
   Future<List<ProxyNode>> testAllNodes(List<ProxyNode> list,
       {void Function(int done, int total)? onProgress,
       void Function(String tag, int latencyMs, bool online)? onEach,
       bool Function()? shouldStop}) async {
+    if (speedTestMode == SpeedTestMode.tcp) {
+      return SpeedTester.instance.testAll(list,
+          onProgress: onProgress, onEach: onEach, shouldStop: shouldStop);
+    }
     if (status == ConnStatus.connected && _core.isRunning) {
       return _testViaKernel(list,
           onProgress: onProgress, onEach: onEach, shouldStop: shouldStop);
     }
-    return SpeedTester.instance.testAll(list,
+    return _testViaProbeKernel(list,
         onProgress: onProgress, onEach: onEach, shouldStop: shouldStop);
+  }
+
+  /// 桌面端内核测速（未连接时）：拉起临时探测内核 → 并发 delay → 结果回填。
+  ///
+  /// 失败（平台不支持 / 找不到内核二进制 / 内核起不来）一律抛
+  /// [KernelProbeException]，调用方负责把原因显示给用户。
+  Future<List<ProxyNode>> _testViaProbeKernel(List<ProxyNode> nodes,
+      {void Function(int done, int total)? onProgress,
+      void Function(String tag, int latencyMs, bool online)? onEach,
+      bool Function()? shouldStop}) async {
+    if (nodes.isEmpty) return nodes;
+    await SpeedProbeKernel.instance.ensureStarted(nodes);
+    // 取消条件 = 上层的取消 + 本轮 epoch 失效（用户点了连接/断开：
+    // connect() 会在开始处收掉探测内核，此刻在途的探测结果必须**作废**，
+    // 否则会把「内核已被收掉」误记成「节点不可用」）。
+    final probeEpoch = _epoch;
+    // startedRunning 用「启动后是否真的在跑」做基线：只有**本来在跑、
+    // 中途被收掉**才算取消（真的取消了就别再回填）；否则（例如测试注入的
+    // 延迟桩）不该被当成取消。
+    final startedRunning = SpeedProbeKernel.instance.isRunning;
+    bool cancelled() =>
+        (shouldStop?.call() ?? false) ||
+        probeEpoch != _epoch ||
+        (startedRunning && !SpeedProbeKernel.instance.isRunning);
+    return _delayAllViaKernel(
+      nodes,
+      (tag) => SpeedProbeKernel.instance.testDelay(tag,
+          timeout: speedTestTimeout, url: testUrl),
+      onProgress: onProgress,
+      onEach: onEach,
+      shouldStop: cancelled,
+    );
+  }
+
+  /// 内核测速超时（毫秒口径与设置页/clash delay 的 timeout 参数一致）。
+  static const speedTestTimeout = Duration(seconds: 5);
+
+  /// 内核 delay 并发跑一批节点（连接中的内核与临时探测内核共用这一段）。
+  ///
+  /// 并发上限 16：内核本身可处理更多，但每个 delay 都是一次**真实建连 +
+  /// 一次 HTTP 往返**（走远端节点），并发过高会让远端按 IP 限速/封禁，
+  /// 也让本机短暂占满 socket/FD（实测 100 并发时内核日志里开始出现
+  /// `dial tcp: cannot assign requested address`）。
+  Future<List<ProxyNode>> _delayAllViaKernel(
+    List<ProxyNode> nodes,
+    Future<int> Function(String tag) probe, {
+    void Function(int done, int total)? onProgress,
+    void Function(String tag, int latencyMs, bool online)? onEach,
+    bool Function()? shouldStop,
+  }) async {
+    final result = [for (final n in nodes) n.clone()];
+    var nextIdx = 0;
+    var done = 0;
+    const maxConcurrent = 16;
+
+    Future<void> worker() async {
+      while (true) {
+        // 用户中途发起新一轮测速 → 立即收尾（不再发新的探测请求）
+        if (shouldStop != null && shouldStop()) break;
+        final idx = nextIdx;
+        if (idx >= result.length) break;
+        nextIdx++;
+        final tag = result[idx].tag;
+        // 面板展示性伪节点（📢官网/💬客服 之类 server=baidu.com 的占位项）
+        // 不是真节点：订阅解析阶段（SubscriptionService._nodesFromYamlMap）
+        // 已把它们滤掉，正常路径到不了这里；这里是防御性兜底 —— 一旦有人
+        // 从别的入口塞进来，也跳过并清零，绝不给它编一个延迟
+        // （内核里没有这条 proxy，delay 会 404）。
+        if (isPanelPseudoNode(tag, result[idx].server)) {
+          result[idx].latencyMs = -1;
+          done++;
+          onProgress?.call(done, result.length);
+          onEach?.call(tag, -1, true);
+          continue;
+        }
+        final ms = await probe(tag);
+        // 探测期间被取代（用户点了连接/断开、或用户又发起新一轮测速）：
+        // 本次结果作废且**不回填** —— 绝不能把一次被打断的探测记成「节点不可用」。
+        if (shouldStop != null && shouldStop()) break;
+        result[idx].latencyMs = ms;
+        result[idx].online = mfLatencyUsable(ms);
+        done++;
+        onProgress?.call(done, result.length);
+        onEach?.call(tag, ms, mfLatencyUsable(ms));
+      }
+    }
+
+    final count = result.length < maxConcurrent ? result.length : maxConcurrent;
+    await Future.wait(List.generate(count, (_) => worker()));
+    return result;
+  }
+
+  /// 经内核并发测各节点延迟（**当前已连接的**内核；限流，避免一次性打爆内核）。
+  /// 测速在**副本**上进行：绝不把结果就地写进传入列表的元素 —— 否则
+  /// 断开/切网瞬间在途测速会把 UI 正在用的节点整批标成 offline（epoch
+  /// 守卫只能阻止"整体替换"，挡不住"元素已被逐个改写"）。
+  Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
+      {void Function(int done, int total)? onProgress,
+      void Function(String tag, int latencyMs, bool online)? onEach,
+      bool Function()? shouldStop}) async {
+    if (nodes.isEmpty) return nodes;
+    return _delayAllViaKernel(
+      nodes,
+      (tag) => _core.testNodeDelay(tag, timeout: speedTestTimeout, url: testUrl),
+      onProgress: onProgress,
+      onEach: onEach,
+      shouldStop: shouldStop,
+    );
   }
 
   /// 测速串行化：同一时刻只跑一轮测速。旧实现是「忙就直接 return」，
@@ -1010,6 +1174,10 @@ class ConnectionController extends ChangeNotifier {
   }) async {
     bool cancelled() => gen != _speedTestGen || epoch != _epoch;
     speedTesting = true;
+    // 记录**本轮实际使用的**测速方式：用户可能在测速途中改设置，结果必须归属
+    // 于真正执行的那一种（否则 UI 会把 TCP 的数字标成「内核测速」）。
+    final mode = speedTestMode;
+    speedTestError = null;
     notifyListeners();
     try {
       final tested = await testAllNodes(
@@ -1031,9 +1199,18 @@ class ConnectionController extends ChangeNotifier {
       }
       _retargetCurrent();
       lastSpeedTestTime = _now();
+      lastSpeedTestMode = mode;
       await _applySwitchPolicy(switchPolicy, tested);
       return tested.length;
+    } on KernelProbeException catch (e) {
+      // 内核测速不可用（移动端未连接 / 临时内核起不来）→ **如实报错**。
+      // 绝不在这里退回 TCP：用户选的就是内核测速，退回 TCP 等于给他一个
+      // 「有延迟」的假象 —— 那正是本次要修掉的问题。
+      speedTestError = e.detail == null ? e.message : '${e.message}：${e.detail}';
+      AppLog.error('内核测速失败: $speedTestError');
+      return 0;
     } catch (e) {
+      speedTestError = '$e';
       AppLog.error('测速失败: $e');
       return 0;
     } finally {
@@ -1075,40 +1252,6 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
-  /// 经内核并发测各节点延迟（限流，避免一次性打爆内核）。
-  /// 测速在**副本**上进行：绝不把结果就地写进传入列表的元素 —— 否则
-  /// 断开/切网瞬间在途测速会把 UI 正在用的节点整批标成 offline（epoch
-  /// 守卫只能阻止"整体替换"，挡不住"元素已被逐个改写"）。
-  Future<List<ProxyNode>> _testViaKernel(List<ProxyNode> nodes,
-      {void Function(int done, int total)? onProgress,
-      void Function(String tag, int latencyMs, bool online)? onEach,
-      bool Function()? shouldStop}) async {
-    if (nodes.isEmpty) return nodes;
-    final result = [for (final n in nodes) n.clone()];
-    var nextIdx = 0;
-    var done = 0;
-    const maxConcurrent = 16;
-
-    Future<void> worker() async {
-      while (true) {
-        // 用户中途发起新一轮测速 → 立即收尾（不再发新的探测请求）
-        if (shouldStop != null && shouldStop()) break;
-        final idx = nextIdx;
-        if (idx >= result.length) break;
-        nextIdx++;
-        final ms = await _core.testNodeDelay(result[idx].tag, url: testUrl);
-        result[idx].latencyMs = ms;
-        result[idx].online = mfLatencyUsable(ms);
-        done++;
-        onProgress?.call(done, result.length);
-        onEach?.call(result[idx].tag, ms, mfLatencyUsable(ms));
-      }
-    }
-
-    final count = result.length < maxConcurrent ? result.length : maxConcurrent;
-    await Future.wait(List.generate(count, (_) => worker()));
-    return result;
-  }
 
   /// 在 [tested] 中按 lockedCountry 过滤后选延迟最优节点。
   /// 锁定国家无候选/无在线节点时返回 null（宁可不切换，也绝不跨国家跳）。
@@ -1123,13 +1266,25 @@ class ConnectionController extends ChangeNotifier {
     return SpeedTester.selectBest(candidates);
   }
 
-  /// 测单个节点延迟(节点行"点一下测")：已连接走内核 delay(真实隧道)，
-  /// 未连接回退纯 TCP 探测。返回 ms(失败 -1)，不修改任何列表。
+  /// 测单个节点延迟(节点行"点一下测")：按选定的测速方式走
+  /// （内核测速＝已连接用当前内核 / 未连接用临时探测内核；TCP＝纯 TCP）。
+  /// 返回 ms(失败 -1)，不修改任何列表。
   Future<int> testOneNode(ProxyNode node) async {
-    if (status == ConnStatus.connected && _core.isRunning) {
-      return _core.testNodeDelay(node.tag, url: testUrl);
+    if (isPanelPseudoNode(node.tag, node.server)) return -1;
+    if (speedTestMode == SpeedTestMode.tcp) {
+      return SpeedTester.instance.testOne(node);
     }
-    return SpeedTester.instance.testOne(node);
+    if (status == ConnStatus.connected && _core.isRunning) {
+      return _core.testNodeDelay(node.tag, timeout: speedTestTimeout, url: testUrl);
+    }
+    try {
+      await SpeedProbeKernel.instance.ensureStarted(nodes.isEmpty ? [node] : nodes);
+    } on KernelProbeException catch (e) {
+      AppLog.log('SPEED', '单点内核测速不可用: $e');
+      rethrow;
+    }
+    return SpeedProbeKernel.instance
+        .testDelay(node.tag, timeout: speedTestTimeout, url: testUrl);
   }
 
   /// 手动重新测速并切换最优（首页「重新测速/自动最优」在已连接时走这里；
@@ -1236,6 +1391,9 @@ class ConnectionController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _epoch++;
+    // 断开时一并收掉测速专用内核：断开后用户若再测速会重新拉起，
+    // 但不该让它在后台一直挂着（探针内核与连接状态机无关，必须显式收）。
+    unawaited(SpeedProbeKernel.instance.stop());
     AppLog.conn('disconnect requested');
     _reconnectTimer?.cancel();
     _stableResetTimer?.cancel();
@@ -1551,6 +1709,8 @@ class ConnectionController extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _bgTestTimer?.cancel();
     _wakeLockTimer?.cancel();
+    // 测速专用内核是独立子进程：不显式收会变成孤儿（App 退出后仍占内存）
+    unawaited(SpeedProbeKernel.instance.stop());
     _core.dispose();
     super.dispose();
   }

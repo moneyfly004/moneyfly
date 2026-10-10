@@ -31,11 +31,13 @@ class SpeedTester {
 
   /// 测单个节点延迟（ms），失败返回 -1。
   /// UDP-only 协议（hysteria/hysteria2/tuic/wireguard）无 TCP 监听，
-  /// 裸 TCP 探测必然失败，直接返回 -1（调用方不应据此判离线，见 testAll）。
+  /// 裸 TCP 探测必然失败，直接返回 -1（调用方不应据此判离线，见 testAll）；
+  /// 面板占位节点（📢官网 等）同理直接返回 -1，不给假数字。
   Future<int> testOne(ProxyNode node) async {
     final override = debugProbeOverride;
     if (override != null) return override(node);
     if (node.isUdpOnly) return -1;
+    if (node.isPanelPseudo) return -1;
     final samples = <int>[];
     for (var i = 0; i < _probeCount; i++) {
       final sw = Stopwatch()..start();
@@ -59,6 +61,11 @@ class SpeedTester {
   /// 需要时整体替换引用（断开/切换瞬间的测速结果不会污染 UI 当前列表）。
   /// [onEach] 每测完一个节点即回调 (tag, 延迟ms, 是否在线)，供调用方实时回填
   /// UI（边测边刷、实时重排），不必等整批完成。
+  ///
+  /// 面板展示性伪节点（📢官网 / 💬客服 / ⏰到期，`server=baidu.com` 占位）会
+  /// **跳过**：它们不是节点，TCP 连过去其实连的是真实的 baidu.com，会得到
+  /// 一个「很健康的 8ms」，用户会以为捡到超快节点。延迟留 -1，界面显示
+  /// 「— ms」而不是假数字。
   Future<List<ProxyNode>> testAll(List<ProxyNode> nodes,
       {void Function(int done, int total)? onProgress,
       void Function(String tag, int latencyMs, bool online)? onEach,
@@ -74,6 +81,14 @@ class SpeedTester {
         if (shouldStop != null && shouldStop()) break;
         final idx = queue.removeLast();
         final n = result[idx];
+        if (n.isPanelPseudo) {
+          // 占位项：不给数字（也不判离线 —— 它本来就不是节点）
+          n.latencyMs = -1;
+          done++;
+          onProgress?.call(done, result.length);
+          onEach?.call(n.tag, -1, n.online);
+          continue;
+        }
         final udp = n.isUdpOnly;
         final ms = udp ? -1 : await testOne(n);
         n.latencyMs = ms;

@@ -9,6 +9,7 @@ import '../../l10n/app_strings.dart';
 import '../services/app_log.dart';
 import '../services/permission_service.dart';
 import 'mihomo_config.dart';
+import 'kernel_delay_api.dart';
 import 'native_start_failure.dart';
 import 'proxy_core.dart';
 
@@ -413,19 +414,18 @@ class ProxyCoreEmbedded extends ProxyCore {
     if (!_running) return -1;
     try {
       final r = await _api.get(
-        '/proxies/${Uri.encodeComponent(tag)}/delay',
+        // 节点名必须 URL 编码（emoji/空格/斜杠/中文），见 kernelDelayPath
+        kernelDelayPath(tag),
         queryParameters: {
           'timeout': timeout.inMilliseconds,
-          'url': url ?? 'https://www.gstatic.com/generate_204',
+          'url': url ?? defaultKernelDelayUrl,
         },
         options: Options(
             validateStatus: (s) => true,
             receiveTimeout: timeout + const Duration(seconds: 2)),
       );
-      if (r.statusCode == 200 && r.data is Map && r.data['delay'] is num) {
-        return (r.data['delay'] as num).toInt();
-      }
-      return -1;
+      // 只有 200 + {'delay': <num>} 才算成功；407/408/超时 → -1（绝不给假数字）
+      return parseKernelDelayResponse(r.statusCode, r.data);
     } catch (_) {
       return -1;
     }

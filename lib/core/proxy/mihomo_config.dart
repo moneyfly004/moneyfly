@@ -110,76 +110,9 @@ class MihomoConfigBuilder {
         dnsMode == 'fake-ip' || (dnsMode != 'redir-host' && isTun);
 
     // 过滤掉面板伪节点（📢官网/⏰到期 等信息节点，server=baidu.com 等）
-    final validNodes =
-        nodes.where((n) => n.server.isNotEmpty && n.port > 0).toList();
-    // 去重（同名节点 mihomo 会静默覆盖，App 侧依赖 tag 唯一做测速/切换）
-    final seen = <String>{};
-    final proxies = <Map<String, dynamic>>[];
-    for (final n in validNodes) {
-      if (!seen.add(n.tag)) continue;
-      // raw 以订阅解析为准；关键字段缺失（如测试构造/解析遗漏）时用
-      // ProxyNode 字段兜底，保证内核能加载
-      // （mihomo 对缺必填字段的节点直接报错：missing type / unset fields）
-      final m = Map<String, dynamic>.from(n.raw);
-      m.putIfAbsent('name', () => n.tag);
-      m.putIfAbsent('type', () => n.type);
-      m.putIfAbsent('server', () => n.server);
-      m.putIfAbsent('port', () => n.port);
-      m.putIfAbsent('uuid', () => n.uuid ?? '');
-      m.putIfAbsent('password', () => n.password ?? '');
-      m.putIfAbsent('cipher', () => n.cipher ?? '');
-      final sni = n.sni;
-      if (sni != null && sni.isNotEmpty) {
-        m.putIfAbsent('servername', () => sni);
-      }
-      // 开启节点 UDP relay：不写则 mihomo 默认 udp=false，select/GLOBAL 组
-      // 转发 UDP 时报「select UDP is not supported」，QUIC/HTTP3、游戏、
-      // hysteria2/tuic 等 UDP 流量全部 fallback 到 DIRECT（走本地直连 →
-      // 要么泄漏真实 IP、要么直接不通）。订阅节点已显式声明 udp 时尊重原值。
-      m.putIfAbsent('udp', () => true);
-      // 节点显式声明了 TLS（如 vless+tls），raw 缺失时补上，避免裸连 443
-      if (n.tls == true && m['tls'] == null) {
-        m['tls'] = true;
-      }
-      // base64/链接解析出的节点 raw 不是 Clash map 形态：把 network/ws
-      // 路径/Host/flow 等转成 mihomo 认识的字段，否则 WS/TLS 节点会被按
-      // 裸 TCP 直连处理（流量不通或 SNI 缺失）
-      final network = n.network;
-      if (network != null &&
-          network.isNotEmpty &&
-          m['network'] == null) {
-        m['network'] = network;
-        if (network == 'ws' &&
-            n.wsPath != null &&
-            n.wsPath!.isNotEmpty) {
-          final wsOpts = <String, dynamic>{'path': n.wsPath};
-          if (n.host != null && n.host!.isNotEmpty) {
-            wsOpts['headers'] = {'Host': n.host};
-          }
-          m['ws-opts'] = wsOpts;
-        }
-      }
-      if (n.flow != null && n.flow!.isNotEmpty && m['flow'] == null) {
-        m['flow'] = n.flow;
-      }
-      // UDP + TLS 协议（hysteria / hysteria2 / tuic）的证书校验放宽。
-      //
-      // 实测（mihomo v1.19.30 + 本地内核实测某机场 17 个 hy2 节点）：
-      // 链接里写 `insecure=0`（要求校验证书）时 **17/17 全部握手失败**，
-      // 同一批节点改成不校验则 16/17 成功。原因是这类节点用「伪装 SNI」
-      // （如 sni=api.push.apple.com），服务端证书根本不可能匹配该域名 ——
-      // 只要校验就必然失败，而面板导出的链接又几乎都留着 insecure=0。
-      // 结果是：节点能解析、能被内核加载，但一测速/一连接就失败，
-      // 用户看到的是「这些节点测不了速」。
-      //
-      // 这里对这三种协议默认放宽（可在设置里关掉）；链接显式要求不校验时
-      // 同样成立，节点自己写了 skip-cert-verify 则尊重订阅原值。
-      if (udpSkipCertVerify && _udpTlsTypes.contains(n.type)) {
-        m.putIfAbsent('skip-cert-verify', () => true);
-      }
-      proxies.add(m);
-    }
-    final names = [for (final n in validNodes) n.tag];
+    final built = buildProxyMaps(nodes, udpSkipCertVerify: udpSkipCertVerify);
+    final proxies = built.proxies;
+    final names = built.names;
 
     // select 组默认选中项放列表首位 —— mihomo 的 select 组启动时选中
     // proxies 列表第一项（无 YAML 指定选中的字段），保证重启后线路不丢
@@ -353,6 +286,149 @@ class MihomoConfigBuilder {
     }
 
     return cfg;
+  }
+
+  /// 节点列表 → mihomo `proxies` 数组（**生产配置与测速专用内核共用同一份**）。
+  ///
+  /// 之所以抽成独立方法：测速专用内核（[buildProbe]）必须与真实连接使用
+  /// **完全相同的节点序列化**，否则会出现「测速通过但连不上」（或反之）——
+  /// 那就又变回了一种更隐蔽的假阳性。
+  ///
+  /// 返回的 `names` 为**过滤后**（server/port 有效）的 tag 列表，保持原顺序、
+  /// 不去重（调用方依赖它与旧行为逐字节一致）；`proxies` 已按 tag 去重
+  /// （同名节点 mihomo 会静默覆盖，App 侧依赖 tag 唯一做测速/切换）。
+  static ({List<Map<String, dynamic>> proxies, List<String> names})
+      buildProxyMaps(List<ProxyNode> nodes,
+          {bool udpSkipCertVerify = true}) {
+    // 过滤掉面板伪节点（📢官网/⏰到期 等信息节点，server=baidu.com 等）
+    final validNodes =
+        nodes.where((n) => n.server.isNotEmpty && n.port > 0).toList();
+    // 去重（同名节点 mihomo 会静默覆盖，App 侧依赖 tag 唯一做测速/切换）
+    final seen = <String>{};
+    final proxies = <Map<String, dynamic>>[];
+    for (final n in validNodes) {
+      if (!seen.add(n.tag)) continue;
+      // raw 以订阅解析为准；关键字段缺失（如测试构造/解析遗漏）时用
+      // ProxyNode 字段兜底，保证内核能加载
+      // （mihomo 对缺必填字段的节点直接报错：missing type / unset fields）
+      final m = Map<String, dynamic>.from(n.raw);
+      m.putIfAbsent('name', () => n.tag);
+      m.putIfAbsent('type', () => n.type);
+      m.putIfAbsent('server', () => n.server);
+      m.putIfAbsent('port', () => n.port);
+      m.putIfAbsent('uuid', () => n.uuid ?? '');
+      m.putIfAbsent('password', () => n.password ?? '');
+      m.putIfAbsent('cipher', () => n.cipher ?? '');
+      final sni = n.sni;
+      if (sni != null && sni.isNotEmpty) {
+        m.putIfAbsent('servername', () => sni);
+      }
+      // 开启节点 UDP relay：不写则 mihomo 默认 udp=false，select/GLOBAL 组
+      // 转发 UDP 时报「select UDP is not supported」，QUIC/HTTP3、游戏、
+      // hysteria2/tuic 等 UDP 流量全部 fallback 到 DIRECT（走本地直连 →
+      // 要么泄漏真实 IP、要么直接不通）。订阅节点已显式声明 udp 时尊重原值。
+      m.putIfAbsent('udp', () => true);
+      // 节点显式声明了 TLS（如 vless+tls），raw 缺失时补上，避免裸连 443
+      if (n.tls == true && m['tls'] == null) {
+        m['tls'] = true;
+      }
+      // base64/链接解析出的节点 raw 不是 Clash map 形态：把 network/ws
+      // 路径/Host/flow 等转成 mihomo 认识的字段，否则 WS/TLS 节点会被按
+      // 裸 TCP 直连处理（流量不通或 SNI 缺失）
+      final network = n.network;
+      if (network != null && network.isNotEmpty && m['network'] == null) {
+        m['network'] = network;
+        if (network == 'ws' && n.wsPath != null && n.wsPath!.isNotEmpty) {
+          final wsOpts = <String, dynamic>{'path': n.wsPath};
+          if (n.host != null && n.host!.isNotEmpty) {
+            wsOpts['headers'] = {'Host': n.host};
+          }
+          m['ws-opts'] = wsOpts;
+        }
+      }
+      if (n.flow != null && n.flow!.isNotEmpty && m['flow'] == null) {
+        m['flow'] = n.flow;
+      }
+      // UDP + TLS 协议（hysteria / hysteria2 / tuic）的证书校验放宽。
+      //
+      // 实测（mihomo v1.19.30 + 本地内核实测某机场 17 个 hy2 节点）：
+      // 链接里写 `insecure=0`（要求校验证书）时 **17/17 全部握手失败**，
+      // 同一批节点改成不校验则 16/17 成功。原因是这类节点用「伪装 SNI」
+      // （如 sni=api.push.apple.com），服务端证书根本不可能匹配该域名 ——
+      // 只要校验就必然失败，而面板导出的链接又几乎都留着 insecure=0。
+      // 结果是：节点能解析、能被内核加载，但一测速/一连接就失败，
+      // 用户看到的是「这些节点测不了速」。
+      //
+      // 这里对这三种协议默认放宽（可在设置里关掉）；链接显式要求不校验时
+      // 同样成立，节点自己写了 skip-cert-verify 则尊重订阅原值。
+      if (udpSkipCertVerify && _udpTlsTypes.contains(n.type)) {
+        m.putIfAbsent('skip-cert-verify', () => true);
+      }
+      proxies.add(m);
+    }
+    return (
+      proxies: proxies,
+      names: [for (final n in validNodes) n.tag],
+    );
+  }
+
+  /// 测速专用内核的最小配置（**不带任何入站监听、不建 TUN、不碰系统代理**）。
+  ///
+  /// 为什么需要它：内核测速（`/proxies/{name}/delay`）要求有一个**运行中**
+  /// 的内核。用户点「测速」时通常还没连接（正在挑节点），于是：
+  /// - 桌面端：临时起一个只做延迟探测的内核实例（本方法生成的配置），测完即收；
+  /// - 移动端：内核跑在系统隧道进程里，App 起不了第二个实例 → 提示先连接。
+  ///
+  /// 与生产配置的**有意差异**（每一处都是为了让临时实例与真实连接零冲突）：
+  /// - 不写 `mixed-port` / `port` / `socks-port`：没有入站监听，不可能占用
+  ///   用户的 2080，也不可能被误当成系统代理目标；
+  /// - 没有 `tun` 段：不会创建虚拟网卡、不动路由表（无需管理员权限）；
+  /// - `rules: [MATCH,DIRECT]` 且不引用 GEOSITE/GEOIP：无需 geo 数据文件，
+  ///   内核绝不会在启动时联网下载 geodata；
+  /// - `proxies` 与真实连接完全一致（同一份 [buildProxyMaps]），保证
+  ///   「测速通过 ⇔ 真连接可用」。
+  static Map<String, dynamic> buildProbe({
+    required List<ProxyNode> nodes,
+    required int controllerPort,
+    String? clashApiSecret,
+    String dns = '223.5.5.5',
+    List<String> dnsNameservers = const [],
+    String logLevel = 'warning',
+    bool udpSkipCertVerify = true,
+    /// 只测这些 tag（null = 全部）。节点很多时把探测内核缩到最小内存占用。
+    Set<String>? onlyTags,
+  }) {
+    final secret = clashApiSecret ?? generateSecret();
+    final pool = onlyTags == null
+        ? nodes
+        : nodes.where((n) => onlyTags.contains(n.tag)).toList();
+    final proxies = buildProxyMaps(pool, udpSkipCertVerify: udpSkipCertVerify).proxies;
+    final nameservers =
+        dnsNameservers.isNotEmpty ? dnsNameservers : <String>[dns];
+    return <String, dynamic>{
+      '_clashApiPort': controllerPort,
+      '_clashApiSecret': secret,
+      'external-controller': '127.0.0.1:$controllerPort',
+      'secret': secret,
+      'mode': 'rule',
+      'log-level': logLevel,
+      'ipv6': false,
+      'allow-lan': false,
+      'find-process-mode': 'off',
+      // 与生产同一口径：否则探测内核算出的数字与连接后显示的延迟对不上
+      'unified-delay': true,
+      'tcp-concurrent': false,
+      'geo-auto-update': false,
+      // 探测地址是域名时内核要自己解析；不配 fallback（国内直连被墙）
+      'dns': {
+        'enable': true,
+        'nameserver': nameservers,
+      },
+      'proxies': proxies,
+      // 无节点时也给一条可解析的规则，内核照常起来（延迟测试会全部失败，
+      // 调用方按失败如实展示）
+      'rules': const ['MATCH,DIRECT'],
+    };
   }
 
   /// 端口健壮化：返回合法的 (localPort, clashApiPort)。
