@@ -18,9 +18,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:moneyfly/core/proxy/proxy_core.dart';
 import 'package:moneyfly/core/services/account_service.dart';
+import 'package:moneyfly/core/services/settings_store.dart';
 import 'package:moneyfly/l10n/app_strings.dart';
 import 'package:moneyfly/pages/settings/settings_page.dart';
 import 'package:moneyfly/theme/app_theme.dart';
+import 'package:moneyfly/widgets/mf_row.dart';
 
 /// 新版分组顺序（组标题 key，按页面从上到下）
 const _groupOrder = [
@@ -229,5 +231,30 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '');
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.t('settings_language')), findsOneWidget);
+  }, timeout: const Timeout(Duration(seconds: 120)));
+
+  testWidgets('通知开关：默认开（既有键 notify 默认 true），关掉后落盘 notify=false', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    SettingsStore.resetForTest();
+    await pumpTall(tester);
+
+    final row = find.ancestor(
+        of: find.text(AppStrings.t('settings_notify')),
+        matching: find.byType(MFRow));
+    expect(row, findsOneWidget, reason: '「允许通知」行必须存在');
+    final sw = find.descendant(of: row, matching: find.byType(Switch));
+    expect(sw, findsOneWidget);
+
+    // 默认（settings 里没有 notify 键）= 开：与 SettingsStore._defaults() 一致，
+    // 也就是说这次改动不会改变任何老用户的通知行为
+    expect(tester.widget<Switch>(sw).value, isTrue);
+
+    await tester.tap(sw);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(sw).value, isFalse);
+
+    final saved = await SettingsStore.instance.load();
+    debugPrint('[notify] 落盘 notify=${saved['notify']}');
+    expect(saved['notify'], isFalse, reason: '开关必须落到既有 settings 键 notify');
   }, timeout: const Timeout(Duration(seconds: 120)));
 }
