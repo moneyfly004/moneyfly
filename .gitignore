@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# macOS 构建副产物（flutter build macos 生成，不入库：随 Podfile 变化而异，
+# 提交它只会制造无意义的 diff）
+macos/Podfile.lock
+
 # Symbolication related
 app.*.symbols
 

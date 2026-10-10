@@ -39,11 +39,13 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('连接与线路'), findsOneWidget); // 设置页①组(新版分组)
-    expect(find.text('自动测速并选最优'), findsOneWidget);
-    // 设置项变多后「默认模式」行在视口外（ListView 懒加载），滚动后断言
-    await tester.scrollUntilVisible(find.text('默认模式'), 200,
-        scrollable: find.byType(Scrollable).first);
+    // 2.2.23 重新分组后：①组更名为「连接与内核」，首行是「默认模式」
+    expect(find.text('连接与内核'), findsOneWidget);
     expect(find.text('默认模式'), findsOneWidget);
+    // 「自动测速并选最优」已挪到②「测速」组（同类功能集中），需滚动到
+    await tester.scrollUntilVisible(find.text('自动测速并选最优'), 200,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('测速'), findsOneWidget);
+    expect(find.text('自动测速并选最优'), findsOneWidget);
   });
 }

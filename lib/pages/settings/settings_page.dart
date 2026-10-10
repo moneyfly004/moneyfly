@@ -18,6 +18,7 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/mf_input.dart';
 import '../../widgets/mf_row.dart';
 import '../auth/change_password_page.dart';
+import '../devices/devices_page.dart';
 import 'access_page.dart';
 import 'bypass_page.dart';
 import 'geo_update_page.dart';
@@ -38,6 +39,18 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   Map<String, dynamic> _s = {};
   bool _loaded = false;
+
+  /// 设置项搜索关键词（小写，空 = 不过滤）。
+  /// 用户反馈「设置里面东西很乱、同类功能不集中」——除了按用户意图重新分组，
+  /// 再加一个搜索框：知道名字就能一步定位，不用逐组翻。
+  String _query = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
 
   @override
@@ -90,193 +103,299 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
-          children: [
-            // ① 连接与线路：用什么模式连、怎么自动连/重连/测速
-            _section(AppStrings.t('group_connect')),
-            _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
-                trailing: _seg2(
-                  left: AppStrings.t('smart_mode'), right: AppStrings.t('global_mode'),
-                  selectedLeft: _s['defaultMode'] != 'global',
-                  onLeft: () => _set('defaultMode', 'smart'),
-                  onRight: () => _set('defaultMode', 'global'),
-                )),
-            _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
-                trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v))),
-            if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) ...[
-              _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
-                  trailing: _switch(_s['launchAtStartup'] == true, (v) async {
-                    // 先落系统、成功才落设置。旧实现是先写设置再 unawaited(enable())：
-                    // 插件在没 setup 时抛 UnsupportedError 被 unawaited 吞掉，于是
-                    // 开关显示「已开启」而系统里从没注册过 —— 失败必须让用户看见，
-                    // 且不能让设置项停在「开着」的假状态。
-                    final ok = v
-                        ? await AutostartService.enable()
-                        : await AutostartService.disable();
-                    if (!ok) {
-                      _toast(AppStrings.t('launch_at_startup_failed'));
-                      return;
-                    }
-                    await _set('launchAtStartup', v);
-                  })),
-              _row(icon: '🚪', title: AppStrings.t('close_action'),
-                  value: _closeActionLabel(),
-                  onTap: _pickCloseAction),
+        child: Builder(builder: (_) {
+          // 分组按**用户意图**（不是代码归属）排列；搜索时整组/整行动态过滤。
+          final groups = <List<Widget>>[
+            _groupConnect(), // ① 连接与内核
+            _groupSpeedTest(), // ② 测速
+            _groupDnsSplit(), // ③ DNS 与分流
+            _groupSubscription(), // ④ 订阅与更新
+            _groupAccount(), // ⑤ 账号与安全
+            _groupNotify(), // ⑥ 通知与提醒
+            _groupAppearance(), // ⑦ 外观与语言
+            _groupAbout(), // ⑧ 诊断与关于
+          ];
+          final searching = _query.trim().isNotEmpty;
+          final hitAny = groups.any((g) => g.isNotEmpty);
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
+            children: [
+              _searchField(),
+              if (searching && !hitAny) _searchEmpty(),
+              for (final g in groups) ...g,
+              const SizedBox(height: 12),
+              Center(
+                child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
+                    style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
+              ),
             ],
-            _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
-                trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v))),
-            _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),
-                trailing: _switch(_s['autoReconnect'] == true, (v) => _set('autoReconnect', v))),
-            _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: _testIntervalValue(),
-                onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)),
-                    current: _testIntervalValue())),
-            // 测速方式（对标 Shadowrocket 的 Ping / Connect）。
-            // 默认内核测速＝Connect：内核真的通过节点发一次请求，
-            // 凭据/协议/回程全部参与验证 —— 这才是「节点可用」。
-            _row(icon: '📶', title: AppStrings.t('settings_speed_mode'),
-                desc: AppStrings.t('settings_speed_mode_desc'),
-                value: _speedModeLabel(),
-                onTap: _pickSpeedMode),
-            _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
-                value: _testUrlHost(),
-                onTap: _pickTestUrl),
-            // ② 代理与分流：TUN、DNS、直连名单、按应用分流
-            _section(AppStrings.t('group_proxy')),
-            // TUN 模式行只在**真的能选**的平台显示：Android/iOS 的 tunMode 会被
-            // 内核侧强制成 auto（移动端只能走系统隧道），显示出来是个点了没用的
-            // 假开关 —— 用户以为自己关掉了 TUN，其实仍在走（旧实现 iOS 正是如此）。
-            if (!Platform.isAndroid && !Platform.isIOS)
-              _row(icon: '🚀', title: AppStrings.t('settings_tun'),
-                  desc: _tunDesc(),
-                  value: _tunModeValue(),
-                  onTap: _pickTunMode),
-            if (Platform.isAndroid)
-              _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
-                  desc: AppStrings.t('settings_tun_stack_desc'),
-                  value: _tunStackValue(),
-                  onTap: () => _picker([
-                    AppStrings.t('tun_stack_gvisor'),
-                    AppStrings.t('tun_stack_mixed'),
-                  ], (v) => _set('tunStack',
-                      v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'),
-                      current: _tunStackValue())),
-            // 主 DNS 列表（逗号分隔文本编辑；旧 'dns' 单值键保留兼容，主列表优先）
-            _row(icon: '🌐', title: AppStrings.t('settings_dns'),
-                desc: AppStrings.t('settings_dns_desc'),
-                value: _dnsList().join(', '),
-                onTap: _pickDnsList),
-            _row(icon: '🧭', title: AppStrings.t('settings_dns_mode'),
-                desc: AppStrings.t('settings_dns_mode_desc'),
-                value: _dnsModeValue(),
-                onTap: () => _picker([
-                  AppStrings.t('dns_mode_auto'),
-                  AppStrings.t('dns_mode_fakeip'),
-                  AppStrings.t('dns_mode_redirhost'),
-                ], (v) => _set('dnsMode',
-                    v == AppStrings.t('dns_mode_fakeip')
-                        ? 'fake-ip'
-                        : (v == AppStrings.t('dns_mode_redirhost')
-                            ? 'redir-host'
-                            : 'auto')),
-                    current: _dnsModeValue())),
-            // fake-ip 过滤追加（这些域名保留真实解析，不映射 fake-ip）
-            _row(icon: '🧩', title: AppStrings.t('settings_fakeip_extra'),
-                desc: AppStrings.t('settings_fakeip_extra_desc'),
-                value: '${_fakeIpExtra().length}',
-                onTap: _pickFakeIpFilter),
-            // UDP+TLS 协议（hysteria/hysteria2/tuic）证书校验放宽：
-            // 这类节点几乎都用伪装 SNI + 不匹配证书，开着校验必然握不上手
-            // （实测 17/17 失败 → 关掉后 16/17 成功）。默认开，可关。
-            _row(icon: '🔓', title: AppStrings.t('settings_udp_insecure'),
-                desc: AppStrings.t('settings_udp_insecure_desc'),
-                trailing: _switch(_s['udpSkipCertVerify'] != false,
-                    (v) => _set('udpSkipCertVerify', v))),
-            _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
-                trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v))),
-            _row(icon: '🚫', title: AppStrings.t('settings_bypass'),
-                desc: AppStrings.t('settings_bypass_desc'),
-                value: '${((_s['bypassDomains'] as List?)?.length ?? 0)}',
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const BypassPage()))),
-            if (Platform.isAndroid)
-              _row(icon: '📱', title: AppStrings.t('settings_access'),
-                  desc: AppStrings.t('settings_access_desc'),
-                  value: _accessModeValue(),
-                  onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const AccessPage()))),
-            // ③ 网络与端口（低频/高级）
-            _section(AppStrings.t('group_network')),
-            _row(icon: '🔢', title: AppStrings.t('settings_local_port'),
-                desc: AppStrings.t('settings_local_port_desc'),
-                value: '${_s['localPort'] ?? 2080}',
-                onTap: _pickLocalPort),
-            _row(icon: '🔧', title: AppStrings.t('settings_clash_api_port'),
-                desc: AppStrings.t('settings_clash_api_port_desc'),
-                value: '${_s['clashApiPort'] ?? 9090}',
-                onTap: _pickClashApiPort),
-            // ④ 内核与数据
-            _section(AppStrings.t('group_kernel')),
-            _row(icon: '🧩', title: AppStrings.t('settings_kernel'),
-                desc: 'MetaCubeX/mihomo',
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const KernelPage()))),
-            _row(icon: '🌍', title: AppStrings.t('settings_geo_data'),
-                desc: AppStrings.t('settings_geo_data_desc'),
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const GeoUpdatePage()))),
-            // ⑤ 外观
-            _section(AppStrings.t('group_appearance')),
-            _appearanceRow(),
-            _row(icon: '🌏', title: AppStrings.t('settings_language'),
-                value: AppStrings.lang == 'en' ? 'English' : '简体中文',
-                onTap: _pickLanguage),
-            _row(icon: '🪪', title: AppStrings.t('settings_subscribe_ua'),
-                desc: AppStrings.t('settings_subscribe_ua_desc'),
-                value: ((_s['subscribeUserAgent']?.toString() ?? '').trim().isEmpty)
-                    ? AppStrings.t('settings_subscribe_ua_default')
-                    : _s['subscribeUserAgent'].toString(),
-                onTap: _pickSubscribeUa),
-            // 线路自救：某些地区官网域名被墙 → 自动/手动改用备用域名（订阅与接口都受益）
-            _row(icon: '🛰️', title: AppStrings.t('settings_server_line'),
-                desc: AppStrings.t('settings_server_line_desc'),
-                value: _serverLineLabel(),
-                onTap: _pickServerLine),
-            // ⑥ 账户
-            _section(AppStrings.t('group_account')),
-            _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChangePasswordPage()))),
-            _row(icon: '🧹', title: AppStrings.t('settings_clear_data'),
-                desc: AppStrings.t('settings_clear_data_desc'),
-                danger: true,
-                onTap: _clearLocalData),
-            // ⑦ 关于与诊断
-            _section(AppStrings.t('group_about')),
-            if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS)
-              _row(icon: '⬇️', title: AppStrings.t('settings_auto_download_update'),
-                  desc: AppStrings.t('settings_auto_download_update_desc'),
-                  trailing: _switch(_s['autoDownloadUpdatePkg'] == true,
-                      (v) => _set('autoDownloadUpdatePkg', v))),
-            _row(icon: '📋', title: AppStrings.t('log_center_title'),
-                desc: AppStrings.t('log_center_desc'),
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LogCenterPage()))),
-            _row(icon: '💥', title: AppStrings.t('settings_crash_report'),
-                desc: AppStrings.t('settings_crash_report_desc'),
-                trailing: _switch(_s['crashReport'] == true, (v) {
-                  setState(() => _s['crashReport'] = v);
-                  CrashLogger.setEnabled(v);
-                  _set('crashReport', v);
-                })),
-            const SizedBox(height: 12),
-             Center(
-              child: Text('MoneyFly v${UpdateInfo.currentVersion} · dy.moneyfly.top',
-                  style: TextStyle(fontSize: 10.5, color: MFColors.txt3, fontFamily: kNumFont)),
-            ),
-          ],
+          );
+        }),
+      ),
+    );
+  }
+
+  // ── 分组定义 ────────────────────────────────────────────────────────────
+  // 每个分组 = 组标题 + 组内条目；条目顺序按「用户先用到的排前面」。
+  // 所有条目都通过 _item() 登记搜索关键词（中英文案 + i18n key 都参与匹配）。
+
+  /// ① 连接与内核：连什么模式、怎么自动连/常驻、内核与网卡、端口
+  List<Widget> _groupConnect() => _group('group_connect', [
+        _item(['settings_default_mode'], _row(icon: '🎯', title: AppStrings.t('settings_default_mode'),
+            trailing: _seg2(
+              left: AppStrings.t('smart_mode'), right: AppStrings.t('global_mode'),
+              selectedLeft: _s['defaultMode'] != 'global',
+              onLeft: () => _set('defaultMode', 'smart'),
+              onRight: () => _set('defaultMode', 'global'),
+            ))),
+        _item(['settings_auto_connect'], _row(icon: '🔌', title: AppStrings.t('settings_auto_connect'),
+            trailing: _switch(_s['autoConnect'] == true, (v) => _set('autoConnect', v)))),
+        // 开机自启动 / 关闭窗口行为：「让代理随时可用」的常驻行为，与自动连接同类
+        if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+          _item(['settings_launch_startup'], _row(icon: '🚀', title: AppStrings.t('settings_launch_startup'),
+              trailing: _switch(_s['launchAtStartup'] == true, (v) async {
+                // 先落系统、成功才落设置。旧实现是先写设置再 unawaited(enable())：
+                // 插件在没 setup 时抛 UnsupportedError 被 unawaited 吞掉，于是
+                // 开关显示「已开启」而系统里从没注册过 —— 失败必须让用户看见，
+                // 且不能让设置项停在「开着」的假状态。
+                final ok = v
+                    ? await AutostartService.enable()
+                    : await AutostartService.disable();
+                if (!ok) {
+                  _toast(AppStrings.t('launch_at_startup_failed'));
+                  return;
+                }
+                await _set('launchAtStartup', v);
+              }))),
+        if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+          _item(['close_action'], _row(icon: '🚪', title: AppStrings.t('close_action'),
+              value: _closeActionLabel(),
+              onTap: _pickCloseAction)),
+        _item(['settings_reconnect'], _row(icon: '🔁', title: AppStrings.t('settings_reconnect'), desc: AppStrings.t('settings_reconnect_desc'),
+            trailing: _switch(_s['autoReconnect'] == true, (v) => _set('autoReconnect', v)))),
+        // TUN 模式行只在**真的能选**的平台显示：Android/iOS 的 tunMode 会被
+        // 内核侧强制成 auto（移动端只能走系统隧道），显示出来是个点了没用的
+        // 假开关 —— 用户以为自己关掉了 TUN，其实仍在走（旧实现 iOS 正是如此）。
+        if (!Platform.isAndroid && !Platform.isIOS)
+          _item(['settings_tun'], _row(icon: '🚀', title: AppStrings.t('settings_tun'),
+              desc: _tunDesc(),
+              value: _tunModeValue(),
+              onTap: _pickTunMode)),
+        if (Platform.isAndroid)
+          _item(['settings_tun_stack'], _row(icon: '🧱', title: AppStrings.t('settings_tun_stack'),
+              desc: AppStrings.t('settings_tun_stack_desc'),
+              value: _tunStackValue(),
+              onTap: () => _picker([
+                AppStrings.t('tun_stack_gvisor'),
+                AppStrings.t('tun_stack_mixed'),
+              ], (v) => _set('tunStack',
+                  v == AppStrings.t('tun_stack_mixed') ? 'mixed' : 'gvisor'),
+                  current: _tunStackValue()))),
+        _item(['settings_local_port'], _row(icon: '🔢', title: AppStrings.t('settings_local_port'),
+            desc: AppStrings.t('settings_local_port_desc'),
+            value: '${_s['localPort'] ?? 2080}',
+            onTap: _pickLocalPort)),
+        _item(['settings_clash_api_port'], _row(icon: '🔧', title: AppStrings.t('settings_clash_api_port'),
+            desc: AppStrings.t('settings_clash_api_port_desc'),
+            value: '${_s['clashApiPort'] ?? 9090}',
+            onTap: _pickClashApiPort)),
+        _item(['settings_kernel', 'settings_kernel_desc'], _row(icon: '🧩', title: AppStrings.t('settings_kernel'),
+            desc: 'MetaCubeX/mihomo',
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const KernelPage())))),
+        _item(['settings_geo_data'], _row(icon: '🌍', title: AppStrings.t('settings_geo_data'),
+            desc: AppStrings.t('settings_geo_data_desc'),
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const GeoUpdatePage())))),
+      ]);
+
+  /// ② 测速：测速开关、间隔、方式、探测地址 —— 全部集中在同一组
+  List<Widget> _groupSpeedTest() => _group('group_speedtest', [
+        _item(['settings_auto_test'], _row(icon: '⚡', title: AppStrings.t('settings_auto_test'), desc: AppStrings.t('settings_auto_test_desc'),
+            trailing: _switch(_s['autoTest'] == true, (v) => _set('autoTest', v)))),
+        _item(['settings_test_interval'], _row(icon: '⏱️', title: AppStrings.t('settings_test_interval'), value: _testIntervalValue(),
+            onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)),
+                current: _testIntervalValue()))),
+        // 测速方式（对标 Shadowrocket 的 Ping / Connect）。
+        // 默认内核测速＝Connect：内核真的通过节点发一次请求，
+        // 凭据/协议/回程全部参与验证 —— 这才是「节点可用」。
+        _item(['settings_speed_mode'], _row(icon: '📶', title: AppStrings.t('settings_speed_mode'),
+            desc: AppStrings.t('settings_speed_mode_desc'),
+            value: _speedModeLabel(),
+            onTap: _pickSpeedMode)),
+        _item(['settings_test_url'], _row(icon: '🧭', title: AppStrings.t('settings_test_url'), desc: AppStrings.t('settings_test_url_desc'),
+            value: _testUrlHost(),
+            onTap: _pickTestUrl)),
+      ]);
+
+  /// ③ DNS 与分流：DNS 解析、直连名单、按应用分流、证书校验
+  List<Widget> _groupDnsSplit() => _group('group_dns_split', [
+        // 主 DNS 列表（逗号分隔文本编辑；旧 'dns' 单值键保留兼容，主列表优先）
+        _item(['settings_dns'], _row(icon: '🌐', title: AppStrings.t('settings_dns'),
+            desc: AppStrings.t('settings_dns_desc'),
+            value: _dnsList().join(', '),
+            onTap: _pickDnsList)),
+        _item(['settings_dns_mode'], _row(icon: '🧭', title: AppStrings.t('settings_dns_mode'),
+            desc: AppStrings.t('settings_dns_mode_desc'),
+            value: _dnsModeValue(),
+            onTap: () => _picker([
+              AppStrings.t('dns_mode_auto'),
+              AppStrings.t('dns_mode_fakeip'),
+              AppStrings.t('dns_mode_redirhost'),
+            ], (v) => _set('dnsMode',
+                v == AppStrings.t('dns_mode_fakeip')
+                    ? 'fake-ip'
+                    : (v == AppStrings.t('dns_mode_redirhost')
+                        ? 'redir-host'
+                        : 'auto')),
+                current: _dnsModeValue()))),
+        // fake-ip 过滤追加（这些域名保留真实解析，不映射 fake-ip）
+        _item(['settings_fakeip_extra'], _row(icon: '🧩', title: AppStrings.t('settings_fakeip_extra'),
+            desc: AppStrings.t('settings_fakeip_extra_desc'),
+            value: '${_fakeIpExtra().length}',
+            onTap: _pickFakeIpFilter)),
+        _item(['settings_bypass_lan'], _row(icon: '🏠', title: AppStrings.t('settings_bypass_lan'),
+            trailing: _switch(_s['bypassLan'] == true, (v) => _set('bypassLan', v)))),
+        _item(['settings_bypass'], _row(icon: '🚫', title: AppStrings.t('settings_bypass'),
+            desc: AppStrings.t('settings_bypass_desc'),
+            value: '${((_s['bypassDomains'] as List?)?.length ?? 0)}',
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const BypassPage())))),
+        if (Platform.isAndroid)
+          _item(['settings_access'], _row(icon: '📱', title: AppStrings.t('settings_access'),
+              desc: AppStrings.t('settings_access_desc'),
+              value: _accessModeValue(),
+              onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AccessPage())))),
+        // UDP+TLS 协议（hysteria/hysteria2/tuic）证书校验放宽：
+        // 这类节点几乎都用伪装 SNI + 不匹配证书，开着校验必然握不上手
+        // （实测 17/17 失败 → 关掉后 16/17 成功）。默认开，可关。
+        _item(['settings_udp_insecure'], _row(icon: '🔓', title: AppStrings.t('settings_udp_insecure'),
+            desc: AppStrings.t('settings_udp_insecure_desc'),
+            trailing: _switch(_s['udpSkipCertVerify'] != false,
+                (v) => _set('udpSkipCertVerify', v)))),
+      ]);
+
+  /// ④ 订阅与更新：订阅身份/域名、软件更新
+  List<Widget> _groupSubscription() => _group('group_subscription_update', [
+        _item(['settings_subscribe_ua'], _row(icon: '🪪', title: AppStrings.t('settings_subscribe_ua'),
+            desc: AppStrings.t('settings_subscribe_ua_desc'),
+            value: ((_s['subscribeUserAgent']?.toString() ?? '').trim().isEmpty)
+                ? AppStrings.t('settings_subscribe_ua_default')
+                : _s['subscribeUserAgent'].toString(),
+            onTap: _pickSubscribeUa)),
+        // 线路自救：某些地区官网域名被墙 → 自动/手动改用备用域名（订阅与接口都受益）
+        _item(['settings_server_line'], _row(icon: '🛰️', title: AppStrings.t('settings_server_line'),
+            desc: AppStrings.t('settings_server_line_desc'),
+            value: _serverLineLabel(),
+            onTap: _pickServerLine)),
+        if (Platform.isAndroid || Platform.isWindows || Platform.isMacOS)
+          _item(['settings_auto_download_update'], _row(icon: '⬇️', title: AppStrings.t('settings_auto_download_update'),
+              desc: AppStrings.t('settings_auto_download_update_desc'),
+              trailing: _switch(_s['autoDownloadUpdatePkg'] == true,
+                  (v) => _set('autoDownloadUpdatePkg', v)))),
+      ]);
+
+  /// ⑤ 账号与安全：登录态相关动作（改密、设备、本地数据）
+  List<Widget> _groupAccount() => _group('group_account', [
+        _item(['settings_change_pwd'], _row(icon: '🔑', title: AppStrings.t('settings_change_pwd'), desc: AppStrings.t('cur_pwd'), onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ChangePasswordPage())))),
+        // 设备管理入口（与「我的」页同一页面）：账号与安全组里集中放账号相关动作
+        _item(['profile_devices', 'settings_devices'], _row(icon: '📱', title: AppStrings.t('profile_devices'),
+            desc: AppStrings.t('settings_devices_desc'),
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const DevicesPage())))),
+        _item(['settings_clear_data'], _row(icon: '🧹', title: AppStrings.t('settings_clear_data'),
+            desc: AppStrings.t('settings_clear_data_desc'),
+            danger: true,
+            onTap: _clearLocalData)),
+      ]);
+
+  /// ⑥ 通知与提醒：本地通知总开关（到期提醒 / 连接异常）
+  List<Widget> _groupNotify() => _group('group_notify', [
+        _item(['settings_notify'], _row(icon: '🔔', title: AppStrings.t('settings_notify'),
+            desc: AppStrings.t('settings_notify_desc'),
+            trailing: _switch(_s['notify'] != false, (v) => _set('notify', v)))),
+      ]);
+
+  /// ⑦ 外观与语言：主题、语言
+  List<Widget> _groupAppearance() => _group('group_appearance', [
+        _item(['settings_theme', 'appearance'], _appearanceRow()),
+        _item(['settings_language'], _row(icon: '🌏', title: AppStrings.t('settings_language'),
+            value: AppStrings.lang == 'en' ? 'English' : '简体中文',
+            onTap: _pickLanguage)),
+      ]);
+
+  /// ⑧ 诊断与关于：日志、许可、版本
+  List<Widget> _groupAbout() => _group('group_about', [
+        _item(['log_center_title'], _row(icon: '📋', title: AppStrings.t('log_center_title'),
+            desc: AppStrings.t('log_center_desc'),
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const LogCenterPage())))),
+        _item(['settings_crash_report'], _row(icon: '💥', title: AppStrings.t('settings_crash_report'),
+            desc: AppStrings.t('settings_crash_report_desc'),
+            trailing: _switch(_s['crashReport'] == true, (v) {
+              setState(() => _s['crashReport'] = v);
+              CrashLogger.setEnabled(v);
+              _set('crashReport', v);
+            }))),
+        // 开源许可（Flutter 内置许可页：内核、依赖库的许可证一览）
+        _item(['settings_licenses'], _row(icon: '📜', title: AppStrings.t('settings_licenses'),
+            onTap: () => showLicensePage(
+                  context: context,
+                  applicationName: 'MoneyFly',
+                  applicationVersion: UpdateInfo.currentVersion,
+                ))),
+      ]);
+
+  /// 设置项搜索框（空 = 正常浏览全部设置）
+  Widget _searchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 2),
+      child: TextField(
+        controller: _searchCtrl,
+        onChanged: (v) => setState(() => _query = v),
+        style: const TextStyle(fontSize: 13.5),
+        decoration: mfInput(
+          hint: AppStrings.t('settings_search_hint'),
+          prefixIcon: const Icon(Icons.search, size: 18),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    setState(() => _query = '');
+                  },
+                ),
         ),
       ),
     );
+  }
+
+  Widget _searchEmpty() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 28, 2, 8),
+      child: Center(
+        child: Text(AppStrings.t('settings_search_empty'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12.5, color: MFColors.txt3)),
+      ),
+    );
+  }
+
+  /// 一个设置条目 + 它的搜索关键词（中英文案与 i18n key 都参与匹配）
+  _SettingItem _item(List<String> keys, Widget child) => _SettingItem(keys, child);
+
+  /// 渲染一个分组：标题 + 组内条目；搜索时只渲染命中的条目，整组无命中则整组隐藏。
+  List<Widget> _group(String titleKey, List<_SettingItem> items) {
+    final q = _query.trim().toLowerCase();
+    final shown = q.isEmpty ? items : items.where((it) => it.matches(q)).toList();
+    if (shown.isEmpty) return const <Widget>[];
+    return <Widget>[
+      _section(AppStrings.t(titleKey)),
+      for (final it in shown) it.child,
+    ];
   }
 
   Widget _section(String title) {
@@ -1215,6 +1334,26 @@ class _SettingsPageState extends State<SettingsPage> {
 void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+}
+
+/// 设置页的一个条目 + 它的搜索关键词。
+///
+/// 设置项搜索（本页顶部搜索框）用：关键词既匹配 i18n key（英文/拼音友好，
+/// 如 `tun`、`speed_mode`），也匹配当前语言下的真实文案（`测速`、`Speed`）——
+/// 用户不需要知道 key 叫什么，按界面上看到的字搜就行。
+class _SettingItem {
+  const _SettingItem(this.keys, this.child);
+
+  final List<String> keys;
+  final Widget child;
+
+  bool matches(String q) {
+    for (final k in keys) {
+      if (k.toLowerCase().contains(q)) return true;
+      if (AppStrings.t(k).toLowerCase().contains(q)) return true;
+    }
+    return false;
   }
 }
 
