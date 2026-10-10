@@ -131,6 +131,35 @@ class ProxyCoreFactory {
   }
 }
 
+/// 「启动时自动连接」的判定结果。
+///
+/// 为什么需要返回值：旧实现 `autoConnectIfEnabled()` 返回 void，开关开着却没连
+/// 上的每一种原因（没线路 / 账号门禁 / 已在连接）都只能靠状态里的 error 反推，
+/// 调用方没法给出**确定**的用户可见结果，也就没人发现「提前 return 让自动连接
+/// 整条死掉」这个 bug。现在判定结果是显式契约：每种结果要么已经产生可见反馈
+/// （连接状态机/门禁文案），要么由调用方补一句提示。
+enum AutoConnectOutcome {
+  /// 已真正发起连接（`connect()` 被调用过；成败由连接状态机与首页错误区展示）
+  started,
+
+  /// 开关关：尊重用户选择，不做任何连接动作（这里静默 = 正确行为）
+  disabled,
+
+  /// 本次启动已经判定过（门闩），不再重复连接
+  alreadyTried,
+
+  /// 当前不在断开态（已连接/连接中/重连中）：目标已达成，无需动作
+  busy,
+
+  /// 没有可用线路（订阅未到位/为空/拉取失败）：不连，且**不消费门闩** ——
+  /// 线路稍后到位（磁盘缓存/重试成功/回前台）时仍要补一次
+  noNodes,
+
+  /// 账号门禁（到期/设备满/被禁用/未开通）：不发起建连，
+  /// 门禁文案已落到 [ConnectionController.error] 且首页有受限横幅
+  blocked,
+}
+
 /// 内核「异常退出」后的处置决策（纯逻辑，便于单元测试）
 enum CrashRecoveryAction {
   /// 自动拉起内核：与用户偏好无关，客户端自身故障必须自愈
@@ -168,8 +197,7 @@ CrashRecoveryAction decideCrashRecovery({
 /// 全局连接控制器：状态机 + 自动测速选优 + 断线重连 + 后台测速
 class ConnectionController extends ChangeNotifier {
   ConnectionController._() {
-    _core.onUnexpectedExit = onDisconnectedUnexpectedly;
-    _core.onTraffic = _onTraffic;
+    _wireCore();
     // 订阅同步状态变化 → 转发给 UI；开始同步时顺手清掉上一会话残留的错误，
     // 免得刚登录时按钮下方挂着红色错误、让用户以为出错了
     SubscriptionService.instance.syncing.addListener(() {
@@ -182,7 +210,26 @@ class ConnectionController extends ChangeNotifier {
   }
   static final ConnectionController instance = ConnectionController._();
 
-  final ProxyCore _core = ProxyCoreFactory.create();
+  ProxyCore _core = ProxyCoreFactory.create();
+
+  /// 测试缝：替换内核实现（注入记录型内核桩），并重新挂上回调。
+  ///
+  /// 为什么需要：测试环境没有 mihomo 二进制，`connect()` 必然在内核启动处失败，
+  /// 「自动连接到底有没有真的发起」就只剩下「有没有留下 error」这种间接且不唯一
+  /// 的副作用可判（error 也可能来自订阅/门禁路径）。注入桩后，
+  /// 「connect() 是否推进到了启动内核」变成可直接断言的事实。
+  /// 生产代码不得调用。
+  @visibleForTesting
+  void debugSetCore(ProxyCore core) {
+    _core = core;
+    _wireCore();
+  }
+
+  /// 内核回调接线（构造与测试注入内核后都必须执行）。
+  void _wireCore() {
+    _core.onUnexpectedExit = onDisconnectedUnexpectedly;
+    _core.onTraffic = _onTraffic;
+  }
 
   ConnStatus status = ConnStatus.disconnected;
   List<ProxyNode> nodes = [];
@@ -519,6 +566,10 @@ class ConnectionController extends ChangeNotifier {
   Timer? _wakeLockTimer;
   int _reconnectCount = 0;
   int _epoch = 0;
+  /// 「启动时自动连接」每启动一次只尝试一次的门闩（详见 [autoConnectIfEnabled]）。
+  /// 置位时机：真正发起 connect() / 开关为关 / 账号门禁 / 已在连接；
+  /// 「没有可用线路」会把它退回 false（等线路到位再补一次）。
+  /// [resetForLogout] 会复位（换账号后重新给一次机会）。
   bool _autoConnectTried = false;
 
   /// 自动重连次数上限（来自设置 `reconnectTimes`，1~10，默认 3）。
@@ -673,14 +724,51 @@ class ConnectionController extends ChangeNotifier {
     await loadNodes(fresh);
   }
 
-  /// 启动时自动连接（设置 autoConnect=true 时由首页在订阅加载完成后调用，仅一次）
-  Future<void> autoConnectIfEnabled() async {
-    if (_autoConnectTried || status != ConnStatus.disconnected) return;
-    _autoConnectTried = true;
-    final s = await SettingsStore.instance.load();
-    if (s['autoConnect'] == true && nodes.isNotEmpty) {
-      await connect();
+  /// 启动时自动连接（设置 autoConnect=true 时由首页在**拿到线路后**调用）。
+  ///
+  /// 语义（每次启动最多真正发起一次连接）：
+  /// - 开关为 false → 绝不连接（返回 [AutoConnectOutcome.disabled]）；
+  /// - 开关为 true 且**有可用线路**（无论来自网络订阅还是磁盘缓存）→ 必然
+  ///   `connect()` 一次（返回 [AutoConnectOutcome.started]）；
+  /// - 门闩 [_autoConnectTried] 保证不重复连接，但**只在真的发起连接、或开关
+  ///   明确关闭、或账号门禁/已在连接时**才置位；「没有线路」不置位，否则
+  ///   冷启动那一瞬间的空列表会白白吃掉整次启动的自动连接机会
+  ///   （旧实现在 `nodes.isNotEmpty` 判断**之后**就置了门闩，这也是它脆的一环）；
+  /// - 门闩在**第一个 await 之前**占位：首页的启动、回前台、下拉刷新可能并发
+  ///   到达，不占位就会有两个调用各自走完判定 → 双开 [connect] → 双开内核。
+  Future<AutoConnectOutcome> autoConnectIfEnabled() async {
+    if (_autoConnectTried) return AutoConnectOutcome.alreadyTried;
+    if (status != ConnStatus.disconnected) {
+      // 已经在连接/已连接：启动自动连接的目标已达成（用户手动连的也一样）
+      _autoConnectTried = true;
+      return AutoConnectOutcome.busy;
     }
+    _autoConnectTried = true; // 占位（下面有 await，必须先占）
+    final s = await SettingsStore.instance.load();
+    if (s['autoConnect'] != true) {
+      // 开关关：绝不连接，且本次启动不用再看第二次
+      return AutoConnectOutcome.disabled;
+    }
+    // 账号门禁：到期 / 设备满 / 被禁用 / 未开通 —— 与手动连接同一道拦截。
+    // 不发起建连（connect() 的同一道门也只落到同一句文案），但**必须有可见
+    // 结果**：文案落到 error（首页错误区可见），首页另有受限横幅带 CTA。
+    final acc = AccountService.instance;
+    if (acc.loaded && acc.isBlocked) {
+      status = ConnStatus.disconnected;
+      error = acc.blockText;
+      errorKind = ConnErrorKind.none;
+      notifyListeners();
+      return AutoConnectOutcome.blocked;
+    }
+    if (nodes.isEmpty) {
+      // 没有可用线路：不消费门闩 —— 线路到位后（订阅重试成功 / 回前台读到
+      // 磁盘缓存）仍要补一次自动连接；用户可见的「为什么没连上」由订阅链路
+      // 的提示给出（断网/订阅为空/被踢）。
+      _autoConnectTried = false;
+      return AutoConnectOutcome.noNodes;
+    }
+    await connect();
+    return AutoConnectOutcome.started;
   }
 
   /// WakeLock：连接/重连时短暂持有（<5s），防止 Doze 打断握手

@@ -14,6 +14,7 @@ import '../../core/services/update_service.dart';
 import '../../widgets/subscribe_issue.dart';
 import '../../widgets/update_prompt.dart';
 import '../../core/api/api_client.dart';
+import '../../core/services/app_log.dart';
 import '../../l10n/app_strings.dart';
 import '../../core/services/geo_lookup.dart';
 import '../../main.dart';
@@ -34,6 +35,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _loadingNodes = false;
+
+  /// 「开关开着但没有可用线路 → 自动连接没连上」的提示每次进页面只弹一次
+  bool _autoConnectNoticeShown = false;
 
   static final _pillRadius = BorderRadius.circular(99);
 
@@ -143,17 +147,30 @@ class _HomePageState extends State<HomePage>
           await conn.loadNodes(cached);
         }
       }
-      if (conn.nodes.isNotEmpty && !force) return;
+      if (conn.nodes.isNotEmpty && !force) {
+        // ★ 关键修复（2.2.23）：旧实现直接在这里 `return`，而
+        // `autoConnectIfEnabled()` 只写在下面那条「真的走了网络拉订阅」的支路里
+        // —— 于是**冷启动从磁盘缓存秒显线路**（老用户每次启动的常态）、
+        // 或 nodes 已就绪时，自动连接那一行永远不执行：开关形同虚设
+        // （诊断脚本实测：无缓存 → 连；有同版本缓存 → 不连；nodes 已就绪 → 不连）。
+        // 现在「拿到线路」的两条支路都走同一个自动连接入口：只要有线路就尝试一次。
+        await _autoConnect(conn);
+        return;
+      }
       final nodes = await SubscriptionService.instance.fetchNodes(force: force);
       if (!mounted) return;
       // 用受保护的合并入口:已连接且当前线路不在新订阅时保持现状(不打断),
       // 受限账号空列表清空展示 —— 与首页直接 loadNodes(无条件替换)区分
       await conn.applySubscriptionNodes(nodes);
       // 设置「启动时自动连接」→ 订阅加载完成后自动连接（每次启动仅一次；默认关闭）
-      unawaited(conn.autoConnectIfEnabled());
+      final auto = await _autoConnect(conn);
       // 刚才用户是对着「正在更新订阅，请稍等」在等 → 更新完必须告诉他下一步
-      // （旧实现更新完什么都不说，用户以为还卡着）
-      if (!hadNodes && conn.nodes.isNotEmpty && mounted) {
+      // （旧实现更新完什么都不说，用户以为还卡着）。
+      // 已经自动连上时不再说「请点击连接」—— 同一句话会和自动连接互相矛盾。
+      if (!hadNodes &&
+          conn.nodes.isNotEmpty &&
+          mounted &&
+          auto != AutoConnectOutcome.started) {
         _toast(AppStrings.t('sub_updated_click_connect'));
       }
       // 拉取「成功但没节点」也要说清楚原因：到期 / 未开通 / 订阅被停用 /
@@ -182,6 +199,42 @@ class _HomePageState extends State<HomePage>
     } finally {
       if (mounted) setState(() => _loadingNodes = false);
     }
+  }
+
+  /// 尝试一次「启动时自动连接」，并把「开关开着却没连上」的原因讲清楚。
+  ///
+  /// 首页有 3 个入口会走到这里：冷启动（磁盘缓存秒显 / 网络订阅两条支路）、
+  /// 下拉刷新、回前台自动刷新。门闩在 [ConnectionController.autoConnectIfEnabled]
+  /// 里，所以多次调用最多只连一次。
+  Future<AutoConnectOutcome> _autoConnect(ConnectionController conn) async {
+    AutoConnectOutcome r;
+    try {
+      r = await conn.autoConnectIfEnabled();
+    } catch (e) {
+      // 判定本身出意外（设置读取异常等）：绝不静默吞掉
+      AppLog.error('autoConnectIfEnabled failed: $e');
+      if (mounted) _toast(ApiClient.errorMsg(e));
+      return AutoConnectOutcome.noNodes;
+    }
+    if (!mounted) return r;
+    switch (r) {
+      case AutoConnectOutcome.noNodes:
+        // 开关开着却连不上：只提示一次（订阅链路自己的提示更具体，这里兜底）
+        if (!_autoConnectNoticeShown) {
+          _autoConnectNoticeShown = true;
+          _toast(AppStrings.t('auto_connect_no_nodes'));
+        }
+        break;
+      case AutoConnectOutcome.blocked:
+        // 门禁文案已在首页的受限横幅 + 错误区可见（自动连接被账号门禁拦截）
+        break;
+      case AutoConnectOutcome.started:
+      case AutoConnectOutcome.disabled:
+      case AutoConnectOutcome.alreadyTried:
+      case AutoConnectOutcome.busy:
+        break;
+    }
+    return r;
   }
 
   Future<void> _toggleConnect(ConnectionController conn) async {
