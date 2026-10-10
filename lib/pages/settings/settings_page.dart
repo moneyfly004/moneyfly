@@ -217,8 +217,9 @@ class _SettingsPageState extends State<SettingsPage> {
             onTap: () => _picker(['15 ${AppStrings.t('settings_minutes')}', '30 ${AppStrings.t('settings_minutes')}', '60 ${AppStrings.t('settings_minutes')}'], (v) => _set('testIntervalMin', int.parse(v.split(' ').first)),
                 current: _testIntervalValue()))),
         // 测速方式（对标 Shadowrocket 的 Ping / Connect）。
-        // 默认内核测速＝Connect：内核真的通过节点发一次请求，
-        // 凭据/协议/回程全部参与验证 —— 这才是「节点可用」。
+        // **默认 TCP 测速**＝Ping：只测端口握手的连通性，快、不额外拉起内核；
+        // 想要「真连接」判定节点是否真的可用，用户可自己切到内核测速＝Connect
+        // （内核真的通过节点发一次请求，凭据/协议/回程全部参与验证）。
         _item(['settings_speed_mode'], _row(icon: '📶', title: AppStrings.t('settings_speed_mode'),
             desc: AppStrings.t('settings_speed_mode_desc'),
             value: _speedModeLabel(),
@@ -759,7 +760,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await _applyPortChange('clashApiPort', p);
   }
 
-  /// 当前测速方式（缺 key / 值损坏都回落内核测速，与 parseSpeedTestMode 一致）。
+  /// 当前测速方式（缺 key / 值损坏都回落默认 TCP 测速，与 parseSpeedTestMode 一致）。
   SpeedTestMode get _speedMode =>
       parseSpeedTestMode(_s['speedTestMode']);
 
@@ -772,6 +773,7 @@ class _SettingsPageState extends State<SettingsPage> {
   ///
   /// 选项文案带上「真实连接 / 仅端口连通」的取舍说明（放在选项里而不是
   /// 只放描述行）：用户点开选择器时正是要做决定的那一刻。
+  /// **默认项（TCP 测速）排在第一行**：不选也是在用的那个，先看到它。
   /// 落盘后 `_set` → `ConnectionController.applySettings` 会检测到方式变化并
   /// **清空列表里另一种方式测出的延迟**，两种口径的数字绝不会混着显示。
   Future<void> _pickSpeedMode() async {
@@ -783,14 +785,14 @@ class _SettingsPageState extends State<SettingsPage> {
     };
     // label → 模式 的映射与 options 同源，避免用字符串比较/identical 反推
     final modes = <String, SpeedTestMode>{
-      '$kernelLabel · ${desc[kernelLabel]}': SpeedTestMode.kernel,
       '$tcpLabel · ${desc[tcpLabel]}': SpeedTestMode.tcp,
+      '$kernelLabel · ${desc[kernelLabel]}': SpeedTestMode.kernel,
     };
     final options = modes.keys.toList();
     final current =
         options.firstWhere((o) => modes[o] == _speedMode, orElse: () => options[0]);
     await _picker(options, (v) {
-      final mode = modes[v] ?? SpeedTestMode.kernel;
+      final mode = modes[v] ?? defaultSpeedTestMode;
       unawaited(_set('speedTestMode', speedTestModeKey(mode)));
     }, current: current);
   }

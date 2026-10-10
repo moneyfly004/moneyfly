@@ -76,6 +76,48 @@ void main() {
     expect(find.text(AppStrings.t('speed_mode_kernel')), findsNothing);
   });
 
+  testWidgets('设置页默认（未存任何设置）时选择器把 TCP 排第一且勾在它上面', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_wrap(const SettingsPage()));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _scrollTo(tester, AppStrings.t('settings_speed_mode'));
+    await tester.tap(find.text(AppStrings.t('settings_speed_mode')));
+    await tester.pumpAndSettle();
+
+    // 「默认 TCP、可选内核」在 UI 上要看得见：第一行就是默认项，且带当前项勾选
+    final options = tester
+        .widgetList<SimpleDialogOption>(find.byType(SimpleDialogOption))
+        .toList();
+    expect(options.length, 2, reason: '测速方式只有两项：TCP（默认）/ 内核测速');
+    final first = find.descendant(
+        of: find.byType(SimpleDialogOption).first,
+        matching: find.textContaining(AppStrings.t('speed_mode_tcp')));
+    expect(first, findsOneWidget, reason: '默认项（TCP 测速）必须排在第一行');
+    // 勾选标记（Icons.check）落在第一行 = 当前生效的就是默认项
+    expect(
+        find.descendant(
+            of: find.byType(SimpleDialogOption).first,
+            matching: find.byIcon(Icons.check)),
+        findsOneWidget,
+        reason: '未存设置时当前项应是默认的 TCP 测速');
+    expect(
+        find.descendant(
+            of: find.byType(SimpleDialogOption).last,
+            matching: find.byIcon(Icons.check)),
+        findsNothing);
+    // 选项说明里写明「默认」，用户不必猜
+    expect(
+        find.descendant(
+            of: find.byType(Dialog),
+            matching: find.textContaining(AppStrings.t('speed_mode_tcp_desc'))),
+        findsOneWidget);
+    expect(AppStrings.t('speed_mode_tcp_desc'), contains('默认'),
+        reason: '中文默认项说明应带「默认」字样');
+  });
+
   testWidgets('切换到 TCP 测速：落到 SettingsStore（值 tcp），控制器同步', (tester) async {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1.0;
@@ -139,6 +181,36 @@ void main() {
         () => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pump();
     expect((await SettingsStore.instance.load())['speedTestMode'], 'kernel');
+  });
+
+  testWidgets('节点页默认（未设置）时口径提示显示 TCP 测速', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // setUp 里把控制器重置成 defaultSpeedTestMode（= TCP）——不额外设置任何东西，
+    // 模拟「用户从未改过测速方式」的真实默认状态
+    final conn = ConnectionController.instance;
+    expect(conn.speedTestMode, SpeedTestMode.tcp);
+    conn.lastSpeedTestTime = null;
+    await conn.loadNodes([
+      ProxyNode(
+          tag: '香港-01',
+          type: 'vless',
+          server: '127.0.0.1',
+          port: 9,
+          countryCode: 'HK',
+          raw: const {}),
+    ]);
+
+    await tester.pumpWidget(_wrap(const NodesPage()));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      find.text(AppStrings.t('speed_mode_label',
+          {'mode': AppStrings.t('speed_mode_tcp_short')})),
+      findsOneWidget,
+      reason: '默认口径必须是 TCP 测速（与 defaultSpeedTestMode 一致）',
+    );
   });
 
   testWidgets('节点页显示当前测速口径（来源标识），切换后随之变化', (tester) async {

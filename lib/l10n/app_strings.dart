@@ -169,15 +169,15 @@ class AppStrings {
     'settings_clash_api_port_desc': '内核管理端口（切节点/测速/流量），默认 9090',
     'clash_api_port_invalid': '端口需在 1024–65535，且不能与本地代理端口相同',
     // 测速方式（对标 Shadowrocket 的 Ping / Connect）：
-    // 内核测速 = Connect（内核真的通过节点发请求，保证节点可用）；
-    // TCP 测速 = Ping（只测端口握手，快但会给假阳性）。默认内核测速。
+    // **默认 TCP 测速** = Ping（只测端口握手，快、不额外拉起内核；可能给假阳性）；
+    // 内核测速 = Connect（内核真的通过节点发请求，保证节点可用），用户可自行切换。
     'settings_speed_mode': '测速方式',
-    'settings_speed_mode_desc': '内核测速＝让内核真实连接节点，更准确（稍慢）；'
-        'TCP 测速＝仅测端口连通，较快但可能不准',
+    'settings_speed_mode_desc': '默认 TCP 测速＝仅测端口连通，较快但可能不准；'
+        '内核测速＝让内核真实连接节点，更准确（稍慢）',
     'speed_mode_kernel': '内核测速（真连接）',
     'speed_mode_kernel_desc': '真实连接测试，更准确，稍慢',
     'speed_mode_tcp': 'TCP 测速',
-    'speed_mode_tcp_desc': '仅测试端口连通，较快但可能不准',
+    'speed_mode_tcp_desc': '仅测试端口连通，较快但可能不准（默认）',
     'speed_mode_kernel_needs_connect': '内核测速需要内核运行：请先连接，或改用 TCP 测速',
     'speed_mode_probe_failed': '内核测速启动内核失败：{err}',
     'speed_mode_label': '测速方式：{mode}',
@@ -897,12 +897,13 @@ class AppStrings {
     'settings_clash_api_port_desc': 'Core admin port (switch/test/traffic), default 9090',
     'clash_api_port_invalid': 'Port must be 1024-65535 and not equal to the local proxy port',
     'settings_speed_mode': 'Test method',
-    'settings_speed_mode_desc': 'Kernel = the core really connects through the node, '
-        'more accurate (slower); TCP = port reachability only, faster but may mislead',
+    'settings_speed_mode_desc': 'TCP test is the default = port reachability only, '
+        'faster but may mislead; Kernel = the core really connects through the node, '
+        'more accurate (slower)',
     'speed_mode_kernel': 'Kernel (real connection)',
     'speed_mode_kernel_desc': 'Real connection test — accurate, slightly slower',
     'speed_mode_tcp': 'TCP test',
-    'speed_mode_tcp_desc': 'Port reachability only — faster but may be inaccurate',
+    'speed_mode_tcp_desc': 'Port reachability only — faster but may be inaccurate (default)',
     'speed_mode_kernel_needs_connect': 'Kernel test needs a running core: connect first, or switch to TCP test',
     'speed_mode_probe_failed': 'Kernel test could not start the core: {err}',
     'speed_mode_label': 'Method: {mode}',

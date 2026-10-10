@@ -245,11 +245,11 @@ class ConnectionController extends ChangeNotifier {
   static const defaultTestUrl = SettingsStore.defaultTestUrl;
   String testUrl = defaultTestUrl;
 
-  /// 当前测速方式（设置页可切；默认内核测速＝真连接）。
+  /// 当前测速方式（设置页可切；**默认 TCP 测速**，用户可自行切到内核测速）。
   ///
   /// Shadowrocket 的 Ping/Connect 对应关系：
-  /// - [SpeedTestMode.kernel]（Connect）：内核真的通过节点发请求，保证可用；
-  /// - [SpeedTestMode.tcp]（Ping）：只测 `服务器:端口` TCP 握手，快但会假阳性。
+  /// - [SpeedTestMode.tcp]（Ping，默认）：只测 `服务器:端口` TCP 握手，快但会假阳性；
+  /// - [SpeedTestMode.kernel]（Connect）：内核真的通过节点发请求，保证可用。
   SpeedTestMode speedTestMode = defaultSpeedTestMode;
 
   /// **产出当前列表里那些延迟数字的**测速方式 + 时刻。
@@ -1066,16 +1066,16 @@ class ConnectionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 统一测速入口：**按用户选定的测速方式**分流（设置页可切，默认内核测速）。
+  /// 统一测速入口：**按用户选定的测速方式**分流（设置页可切，默认 TCP 测速）。
   ///
-  /// - [SpeedTestMode.kernel]（内核测速 / 真连接）：
+  /// - [SpeedTestMode.tcp]（TCP 测速 / Ping，默认）：始终走纯 TCP 探测，
+  ///   即使已连接也不会偷偷换成内核实测（用户的选择必须被尊重）。
+  /// - [SpeedTestMode.kernel]（内核测速 / 真连接，用户可选）：
   ///   1. 已连接且内核在跑 → 直接走内核 Clash API delay（复用连接中的内核）；
   ///   2. 未连接（桌面端）→ 拉起**测速专用临时内核**再测（可取消、空闲自动回收）；
   ///   3. 移动端（内核在系统隧道进程里，App 起不了第二个）或临时内核启动失败
   ///      → 抛 [KernelProbeException]，由调用方明确提示用户「先连接」，
   ///      **绝不静默退回 TCP**。
-  /// - [SpeedTestMode.tcp]（TCP 测速 / Ping）：始终走纯 TCP 探测，
-  ///   即使已连接也不会偷偷换成内核实测（用户的选择必须被尊重）。
   ///
   /// [onEach] 每测完一个节点即回调 (tag, 延迟, 在线)，供上层实时回填 UI。
   Future<List<ProxyNode>> testAllNodes(List<ProxyNode> list,
