@@ -1,7 +1,7 @@
 // 设置页「测速方式」入口的组件测试 + 节点页测速口径提示。
 //
 // 守卫的是「用户能看见、能切换、切换真的落盘」这条链路：
-//   1) 设置页有「测速方式」行，默认显示「内核测速（真连接）」；
+//   1) 设置页有「测速方式」行，默认显示「TCP 测速」；
 //   2) 点开选择器能看到两项，选 TCP 后写入 SettingsStore（值是 'tcp'）；
 //   3) 再切回内核测速 → 写入 'kernel'（用户可以来回切，不会卡死）；
 //   4) 节点页显示当前测速口径（来源标识），切换后提示随之变化。
@@ -61,7 +61,7 @@ void main() {
     SubscriptionService.instance.clearCache();
   });
 
-  testWidgets('设置页有「测速方式」行，默认显示内核测速（真连接）', (tester) async {
+  testWidgets('设置页有「测速方式」行，默认显示 TCP 测速', (tester) async {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -71,9 +71,9 @@ void main() {
 
     await _scrollTo(tester, AppStrings.t('settings_speed_mode'));
     expect(find.text(AppStrings.t('settings_speed_mode')), findsOneWidget);
-    // 默认值必须是内核测速（真连接），不是 TCP
-    expect(find.text(AppStrings.t('speed_mode_kernel')), findsOneWidget);
-    expect(find.text(AppStrings.t('speed_mode_tcp')), findsNothing);
+    // 默认值必须是 TCP 测速（用户可自行切到内核测速）
+    expect(find.text(AppStrings.t('speed_mode_tcp')), findsOneWidget);
+    expect(find.text(AppStrings.t('speed_mode_kernel')), findsNothing);
   });
 
   testWidgets('切换到 TCP 测速：落到 SettingsStore（值 tcp），控制器同步', (tester) async {
