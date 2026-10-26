@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../api/gh_mirror.dart';
+import 'download_route.dart';
 import '../api/user_agent.dart';
 import 'app_log.dart';
 import 'single_instance.dart';
@@ -584,10 +585,24 @@ class UpdateService {
       } else {
         // 下载同样带镜像兜底：几十 MB 的包直连 github.com 在国内大概率半路断，
         // 逐个候选重试；每次重试前清掉半截文件，避免续写出一个坏包。
+        // 已连接 → 隧道直连（候选只有直连一条）；未连接 → 直连 + 加速镜像。
+        await DownloadRoute.applyTo(_gh);
+        final all = DownloadRoute.candidates(url);
+        // 先从「上次成功的通道」开始试，其余按顺序补齐（检查更新已探明直连
+        // 不通时，下载不必再白等一次直连超时）。
+        final order = <int>[];
+        if (all.length > 1) {
+          final start = _ghChannel.clamp(0, all.length - 1);
+          for (var i = 0; i < all.length; i++) {
+            order.add((start + i) % all.length);
+          }
+        } else {
+          order.add(0);
+        }
         Object? lastError;
         var downloaded = false;
-        for (final idx in _attemptOrder(url)) {
-          final candidate = GhMirror.at(url, idx);
+        for (final idx in order) {
+          final candidate = all[idx];
           try {
             await _gh.download(candidate, path,
                 onReceiveProgress: (received, total) {

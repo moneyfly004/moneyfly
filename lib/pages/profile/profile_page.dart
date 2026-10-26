@@ -159,77 +159,27 @@ class _ProfilePageState extends State<ProfilePage> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(22, 14, 22, 24),
             children: [
+              // ===== 页面骨架永远是「固定的」=====
+              // 旧实现把 loading / 失败做成整页占位：没有缓存时整页只剩一个转圈，
+              // 菜单、退出登录全被挡住，用户以为页面坏了。现在改成——
+              // 顶部身份行、功能菜单、退出登录**始终渲染**，只有「客户信息卡」
+              // 这一块随数据加载/失败切换形态（骨架 / 错误+重试 / 真实数据）。
               _buildHeader(name, email, balance),
               const SizedBox(height: 16),
-              if (_loading && _dashboard == null)
-                Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40),
-                  child: Center(child: CircularProgressIndicator(color: MFColors.brand)),
-                )
-              else if (_loadFailed && _dashboard == null)
-                // 加载失败:给"错误+重试"占位,避免全零/占位误读为无套餐。
-                // 这一段本身在 ListView 里（可滚动、不会 RenderFlex overflow）；
-                // 文案仍然限行 + 省略号，防止超长本地化/服务端文案把卡片撑变形。
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 30),
-                  child: Column(
-                    children: [
-                      Icon(Icons.cloud_off_outlined, size: 40, color: MFColors.txt3),
-                      const SizedBox(height: 10),
-                      Text(
-                          _failIssue == SubscribeIssue.authRequired
-                              ? AppStrings.t('issue_auth_title')
-                              : AppStrings.t('profile_load_fail'),
-                          textAlign: TextAlign.center,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
-                      if (_failIssue == SubscribeIssue.authRequired)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(AppStrings.t('issue_auth_body'),
-                              textAlign: TextAlign.center,
-                              maxLines: 4,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11.5, color: MFColors.txt3)),
-                        ),
-                      const SizedBox(height: 14),
-                      // 审计 P2：小控件一律 InkWell（有按压反馈）+ 命中区够大
-                      Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: _failIssue == SubscribeIssue.authRequired
-                            ? _relogin
-                            : _load,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                          constraints: const BoxConstraints(minHeight: 44),
-                          decoration: BoxDecoration(
-                              gradient: MFColors.brandGradient,
-                              borderRadius: BorderRadius.circular(12)),
-                          child: Text(
-                              _failIssue == SubscribeIssue.authRequired
-                                  ? AppStrings.t('profile_relogin')
-                                  : AppStrings.t('retry'),
-                              style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
-                        ),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              else ...[
-                // 账号状态横幅（禁用 > 套餐停用 > 到期 > 设备满），
-                // 之后才是「剩余 < 7 天」的普通续费提醒
-                if (_dashboard != null) ..._buildStatusBanners(_dashboard!),
+              // 账号状态横幅（禁用 > 套餐停用 > 到期 > 设备满），
+              // 之后才是「剩余 < 7 天」的普通续费提醒
+              if (_dashboard != null) ..._buildStatusBanners(_dashboard!),
+              if (_dashboard == null && _loading)
+                _buildInfoCardSkeleton()
+              else if (_dashboard == null && _loadFailed)
+                _buildInfoCardError()
+              else
                 // #7 浅色玻璃信息卡（不再深色看不清）
                 _buildInfoCard(hasSub, remaining, expireShort, online, total),
-                const SizedBox(height: 18),
-                _buildMenu(context, online, total),
-                const SizedBox(height: 18),
-                _buildLogout(context),
-              ],
+              const SizedBox(height: 18),
+              _buildMenu(context, online, total),
+              const SizedBox(height: 18),
+              _buildLogout(context),
             ],
           ),
         ),
@@ -417,6 +367,97 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   /// #7 浅色信息卡：到期 / 设备 / 剩余天数 三格（柔光底色 + 清晰深色文字）
+  /// 客户信息卡的「加载中」骨架：与真实卡片同尺寸/同配色，避免数据到达时布局跳动。
+  /// 只在这一块转圈 —— 页面其它部分（菜单/退出/身份行）不跟着等数据。
+  Widget _buildInfoCardSkeleton() {
+    return Container(
+      height: 110,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+            colors: [
+              MFColors.brand.withValues(alpha: .10),
+              MFColors.brand.withValues(alpha: .04),
+            ]),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: MFColors.brand.withValues(alpha: .22)),
+      ),
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+                width: 15,
+                height: 15,
+                child: CircularProgressIndicator(strokeWidth: 2, color: MFColors.brand)),
+            const SizedBox(width: 9),
+            Text(AppStrings.t('loading_short'),
+                style: TextStyle(fontSize: 12, color: MFColors.txt3)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 客户信息卡的「加载失败」形态：错误原因 + 重试/重新登录，同样只占卡片位置。
+  Widget _buildInfoCardError() {
+    final needRelogin = _failIssue == SubscribeIssue.authRequired;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      decoration: BoxDecoration(
+        color: MFColors.card2,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: MFColors.line),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 26, color: MFColors.txt3),
+          const SizedBox(height: 8),
+          Text(
+              needRelogin
+                  ? AppStrings.t('issue_auth_title')
+                  : AppStrings.t('profile_load_fail'),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, color: MFColors.txt2)),
+          if (needRelogin)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(AppStrings.t('issue_auth_body'),
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: MFColors.txt3)),
+            ),
+          const SizedBox(height: 10),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: needRelogin ? _relogin : _load,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
+                constraints: const BoxConstraints(minHeight: 40),
+                decoration: BoxDecoration(
+                    gradient: MFColors.brandGradient,
+                    borderRadius: BorderRadius.circular(12)),
+                child: Text(
+                    needRelogin
+                        ? AppStrings.t('profile_relogin')
+                        : AppStrings.t('retry'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInfoCard(bool hasSub, int remaining, String expire, int online, int total) {
     return Container(
       padding: const EdgeInsets.fromLTRB(6, 15, 6, 14),

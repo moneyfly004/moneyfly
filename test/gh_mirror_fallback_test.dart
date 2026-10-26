@@ -149,7 +149,7 @@ void main() {
 
       // 顺序：先试直连（失败），再试镜像（成功）
       expect(adapter.calls.first, startsWith('https://api.github.com/'));
-      expect(adapter.calls[1], startsWith('https://ghfast.top/https://api.github.com/'));
+      expect(adapter.calls[1], startsWith('${GhMirror.prefixes.first}https://api.github.com/'));
     });
 
     test('校验和也走同一镜像通道（不再各自试错一轮）', () async {
@@ -160,7 +160,7 @@ void main() {
       final info = await UpdateService.instance.check();
       expect(info!.sha256, UpdateService.sha256HexForTest(bytes),
           reason: '校验值必须与安装包取自同一通道，否则下载完校验必然失败');
-      expect(adapter.calls.any((u) => u.startsWith('https://ghfast.top/') && u.contains('SHA256SUMS')),
+      expect(adapter.calls.any((u) => u.startsWith(GhMirror.prefixes.first) && u.contains('SHA256SUMS')),
           isTrue);
     });
 
@@ -197,7 +197,7 @@ void main() {
           .where((u) => u.contains('MoneyFly-setup-9.9.9.exe'))
           .toList();
       expect(assetCalls, isNotEmpty);
-      expect(assetCalls.every((u) => u.startsWith('https://ghfast.top/')), isTrue,
+      expect(assetCalls.every((u) => u.startsWith(GhMirror.prefixes.first)), isTrue,
           reason: '已知直连不通后应直接用镜像，逐次重试直连会让用户多等一个超时');
     });
 

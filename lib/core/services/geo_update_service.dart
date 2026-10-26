@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 import 'app_log.dart';
 
 import '../api/api_client.dart';
-import '../api/gh_mirror.dart';
+import 'download_route.dart';
 import '../proxy/geo_assets.dart';
 
 /// 分流数据(Geo)手动更新服务：在「设置 → 更新分流数据」中由用户主动触发，
@@ -101,7 +101,10 @@ class GeoUpdateService {
   Future<void> _downloadOne(String dir, String file) async {
     final tmp = File('$dir/.$file.part');
     final target = File('$dir/$file');
-    final candidates = GhMirror.candidates('$_baseUrl/$file');
+    // 已连接：走隧道直连（镜像站本身经常挂，翻墙状态下没必要再绕）；
+    // 未连接：直连 + 加速镜像兜底。
+    await DownloadRoute.applyTo(_dio);
+    final candidates = DownloadRoute.candidates('$_baseUrl/$file');
     final failures = <String>[];
 
     for (final url in candidates) {

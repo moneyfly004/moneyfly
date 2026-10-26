@@ -14,12 +14,19 @@
 class GhMirror {
   GhMirror._();
 
-  /// 镜像前缀（与后端默认值一致，2026-08 实测可用；顺序即尝试顺序）
+  /// 镜像前缀（顺序即尝试顺序）。
+  ///
+  /// 2026-09 复测（下载同一 release 资产，Range 取 100KB）：
+  /// - gh-proxy.com   ✅ 206
+  /// - gh.nxnow.top   ✅ 206
+  /// - ghfast.top     ❌ 403（已对本项目资产封禁）
+  /// - gh.llkk.cc     ❌ 连接失败
+  /// - gh.ddlc.top    ❌ 429（限流）
+  /// 失效的三个已移除：留着只会让每次失败多等一轮超时，还把用户挡在
+  /// 「所有下载通道都失败」上。镜像会变，加了新镜像请照这个格式测一遍再上。
   static const List<String> prefixes = [
-    'https://ghfast.top/',
     'https://gh-proxy.com/',
-    'https://gh.llkk.cc/',
-    'https://gh.ddlc.top/',
+    'https://gh.nxnow.top/',
   ];
 
   /// 是否已经是镜像地址（避免对镜像地址再叠一层前缀）
