@@ -5,7 +5,7 @@
 - iOS 平台是用 `flutter create --platforms=ios` 生成的，图标是 Flutter 默认模板
   （白底蓝色 Flutter logo），与 Android / macOS / Windows 的品牌图标完全不同；
 - iOS 要求图标**满幅且不透明**，而品牌画稿（assets/moneyfly-logo.svg：黑色圆角
-  方块 + 品牌蓝 M）在 macOS 上是以「四周留白 + 圆角透明」的形式呈现的，
+  方块 + 白色 M，2026-10 起由品牌蓝改为白色单色标）在 macOS 上是以「四周留白 + 圆角透明」的形式呈现的，
   直接缩放会出现黑角/留白。
 
 做法（与 Android 的呈现约定对齐，已用像素比例验证）：
@@ -14,8 +14,9 @@
 3. 按 alpha 合成到**不透明黑底**（画稿自身背景色 #000000）→ 满幅；
 4. 按 Contents.json 要求的 19 个尺寸缩放，输出**无 alpha 通道**的 PNG。
 
-自检：把生成的图标与 Android 的 ic_launcher 做蓝色标记占比比对（应当一致，
-因为 Android 就是同一画稿裁白后满幅的版本）。
+自检：把生成的图标与 Android 的 ic_launcher 做「标记占比」比对（应当一致，
+因为 Android 就是同一画稿裁白后满幅的版本）。标记 = 非黑且不透明的像素
+（改白之前是品牌蓝，改白之后是白色，用亮度判定即可同时兼容两者）。
 
 用法： python3 tool/gen_ios_icons.py
 """
@@ -34,15 +35,19 @@ ICONSET = ROOT / 'ios/Runner/Assets.xcassets/AppIcon.appiconset'
 CONTENTS = ICONSET / 'Contents.json'
 
 
-def blue_ratio(im: Image.Image, alpha_min: int = 200) -> float:
-    """蓝色标记占画布宽度比例（与画布尺寸无关，可比对不同分辨率）。"""
+def mark_ratio(im: Image.Image, alpha_min: int = 200, lum_min: int = 140) -> float:
+    """标记（非黑且不透明的像素）占画布宽度比例。
+
+    与画布尺寸无关，可比对不同分辨率；用亮度判定而不是判蓝色，这样品牌标
+    从蓝改白后自检仍然有效（蓝 (69,95,233) 与白都远超 lum_min）。
+    """
     im = im.convert('RGBA')
     w, h = im.size
     xs = []
     for y in range(h):
         for x in range(w):
             r, g, b, a = im.getpixel((x, y))
-            if a >= alpha_min and b > 120 and b - r > 40:
+            if a >= alpha_min and max(r, g, b) > lum_min:
                 xs.append(x)
     if not xs:
         return 0.0
@@ -93,11 +98,11 @@ def main() -> int:
     # ---- 自检：与 Android 呈现一致性 ----
     ref = Image.open(ANDROID_REF).convert('RGBA') if ANDROID_REF.exists() else None
     ours = Image.open(ICONSET / 'Icon-App-1024x1024@1x.png').convert('RGBA')
-    r_our = blue_ratio(ours)
-    print(f'\n一致性自检（品牌蓝标记占画布宽度）:')
+    r_our = mark_ratio(ours)
+    print(f'\n一致性自检（标记占画布宽度）:')
     print(f'  本次生成 iOS : {r_our:.1%}')
     if ref is not None:
-        r_ref = blue_ratio(ref)
+        r_ref = mark_ratio(ref)
         print(f'  Android 现有 : {r_ref:.1%}')
         delta = abs(r_our - r_ref)
         print(f'  偏差         : {delta:.1%}')
