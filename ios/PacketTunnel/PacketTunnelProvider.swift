@@ -390,10 +390,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         //        `interface-name` 的优先级高于 auto-detect（dialer.go：先看
         // DefaultInterface，为空才问 finder），所以这里显式写入物理接口名即可。
         apiPort = apiPortValue
-        apiSecret = Self.extractSecret(from: yaml)
-        var effectiveYaml = yaml
+        // 端口对齐：真机日志里出现过 App 连 127.0.0.1:60234（Connection refused）
+        // 而内核实际监听 9090 —— 两边端口不一致时「切换模式 / 测速 / 流量」全部
+        // 失败。这里直接把配置里的 external-controller 改写成 App 传来的端口，
+        // 保证内核监听的端口就是 App 会去连的端口。
+        var controllerFixed = yaml
+        if let rewritten = Self.rewritingControllerPort(yaml, port: apiPortValue) {
+            controllerFixed = rewritten
+            TunnelDiag.log("external-controller 已对齐到 127.0.0.1:\(apiPortValue)")
+        } else {
+            TunnelDiag.log("⚠ 配置里没找到 external-controller，内核端口可能不等于 \(apiPortValue)")
+        }
+        apiSecret = Self.extractSecret(from: controllerFixed)
+        var effectiveYaml = controllerFixed
         if let iface = Self.pickPhysicalInterface() {
-            effectiveYaml = Self.injectingInterfaceName(yaml, iface)
+            effectiveYaml = Self.injectingInterfaceName(controllerFixed, iface)
             boundInterface = iface
             TunnelDiag.log("内核出站绑定 interface-name=\(iface)（防自环）")
         } else {
@@ -572,13 +583,55 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// 内核出站要绑定的**物理**接口名（en0 / pdp_ip0 …）。
     /// 先看 Network.framework 当前路径，再用 getifaddrs 兜底。
-    static func pickPhysicalInterface() -> String? {
+    /// 挑「真正在用的物理出口」接口名。
+    ///
+    /// 旧实现直接读 `NWPathMonitor().currentPath.availableInterfaces.first`：
+    /// monitor 刚创建、还没收到第一次 path update，`currentPath` 是初始值，
+    /// 在双卡机器上常常把 `pdp_ip0`（蜂窝）排第一。内核出站被绑到蜂窝口、
+    /// 而设备实际走 Wi-Fi → 所有 `dial tcp <节点>:443: i/o timeout`，
+    /// 表现就是「连上了但一个网页都打不开」（真机日志实证）。
+    static func pickPhysicalInterface(timeout: TimeInterval = 1.5) -> String? {
         let monitor = NWPathMonitor()
-        let fromPath = monitor.currentPath.availableInterfaces
-            .map(\.name)
-            .first { !isVirtualInterface($0) }
-        monitor.cancel()
-        return fromPath ?? interfaceCandidates().first
+        let queue = DispatchQueue(label: "moneyfly.path.pick")
+        monitor.start(queue: queue)
+        defer { monitor.cancel() }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let path = monitor.currentPath
+            if path.status == .satisfied {
+                let candidates = path.availableInterfaces.filter { !isVirtualInterface($0.name) }
+                let wanted: NWInterface.InterfaceType? =
+                    path.usesInterfaceType(.wifi) ? .wifi
+                    : path.usesInterfaceType(.cellular) ? .cellular
+                    : path.usesInterfaceType(.wiredEthernet) ? .wiredEthernet
+                    : nil
+                if let wanted, let hit = candidates.first(where: { $0.type == wanted }) {
+                    TunnelDiag.log("物理出口接口=\(hit.name)（path: wifi=\(path.usesInterfaceType(.wifi)) cellular=\(path.usesInterfaceType(.cellular))）")
+                    return hit.name
+                }
+                if let first = candidates.first {
+                    TunnelDiag.log("物理出口接口=\(first.name)（按候选顺序）")
+                    return first.name
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let fallback = interfaceCandidates().first
+        TunnelDiag.log("⚠ 没等到 satisfied path，退回候选表第一个: \(fallback ?? "无")")
+        return fallback
+    }
+
+    /// 把 YAML 里的 `external-controller:` 改写成 `127.0.0.1:<port>`。
+    /// 返回 nil 表示配置里没有该键（调用方会记一条告警）。
+    static func rewritingControllerPort(_ yaml: String, port: Int) -> String? {
+        var lines = yaml.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let idx = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("external-controller:")
+        }) else { return nil }
+        let indent = lines[idx].prefix { $0 == " " || $0 == "-" }
+        lines[idx] = "\(indent)external-controller: 127.0.0.1:\(port)"
+        return lines.joined(separator: "\n")
     }
 
     /// 在配置顶层写入/覆盖 `interface-name`（追加在末尾：顶层键顺序无所谓，
@@ -586,11 +639,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     static func injectingInterfaceName(_ yaml: String, _ name: String) -> String {
         var lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
-        if let idx = lines.firstIndex(where: { $0.hasPrefix("interface-name:") }) {
-            lines[idx] = "interface-name: \(name)"
-            return lines.joined(separator: "\n")
-        }
-        if lines.last?.isEmpty == false { lines.append("") }
+        // 同时把 tun.auto-detect-interface 关掉：否则内核的 monitor 会覆盖我们
+        // 注入的 interface-name（真机日志里它就改成了 pdp_ip0）。
+        lines = lines.map { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("auto-detect-interface:") { return "" }
+            if t.hasPrefix("interface-name:") { return "" }
+            return line
+        }.filter { !$0.isEmpty }
         lines.append("interface-name: \(name)")
         return lines.joined(separator: "\n")
     }

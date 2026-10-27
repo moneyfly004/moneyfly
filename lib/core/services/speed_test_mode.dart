@@ -28,7 +28,7 @@ enum SpeedTestMode {
 /// 注意「老用户本地设置里没有这个 key」的场景：读取时**必须**回落到这里，
 /// 不能抛异常 —— 见 [parseSpeedTestMode] 与
 /// `SettingsStore._defaults()`（默认值合并 + 宽容解析双重保障）。
-const SpeedTestMode defaultSpeedTestMode = SpeedTestMode.tcp;
+const SpeedTestMode defaultSpeedTestMode = SpeedTestMode.kernel;
 
 /// 持久化/展示用的稳定字符串键（写进 SettingsStore 的 JSON）。
 String speedTestModeKey(SpeedTestMode mode) =>

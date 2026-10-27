@@ -303,7 +303,13 @@ class MihomoConfigBuilder {
         'enable': true,
         'stack': stack,
         'auto-route': tunAutoRoute,
-        'auto-detect-interface': true,
+        // fd 注入场景（iOS PacketTunnel / Android VpnService）**必须**关掉自检：
+        // 真机日志里 mihomo 的 monitor 会把 default interface 判成 `pdp_ip0`
+        // （蜂窝），而设备实际走 Wi-Fi（en0）→ 所有出站 `dial tcp ...:443:
+        // i/o timeout`，表现就是「连上了但一个网页都开不了」。
+        // 关掉后由扩展注入的 `interface-name`（按 satisfied path 挑的真实网卡）
+        // 独占生效；扩展在网络切换时会 PATCH /configs 更新它。
+        'auto-detect-interface': !tunFdInjected,
         'dns-hijack': ['any:53'],
         // fd 注入场景（iOS 的 socketpair 桥）：关掉 Darwin 专属的 recvmsgx。
         // 见 tunFdInjected 的说明 —— 开着它内核会做 utun 专属 setsockopt 而启动失败。

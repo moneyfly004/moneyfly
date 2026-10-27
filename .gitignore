@@ -72,3 +72,5 @@ ios/build/
 # iOS 打包产物（IPA/Payload 是构建输出，不入库：上一次误提交把 ~150MB 二进制带进了仓库）
 Payload/
 dist-ios/
+# 本地 IPA 打包目录（Payload + zip 产物）
+ios-bundle/

@@ -18,6 +18,12 @@ class SettingsStore {
   static final SettingsStore instance = SettingsStore._();
   static const _p = 'moneyfly_settings_v1';
 
+  /// 设置快照版本（「默认值变更」的一次性迁移依据）。
+  /// 老快照没有这个 key → 视为 1；读取时按版本跑迁移，写回自动带当前版本。
+  /// - 1（隐含）：测速方式默认 = TCP 测速
+  /// - 2：测速方式默认 = **内核测速**（见 [_migrateSpeedTestModeToKernel]）
+  static const schemaVersion = 2;
+
   /// 默认测速探测地址：**必须 HTTPS**。
   static const defaultTestUrl = 'https://www.gstatic.com/generate_204';
 
@@ -68,6 +74,7 @@ class SettingsStore {
         // parseSpeedTestMode 也会回落到默认（TCP 测速），绝不因缺 key 异常。
         // 显式选了内核测速的用户不受影响：'kernel' 被显式识别，不会被回落吃掉。
         'speedTestMode': speedTestModeKey(defaultSpeedTestMode),
+        'schemaVersion': schemaVersion,
         // 桌面端默认「仅系统代理」（TUN 需 root，默认开会导致连接失败）；
         // Android/iOS 默认「TUN + 系统代理双通道」（VpnService 授权后 TUN 接管）
         'tunMode': (Platform.isAndroid || Platform.isIOS) ? 'auto' : 'off',
@@ -116,11 +123,43 @@ class SettingsStore {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        return _migrateLegacyTestUrl(_migrateLegacyDns(
-            {..._defaults(), ...Map<String, dynamic>.from(decoded)}));
+        final stored = Map<String, dynamic>.from(decoded);
+        // 版本号必须在合并**之前**读：合并会让快照恒带当前版本，那样
+        // 「老快照没版本」这个信号就丢了，迁移永远不会触发。
+        final rawVersion = stored['schemaVersion'];
+        return _migrateLegacyTestUrl(_migrateLegacyDns(_migrateSpeedTestModeToKernel(
+            {..._defaults(), ...stored},
+            rawVersion: rawVersion)));
       }
     } catch (_) {}
     return _defaults();
+  }
+
+  /// 旧默认值迁移：`speedTestMode: 'tcp'` → 内核测速。
+  ///
+  /// 为什么需要：`tcp` 曾经是**我们写进去的默认值**（不是用户的选择）。后台
+  /// 数据显示老用户快照里几乎都有它 —— 只改默认值等于「默认改了但没人感知」，
+  /// 「所有节点延迟都是假的」这个老问题会原样保留（TCP 只探测服务器端口，
+  /// 端口开着就报一个很漂亮的延迟，实际连不通）。
+  ///
+  /// 判据：快照里**没有** [schemaVersion]（= 旧版本写的）→ 里面的 'tcp' 是旧默认
+  /// 值，一并升级。已带版本号的快照（用户升级后自己选过 TCP 会写回版本号）
+  /// 一律不动 —— 尊重显式选择。
+  static Map<String, dynamic> _migrateSpeedTestModeToKernel(
+    Map<String, dynamic> s, {
+    required Object? rawVersion,
+  }) {
+    final version = switch (rawVersion) {
+      final num n => n.toInt(),
+      final String v => int.tryParse(v.trim()) ?? 0,
+      _ => 0,
+    };
+    if (version >= schemaVersion) return s;
+    final mode = parseSpeedTestMode(s['speedTestMode']);
+    s['speedTestMode'] =
+        speedTestModeKey(mode == SpeedTestMode.tcp ? defaultSpeedTestMode : mode);
+    s['schemaVersion'] = schemaVersion;
+    return s;
   }
 
   /// 兼容遗留的明文测速地址（见 [legacyHttpTestUrl]）。
