@@ -851,15 +851,9 @@ class _HomePageState extends State<HomePage>
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(11)),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(11),
-              child: Image.asset('assets/moneyfly-logo.png', width: 36, height: 36),
-            ),
-          ),
+          // 图标本身已是「透明底 + 带颜色 M」，不再套黑底容器：
+          // 套了黑底等于把品牌图标又变回「黑方块」，与产品要求（浏览器图标式标记）相悖。
+          Image.asset('assets/moneyfly-logo.png', width: 36, height: 36),
           const SizedBox(width: 10),
            Column(
             crossAxisAlignment: CrossAxisAlignment.start,
