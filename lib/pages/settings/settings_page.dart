@@ -782,7 +782,7 @@ class _SettingsPageState extends State<SettingsPage> {
   ///
   /// 选项文案带上「真实连接 / 仅端口连通」的取舍说明（放在选项里而不是
   /// 只放描述行）：用户点开选择器时正是要做决定的那一刻。
-  /// **默认项（TCP 测速）排在第一行**：不选也是在用的那个，先看到它。
+  /// **默认项排在第一行**（当前默认是内核测速）：不选也是在用的那个，先看到它。
   /// 落盘后 `_set` → `ConnectionController.applySettings` 会检测到方式变化并
   /// **清空列表里另一种方式测出的延迟**，两种口径的数字绝不会混着显示。
   Future<void> _pickSpeedMode() async {
@@ -792,10 +792,14 @@ class _SettingsPageState extends State<SettingsPage> {
       kernelLabel: AppStrings.t('speed_mode_kernel_desc'),
       tcpLabel: AppStrings.t('speed_mode_tcp_desc'),
     };
-    // label → 模式 的映射与 options 同源，避免用字符串比较/identical 反推
+    // label → 模式 的映射与 options 同源，避免用字符串比较/identical 反推。
+    // 顺序按 defaultSpeedTestMode：默认项永远排第一（改默认值不用再改这里）。
+    String labelOf(SpeedTestMode m) => m == SpeedTestMode.tcp ? tcpLabel : kernelLabel;
+    final ordered = defaultSpeedTestMode == SpeedTestMode.kernel
+        ? const [SpeedTestMode.kernel, SpeedTestMode.tcp]
+        : const [SpeedTestMode.tcp, SpeedTestMode.kernel];
     final modes = <String, SpeedTestMode>{
-      '$tcpLabel · ${desc[tcpLabel]}': SpeedTestMode.tcp,
-      '$kernelLabel · ${desc[kernelLabel]}': SpeedTestMode.kernel,
+      for (final m in ordered) '${labelOf(m)} · ${desc[labelOf(m)]}': m,
     };
     final options = modes.keys.toList();
     final current =

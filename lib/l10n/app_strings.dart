@@ -176,9 +176,9 @@ class AppStrings {
     'settings_speed_mode_desc': '默认 TCP 测速＝仅测端口连通，较快但可能不准；'
         '内核测速＝让内核真实连接节点，更准确（稍慢）',
     'speed_mode_kernel': '内核测速（真连接）',
-    'speed_mode_kernel_desc': '真实连接测试，更准确，稍慢',
+    'speed_mode_kernel_desc': '真实连接测试，更准确，稍慢（默认）',
     'speed_mode_tcp': 'TCP 测速',
-    'speed_mode_tcp_desc': '仅测试端口连通，较快但可能不准（默认）',
+    'speed_mode_tcp_desc': '仅测试端口连通，较快但可能不准',
     'speed_mode_kernel_needs_connect': '内核测速需要内核运行：请先连接，或改用 TCP 测速',
     'speed_mode_probe_failed': '内核测速启动内核失败：{err}',
     'speed_mode_label': '测速方式：{mode}',
@@ -930,9 +930,9 @@ class AppStrings {
         'faster but may mislead; Kernel = the core really connects through the node, '
         'more accurate (slower)',
     'speed_mode_kernel': 'Kernel (real connection)',
-    'speed_mode_kernel_desc': 'Real connection test — accurate, slightly slower',
+    'speed_mode_kernel_desc': 'Real connection test — accurate, slightly slower (default)',
     'speed_mode_tcp': 'TCP test',
-    'speed_mode_tcp_desc': 'Port reachability only — faster but may be inaccurate (default)',
+    'speed_mode_tcp_desc': 'Port reachability only — faster but may be inaccurate',
     'speed_mode_kernel_needs_connect': 'Kernel test needs a running core: connect first, or switch to TCP test',
     'speed_mode_probe_failed': 'Kernel test could not start the core: {err}',
     'speed_mode_label': 'Method: {mode}',

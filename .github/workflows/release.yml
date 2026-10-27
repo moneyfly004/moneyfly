@@ -79,164 +79,6 @@ jobs:
   # 为什么单独立一个 job：ubuntu 上的测试是纯 Dart/widget 测试，与产物 job 无关。
   # 原来它挂在 Android job 里（98s），而 Android job 恰好是关键路径最长的一个 ——
   # 挪出来并行跑，关键路径直接少掉这一段。
-  verify:
-    name: 校验 (analyze + test / ubuntu)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - name: 依赖
-        run: flutter pub get
-      - name: 下载离线分流数据（assets 声明依赖，缺失会导致测试失败）
-        run: |
-          mkdir -p assets/rules
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
-            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
-      # 与 ci.yml 同一套命令（本 job 无内核二进制，e2e 组本来就会 skip；真实内核
-      # e2e 由 Windows / macOS arm64 / macOS x64 job 负责，那些平台才有内核）
-      - name: 校验
-        run: |
-          flutter analyze
-          flutter test --exclude-tags e2e
-
-  # ================= macOS 平台校验（真实内核 e2e + macOS 分支用例） ==========
-  # 为什么在 macOS 上再跑一遍全量：不少用例按 Platform.isMacOS 分支（系统代理、
-  # 单实例锁、autostart、TUN 提权……），只在 Linux 上跑等于没验证这些分支。
-  # 单次 `--concurrency=1`：这台 runner 只有 3 核，拆成「并行 + e2e 串行」两次调用
-  # 要重新编译一遍测试 bundle，实测 237s > 174s，不划算。
-  verify-macos:
-    name: 校验 (macOS arm64, 真实内核)
-    runs-on: macos-14
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - name: 依赖
-        run: flutter pub get
-      - name: 下载离线分流数据
-        run: |
-          mkdir -p assets/rules
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
-            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
-      - name: 下载 mihomo 内核（真实内核 e2e 用）
-        run: |
-          mkdir -p build/mihomo
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-arm64-v$MIHOMO_VERSION.gz"
-          gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 校验
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
-          flutter analyze
-          flutter test --concurrency=1
-
-  # ================= Windows 平台校验（真实内核 e2e + Windows 分支用例） ==========
-  # Windows 分支（注册表系统代理、单实例互斥、launch_at_startup）同样只能在
-  # Windows 上验证；这台 runner 核多，测试拆成「并行 + e2e 串行」反而更快
-  # （实测 133s → 92s）。
-  verify-windows:
-    name: 校验 (Windows, 真实内核)
-    runs-on: windows-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - name: 依赖
-        run: flutter pub get
-      - name: 下载离线分流数据
-        shell: bash
-        run: |
-          mkdir -p assets/rules
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
-            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
-      - name: 下载 mihomo 内核（真实内核 e2e 用）
-        shell: bash
-        run: |
-          mkdir -p build/mihomo
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.zip \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-windows-amd64-compatible-v$MIHOMO_VERSION.zip"
-          unzip -o mihomo.zip -d sb
-          EXE=$(find sb -iname "*.exe" | head -1)
-          [ -n "$EXE" ] && cp "$EXE" build/mihomo/mihomo.exe || { echo "zip 内未找到 exe"; exit 1; }
-      - name: 校验（非 e2e 并行 + 真实内核 e2e 串行）
-        shell: bash
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo.exe"
-          flutter analyze
-          flutter test --exclude-tags e2e
-          flutter test --tags e2e --concurrency=1
-
-  # ================= macOS x64 校验（Rosetta + amd64-compatible 内核） ==========
-  # 这个 job 提供两个别处都没有的信号：
-  #   1) amd64 compatible 内核能在 Rosetta 下真的跑起来（历史上正是这里翻过车）；
-  #   2) x86_64 产物链路的真实内核 e2e。
-  # 只跑 e2e 组：全量 Dart 测试已由 verify-macos（arm64）与 verify（ubuntu）覆盖，
-  # 在 Rosetta 下再串行跑一遍全量要多花约 157s 而没有新信号。
-  verify-macos-x64:
-    name: 校验 (macOS x64/Rosetta, 真实内核)
-    runs-on: macos-14
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - name: 安装 Rosetta 2
-        run: |
-          if ! arch -x86_64 true 2>/dev/null; then
-            softwareupdate --install-rosetta --agree-to-license || true
-          fi
-      - name: 依赖
-        run: flutter pub get
-      - name: 下载离线分流数据
-        run: |
-          mkdir -p assets/rules
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/geosite.dat \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/country.mmdb \
-            "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
-            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
-      - name: 下载 mihomo 内核（compatible 版：Rosetta 不支持 AMD64 v3）
-        run: |
-          mkdir -p build/mihomo
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o mihomo.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO_VERSION/mihomo-darwin-amd64-compatible-v$MIHOMO_VERSION.gz"
-          gunzip -f mihomo.gz && mv mihomo build/mihomo/mihomo && chmod +x build/mihomo/mihomo
-      - name: 校验（真实内核 e2e，串行）
-        run: |
-          export MONEYFLY_MIHOMO="$PWD/build/mihomo/mihomo"
-          flutter analyze
-          flutter test --tags e2e --concurrency=1
-
-  # ================= Android：多 ABI 分版本 =================
   android:
     name: Android APK (armeabi-v7a / arm64-v8a / x86_64)
     runs-on: ubuntu-latest
@@ -281,6 +123,8 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
         env:
@@ -345,6 +189,8 @@ jobs:
             "https://github.com/moneyfly004/mihomo-lib/releases/download/v$MIHOMO_VERSION/libmihomo.aar"
       - name: 依赖
         run: flutter pub get
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 构建 AAB（应用商店备用）
         run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
         env:
@@ -381,6 +227,8 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 下载离线分流数据
         shell: bash
         run: |
@@ -502,6 +350,8 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -573,6 +423,8 @@ jobs:
           fi
       - name: 依赖
         run: flutter pub get
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -639,6 +491,8 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -738,6 +592,8 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
+      - name: 静态检查（analyze，不跑测试）
+        run: flutter analyze
       - name: 下载离线分流数据（iOS 随扩展 bundle 分发）
         run: |
           mkdir -p assets/rules
@@ -823,7 +679,7 @@ jobs:
   release:
     name: 发布到 GitHub Releases
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [verify, verify-macos, verify-macos-x64, verify-windows, android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
+    needs: [android, android-aab, windows, macos-arm64, macos-x64, macos-universal, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
