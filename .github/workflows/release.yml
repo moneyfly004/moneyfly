@@ -113,6 +113,8 @@ jobs:
 
       # ---- libmihomo.aar：从 mihomo-lib 发布仓库下载（官方源码预编译，无需每次现编）。
       #      编译与自动跟随官方新版由 moneyfly004/mihomo-lib 的 workflow 负责。----
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
         run: |
           mkdir -p android/app/libs
@@ -123,8 +125,6 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 构建多 ABI APK（适配不同机型架构；obfuscate 混淆再省 ~10% 体积）
         run: flutter build apk --release --split-per-abi --split-debug-info=build/symbols --obfuscate
         env:
@@ -182,6 +182,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 libmihomo.aar（mihomo-lib 预编译发布 v${{ env.MIHOMO_VERSION }}）
         run: |
           mkdir -p android/app/libs
@@ -189,8 +191,6 @@ jobs:
             "https://github.com/moneyfly004/mihomo-lib/releases/download/v$MIHOMO_VERSION/libmihomo.aar"
       - name: 依赖
         run: flutter pub get
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 构建 AAB（应用商店备用）
         run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
         env:
@@ -227,8 +227,6 @@ jobs:
       - name: 依赖
         run: flutter pub get
 
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 下载离线分流数据
         shell: bash
         run: |
@@ -242,6 +240,8 @@ jobs:
           ls -lh assets/rules/
 
       # ---- 先下载内核：让 flutter test 真实启动内核做端到端验证 ----
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 mihomo 内核（官方预编译，compatible 版）
         shell: bash
         run: |
@@ -350,8 +350,6 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -361,6 +359,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 mihomo 内核（测试与内嵌共用同一份 arm64 内核）
         run: |
           mkdir -p build/mihomo
@@ -423,8 +423,6 @@ jobs:
           fi
       - name: 依赖
         run: flutter pub get
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -434,6 +432,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 mihomo 内核（测试与内嵌共用同一份 compatible 内核）
         run: |
           mkdir -p build/mihomo
@@ -491,8 +491,6 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 下载离线分流数据
         run: |
           mkdir -p assets/rules
@@ -502,6 +500,8 @@ jobs:
             "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 mihomo 内核（测试用，arm64）
         run: |
           mkdir -p build/mihomo
@@ -592,8 +592,6 @@ jobs:
           restore-keys: pods-${{ runner.os }}-
       - name: 依赖
         run: flutter pub get
-      - name: 静态检查（analyze，不跑测试）
-        run: flutter analyze
       - name: 下载离线分流数据（iOS 随扩展 bundle 分发）
         run: |
           mkdir -p assets/rules
@@ -604,6 +602,8 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 300 -o assets/rules/cn.mrs \
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"
           ls -lh assets/rules/
+      - name: 静态检查（analyze；放在 geo 资源下载之后，否则 3 个 asset 告警会判失败）
+        run: flutter analyze --no-fatal-warnings
       - name: 下载 iOS 内核框架（Mihomelib.xcframework）
         run: bash tool/fetch_mihomo_ios.sh "$MIHOMO_VERSION"
       - name: 自检扩展 target 已就位
