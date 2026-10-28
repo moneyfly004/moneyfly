@@ -74,16 +74,28 @@ void main() {
       c.debugResetTunStartupNormalized();
       c.tunMode = 'off';
       c.applySettings({'tunMode': 'force', 'defaultMode': 'smart'});
+      // 三平台口径不同（CI 跑在 Linux 上，也必须有明确断言）：
+      //  - Windows/macOS：有 TUN 入口 → force 归一化成 off，首页=智能
+      //  - Android/iOS：tunMode 恒 auto（VpnService/PacketTunnel 就是 TUN）
+      //  - Linux：没有 TUN 入口，但归一化同样把 force 收成 off
       if (c.supportsTun) {
         expect(c.tunMode, 'off', reason: '没有 pendingTunConnect 时不该一启动就停在 TUN');
         expect(c.homeMode, HomeMode.smart);
-      } else {
+      } else if (Platform.isAndroid || Platform.isIOS) {
         expect(c.tunMode, 'auto');
+      } else {
+        expect(c.tunMode, 'off');
       }
-      // 归一化要落盘，否则设置页仍显示「强制」
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      final s = await SettingsStore.instance.load();
-      expect(s['tunMode'], isNot('force'));
+      // 归一化要落盘（否则设置页仍显示「强制」）。写入走串行队列，
+      // 轮询到稳定为止，避免 CI 上固定延时不够导致偶发失败。
+      String? stored;
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (DateTime.now().isBefore(deadline)) {
+        stored = (await SettingsStore.instance.load())['tunMode']?.toString();
+        if (stored != 'force') break;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
+      expect(stored, isNot('force'));
     });
 
     test('提权重启续连（pendingTunConnect）时保留 force，不归一化', () {
@@ -94,8 +106,11 @@ void main() {
       if (c.supportsTun) {
         expect(c.tunMode, 'force');
         expect(c.homeMode, HomeMode.tun);
-      } else {
+      } else if (Platform.isAndroid || Platform.isIOS) {
         expect(c.tunMode, 'auto');
+      } else {
+        // Linux：无 TUN 入口，但「续连必须保留 force」的语义同样成立
+        expect(c.tunMode, 'force');
       }
     });
 
