@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:moneyfly/core/platform/elevation.dart';
+import 'package:moneyfly/core/platform/mac_tun_helper.dart';
 import 'package:moneyfly/core/proxy/proxy_core.dart';
 import 'package:moneyfly/core/proxy/tun_failure.dart';
 import 'package:moneyfly/core/services/settings_store.dart';
@@ -33,6 +34,7 @@ void main() {
 
   tearDown(() {
     Elevation.debugElevatedOverride = null;
+    MacTunHelper.debugGrantedOverride = null;
   });
 
   group('TUN 启动失败归类', () {
@@ -67,16 +69,33 @@ void main() {
       expect(c.supportsTun, Platform.isWindows || Platform.isMacOS);
     });
 
-    test('设置里 tunMode=force → 首页高亮 TUN，且不再算智能/全局', () {
+    test('启动时上次残留的 tunMode=force 会被归一化成智能（用户要求默认智能）', () async {
       final c = ConnectionController.instance;
-      c.applySettings({'tunMode': 'force', 'defaultMode': 'global'});
+      c.debugResetTunStartupNormalized();
+      c.tunMode = 'off';
+      c.applySettings({'tunMode': 'force', 'defaultMode': 'smart'});
       if (c.supportsTun) {
-        expect(c.homeMode, HomeMode.tun);
-        expect(c.tunActive, isTrue);
+        expect(c.tunMode, 'off', reason: '没有 pendingTunConnect 时不该一启动就停在 TUN');
+        expect(c.homeMode, HomeMode.smart);
       } else {
-        // 移动端恒为 auto：没有「TUN 模式」入口
         expect(c.tunMode, 'auto');
-        expect(c.homeMode, HomeMode.global);
+      }
+      // 归一化要落盘，否则设置页仍显示「强制」
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final s = await SettingsStore.instance.load();
+      expect(s['tunMode'], isNot('force'));
+    });
+
+    test('提权重启续连（pendingTunConnect）时保留 force，不归一化', () {
+      final c = ConnectionController.instance;
+      c.debugResetTunStartupNormalized();
+      c.tunMode = 'off';
+      c.applySettings({'tunMode': 'force', 'pendingTunConnect': true});
+      if (c.supportsTun) {
+        expect(c.tunMode, 'force');
+        expect(c.homeMode, HomeMode.tun);
+      } else {
+        expect(c.tunMode, 'auto');
       }
     });
 
@@ -90,6 +109,17 @@ void main() {
   });
 
   group('switchHomeMode 的提权与持久化', () {
+    test('macOS 一次性授权完成后（sudo 规则已装）→ 允许切 TUN', () async {
+      if (!Platform.isMacOS) return;
+      Elevation.debugElevatedOverride = false; // 进程仍是普通权限
+      MacTunHelper.debugGrantedOverride = true; // 但内核免密规则已就绪
+      final c = ConnectionController.instance;
+      await c.switchHomeMode(HomeMode.tun);
+      expect(c.tunMode, 'force');
+      expect(c.homeMode, HomeMode.tun);
+      MacTunHelper.debugGrantedOverride = null;
+    });
+
     test('未提权点 TUN → StateError(tun_needs_admin)，不改设置', () async {
       if (!ConnectionController.instance.supportsTun) return; // 移动端没有该入口
       Elevation.debugElevatedOverride = false;
@@ -180,6 +210,11 @@ void main() {
           'tun_admin_cancelled',
           'tun_admin_fail',
           'tun_caption',
+          'tun_mac_cmd_title',
+          'tun_mac_copy_cmd',
+          'tun_mac_cmd_copied',
+          'tun_mac_grant',
+          'tun_mac_grant_hint',
         ]) {
           expect(AppStrings.t(key), isNot(key), reason: '$lang 缺文案: $key');
         }

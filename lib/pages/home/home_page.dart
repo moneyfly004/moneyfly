@@ -628,8 +628,10 @@ class _HomePageState extends State<HomePage>
               // 触发本卡重建，「真实出口」就停留在旧显示，直到别的字段变化才被动刷新。
               // sy（订阅同步中）必须进 selector：否则同步状态单独变化时
               // 连接卡不会重建 —— 会出现「同步中」文案一直挂着不消失
-              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm, String? rc, bool rcf, bool sy})>(
-                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode, rc: c.realCountry, rcf: c.realCountryFailed, sy: c.syncingSubscription),
+              Selector<ConnectionController, ({ConnStatus s, String? tag, String? err, bool st, bool sm, String tm, String? rc, bool rcf, bool sy})>(
+                // tm（tunMode）必须进 selector：三段式里 TUN 的高亮只由 tunMode
+                // 决定，漏掉它就会出现「点了 TUN 界面不动」（实测卡顿感来源）。
+                selector: (_, c) => (s: c.status, tag: c.current?.tag, err: c.error, st: c.speedTesting, sm: c.smartMode, tm: c.tunMode, rc: c.realCountry, rcf: c.realCountryFailed, sy: c.syncingSubscription),
                 builder: (ctx, v, child) {
                   final conn = ctx.read<ConnectionController>();
                   final connected = conn.status == ConnStatus.connected;
@@ -1333,31 +1335,38 @@ class _HomePageState extends State<HomePage>
       return;
     }
     if (mode == HomeMode.tun && !Elevation.isElevated) {
-      final proceed = await requestTunElevation(context);
+      final outcome = await requestTunElevation(context);
       if (!mounted) return;
-      if (!proceed) {
-        // macOS 上本来就没有「一键提权」（需要特权助手），对话框里已说明，
-        // 再弹「已取消提权」只会让人以为操作失败。Windows 用户点了取消才提示。
+      if (outcome == TunElevationOutcome.relaunching) {
+        // Windows：已安排提权重启，立刻退出让管理员实例接管
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        exit(0);
+      }
+      if (outcome == TunElevationOutcome.cancelled) {
         if (Platform.isWindows) {
           _toast(AppStrings.t('tun_admin_cancelled',
               {'mode': _homeModeLabel(conn.homeMode)}));
         }
         return;
       }
-      // 已安排提权重启：立刻退出，让新实例（管理员）接管。
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      exit(0);
+      // macOS：刚完成一次性授权 → 继续切 TUN（内核会用 sudo -n 以 root 启动）
     }
     try {
-      await conn.switchHomeMode(mode);
+      // 不 await：TUN ↔ 系统代理切换会重连内核（秒级），阻塞在这里只会让按钮
+      // 点下去半天没反应（用户反馈的「三个模式切换比较卡顿」）。控制器内部
+      // 用 switchingMode 驱动按钮禁用 + 提示，完成后自动刷新。
+      unawaited(conn.switchHomeMode(mode));
     } on StateError catch (e) {
       // 控制器兜底拒绝（例如设置页选了强制 TUN 但没提权）：同一条引导
       if (e.message == 'tun_needs_admin') {
         if (!mounted) return;
-        final proceed = await requestTunElevation(context);
-        if (proceed && mounted) {
+        final outcome = await requestTunElevation(context);
+        if (!mounted) return;
+        if (outcome == TunElevationOutcome.relaunching) {
           await Future<void>.delayed(const Duration(milliseconds: 300));
           exit(0);
+        } else if (outcome == TunElevationOutcome.granted) {
+          await conn.switchHomeMode(mode);
         }
       }
     } catch (e) {

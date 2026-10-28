@@ -10,6 +10,7 @@ import 'geo_assets.dart';
 import 'kernel_delay_api.dart';
 import 'mihomo_config.dart';
 import 'system_proxy.dart';
+import '../platform/mac_tun_helper.dart';
 import 'tun_failure.dart';
 import '../services/app_log.dart';
 import '../services/kernel_log.dart';
@@ -66,6 +67,12 @@ class ProxyCoreCli extends ProxyCore {
   /// （双开内核 → `_proc` 被覆盖 → 失去跟踪的那个成为清不掉的孤儿）。
   bool _starting = false;
   bool _intentionalStop = false;
+
+  /// 本次内核是否通过 `sudo -n` 以 root 启动（macOS TUN 专用，见 MacTunHelper）
+  bool _launchedViaSudo = false;
+
+  /// 内核工作目录（sudo 启动时用于兜底 pkill）
+  String? _kernelDir;
 
   /// 本次启动是否已经就「TUN 起不来」报过一次日志（避免就绪轮询里刷屏）
   bool _tunFailureLogged = false;
@@ -376,11 +383,28 @@ class ProxyCoreCli extends ProxyCore {
     // mihomo 原生读 Clash YAML，配置用 MihomoConfigBuilder.encode 序列化
     await File(_configPath!).writeAsString(MihomoConfigBuilder.encode(config), flush: true);
 
-    _proc = await Process.start(
-      binary,
-      ['-d', dir.path],
-      environment: {'PATH': Platform.environment['PATH'] ?? ''},
-    );
+    // macOS 的 TUN 必须 root：仅当「强制 TUN」且用户已一次性授权时走 sudo -n
+    // （普通系统代理模式仍然以当前用户运行内核，完全不需要提权）。
+    var useSudo = false;
+    if (Platform.isMacOS && _tunForceMode) {
+      useSudo = await MacTunHelper.isGranted(binary);
+      if (!useSudo) {
+        AppLog.kernel('macOS TUN：尚未授权（sudo -n 不可用），内核将以当前用户启动');
+      }
+    }
+    _launchedViaSudo = useSudo;
+    _kernelDir = dir.path;
+    _proc = useSudo
+        ? await Process.start(
+            'sudo',
+            ['-n', binary, '-d', dir.path],
+            environment: {'PATH': Platform.environment['PATH'] ?? ''},
+          )
+        : await Process.start(
+            binary,
+            ['-d', dir.path],
+            environment: {'PATH': Platform.environment['PATH'] ?? ''},
+          );
 
     _proc!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLog);
     _proc!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLog);
@@ -523,6 +547,15 @@ class ProxyCoreCli extends ProxyCore {
         manageSystemProxy ? SystemProxyManager.restore() : Future.value();
 
     await Future.wait([killFut, restoreFut]);
+    // sudo 启动时，杀掉 sudo 父进程不一定带走 root 内核：按工作目录兜底一次
+    if (_launchedViaSudo && _kernelDir != null) {
+      try {
+        await Process.run('sudo',
+            ['-n', 'pkill', '-f', _kernelDir!],
+            stdoutEncoding: utf8, stderrEncoding: utf8);
+      } catch (_) {}
+      _launchedViaSudo = false;
+    }
   }
 
   /// 启动系统代理保活：每 20s 检查一次，被关/被改走则立即重新指向本地端口

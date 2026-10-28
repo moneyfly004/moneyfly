@@ -1299,14 +1299,17 @@ class _SettingsPageState extends State<SettingsPage> {
           (Platform.isWindows || Platform.isMacOS) &&
           !Elevation.isElevated) {
         if (!mounted) return;
-        final proceed = await requestTunElevation(context);
-        if (!proceed) {
+        final outcome = await requestTunElevation(context);
+        if (outcome == TunElevationOutcome.cancelled) {
           _toast(AppStrings.t('tun_admin_cancelled', {'mode': _tunModeValue()}));
           return;
         }
-        await _set('tunMode', mode);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        exit(0);
+        if (outcome == TunElevationOutcome.relaunching) {
+          await _set('tunMode', mode);
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          exit(0);
+        }
+        // macOS：授权完成，继续落盘（内核启动时会用 sudo -n）
       }
       await _set('tunMode', mode);
       // TUN 是**建连期参数**：内核只在启动时读它。旧实现只落盘、不重连也不提示，

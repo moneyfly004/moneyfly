@@ -16,6 +16,7 @@ import '../services/speed_test_mode.dart';
 import '../services/speed_tester.dart';
 import 'geo_assets.dart';
 import '../platform/elevation.dart';
+import '../platform/mac_tun_helper.dart';
 import 'speed_probe_kernel.dart';
 import 'proxy_core_embedded.dart';
 import 'proxy_core_cli.dart';
@@ -319,6 +320,18 @@ class ConnectionController extends ChangeNotifier {
   /// 或该节点在新订阅里消失。
   String? pinnedTag;
 
+  /// 启动时是否已经把「上次残留的强制 TUN」归一化过一次。
+  ///
+  /// 为什么需要：用户反馈「打开软件应该默认是智能模式」。旧行为会把上次会话
+  /// 的 `tunMode=force` 原样恢复，于是 App 一启动就停在 TUN（非管理员机器上
+  /// 还会立刻因为没提权而连不上）。唯一例外是「刚为 TUN 提权重启」那一次
+  /// （`pendingTunConnect`），它必须保留 force 才能续连。
+  bool _tunStartupNormalized = false;
+
+  /// 测试钩子：复位「启动归一化」标记（生产代码不需要）
+  @visibleForTesting
+  void debugResetTunStartupNormalized() => _tunStartupNormalized = false;
+
   /// 是否已从设置里恢复过一次持久化的选择（避免设置变更时反复覆盖内存态）
   bool _selectionLoaded = false;
 
@@ -574,10 +587,22 @@ class ConnectionController extends ChangeNotifier {
         AppLog.log('SPEED', '测速方式切换为 ${speedTestModeKey(mode)}，已清空旧延迟');
       }
     }
-    // TUN 策略：桌面读设置；移动端恒为 auto（没有「关闭 TUN」语义）
-    final tunFromSettings = (Platform.isAndroid || Platform.isIOS)
+    // TUN 策略：桌面读设置；移动端恒为 auto（没有「关闭 TUN」语义）。
+    // 启动第一次：除非是提权重启后的续连（pendingTunConnect），否则把上次
+    // 残留的 force 归一化成 off —— 打开软件默认停在「智能模式」。
+    final pendingTun = s['pendingTunConnect'] == true;
+    final rawTun = (Platform.isAndroid || Platform.isIOS)
         ? 'auto'
         : (s['tunMode']?.toString() ?? 'off');
+    var tunFromSettings = rawTun;
+    if (!_tunStartupNormalized) {
+      _tunStartupNormalized = true;
+      if (rawTun == 'force' && !pendingTun) {
+        tunFromSettings = 'off';
+        unawaited(_enqueueSettingsWrite((m) => m['tunMode'] = 'off'));
+        AppLog.log('APP', '启动归一化：上次的强制 TUN 已重置为智能模式');
+      }
+    }
     if (tunFromSettings != tunMode) tunMode = tunFromSettings;
     // 仅在用户未手动切过模式时应用 defaultMode，避免首页选择被设置页静默重置
     if (!_modeUserSet) {
@@ -1629,7 +1654,19 @@ class ConnectionController extends ChangeNotifier {
     if (!supportsTun && target == HomeMode.tun) return;
     if (target == homeMode) return;
     if (target == HomeMode.tun && !Elevation.isElevated) {
-      throw StateError('tun_needs_admin');
+      // macOS 不走「整个 App 提权」，而是给内核装一条一次性 sudoers 免密规则；
+      // 已授权时这里必须放行（否则用户刚授权完又被拒绝，来回弹窗）。
+      var granted = false;
+      if (Platform.isMacOS) {
+        // 内核路径可能解析失败（测试环境/内核缺失）：那是另一条错误路径，
+        // 不要让它把「是否已授权」的判定也一起吞掉。
+        String core = '';
+        try {
+          core = await ProxyCoreCli.resolveKernelBinary();
+        } catch (_) {}
+        granted = await MacTunHelper.isGranted(core);
+      }
+      if (!granted) throw StateError('tun_needs_admin');
     }
     _modeUserSet = true;
     final wasConnected = status == ConnStatus.connected && _core.isRunning;

@@ -108,6 +108,12 @@ class AppStrings {
     'tun_admin_cancel': '改用系统代理',
     'tun_admin_cancelled': '已取消提权，仍停留在「{mode}」模式',
     'tun_admin_fail': '没能发起管理员重启（可能被系统策略拦截）。请手动关闭本程序，右键「以管理员身份运行」。', 
+    'tun_mac_cmd_title': '或者：用这条命令以 root 启动（等价于右键「以管理员身份运行」）',
+    'tun_mac_copy_cmd': '复制命令',
+    'tun_mac_cmd_copied': '命令已复制，粘贴到「终端」回车即可',
+    'tun_mac_grant': '一键授权 TUN（推荐）',
+    'tun_mac_grant_hint': '一键授权会弹一次系统密码框，写入一条只针对本应用内核的免密规则；'
+        '之后 TUN 免密可用，App 本身仍是普通权限，随时可撤销。',
     'mode_hint': '智能 = 国内直连 · 国外代理 ｜ 全局 = 全部流量走代理',
     'auto_test_title': '自动测速 · 自动选优',
     'auto_test_on': '已开启',
@@ -885,6 +891,13 @@ class AppStrings {
     'tun_admin_cancel': 'Use system proxy',
     'tun_admin_cancelled': 'Elevation cancelled, staying in {mode} mode',
     'tun_admin_fail': 'Could not request an administrator restart (blocked by policy?). Close this app and run it via right-click -> Run as administrator.', 
+    'tun_mac_cmd_title': 'Or launch with root using this command (same as Run as administrator)',
+    'tun_mac_copy_cmd': 'Copy command',
+    'tun_mac_cmd_copied': 'Command copied — paste it in Terminal and press Enter',
+    'tun_mac_grant': 'Authorize TUN (recommended)',
+    'tun_mac_grant_hint': 'This asks for your password once and installs a passwordless rule '
+        'scoped to this app\'s kernel only. After that TUN works without prompts; '
+        'the app itself stays unprivileged and the rule can be revoked anytime.',
     'mode_hint': 'Smart = direct CN, proxy others | Global = proxy all',
     'auto_test_title': 'Auto Speed Test',
     'auto_test_on': 'ON',
