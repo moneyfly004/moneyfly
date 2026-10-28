@@ -1325,7 +1325,13 @@ class _HomePageState extends State<HomePage>
   /// 首页模式点按：TUN 需要管理员权限，未提权时先引导「以管理员身份重启」。
   Future<void> _selectMode(HomeMode mode) async {
     final conn = ConnectionController.instance;
-    if (conn.homeMode == mode) return;
+    // 已经处于该模式时通常直接忽略；但 TUN 是个例外：设置里可能早就是
+    // 「强制 TUN」（比如上次以管理员跑过、或从旧版本升上来），而当前实例
+    // 并没有管理员权限 —— 此时点 TUN 必须能把「以管理员身份重启」的引导
+    // 弹出来，否则用户点了没反应，只能自己去翻设置。
+    if (conn.homeMode == mode && !(mode == HomeMode.tun && !Elevation.isElevated)) {
+      return;
+    }
     if (mode == HomeMode.tun && !Elevation.isElevated) {
       final proceed = await requestTunElevation(context);
       if (!mounted) return;
