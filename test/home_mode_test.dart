@@ -115,11 +115,12 @@ void main() {
     });
 
     test('移动端语义：tunMode 恒为 auto（VpnService/PacketTunnel 就是 TUN）', () {
+      // 只在移动端断言：Linux 也没有 TUN 入口，但语义是 off（桌面口径），
+      // 之前用 `!supportsTun` 当「移动端」导致 CI 上误判。
+      if (!Platform.isAndroid && !Platform.isIOS) return;
       final c = ConnectionController.instance;
       c.applySettings({'tunMode': 'off'});
-      if (!c.supportsTun) {
-        expect(c.tunMode, 'auto');
-      }
+      expect(c.tunMode, 'auto');
     });
   });
 
