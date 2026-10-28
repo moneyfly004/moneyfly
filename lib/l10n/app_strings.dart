@@ -95,6 +95,19 @@ class AppStrings {
     'home_ready': '全球加速已就绪',
     'smart_mode': '智能模式',
     'global_mode': '全局模式',
+    'home_mode_tun': 'TUN 模式',
+    'tun_caption': '当前 TUN 接管全部流量，分流按「{mode}」规则走',
+    'tun_admin_title': 'TUN 需要管理员权限',
+    'tun_admin_body_win': 'TUN 要创建虚拟网卡并修改路由表，Windows 必须由管理员运行。'
+        '点「以管理员身份重启」后会弹出 UAC，确认后重新点连接即可；不想提权就用'
+        '「智能/全局」模式，网页与 App 一样走代理（只是 UDP/游戏不接管）。',
+    'tun_admin_body_mac': 'TUN 需要 root 权限创建 utun 网卡并修改路由表。'
+        'macOS 上请改用「智能/全局」模式（系统代理），或从终端以 root 启动本应用。'
+        '（macOS 自动提权需要特权助手，当前版本暂未内置）',
+    'tun_admin_relaunch': '以管理员身份重启',
+    'tun_admin_cancel': '改用系统代理',
+    'tun_admin_cancelled': '已取消提权，仍停留在「{mode}」模式',
+    'tun_admin_fail': '没能发起管理员重启（可能被系统策略拦截）。请手动关闭本程序，右键「以管理员身份运行」。', 
     'mode_hint': '智能 = 国内直连 · 国外代理 ｜ 全局 = 全部流量走代理',
     'auto_test_title': '自动测速 · 自动选优',
     'auto_test_on': '已开启',
@@ -856,6 +869,22 @@ class AppStrings {
     'home_ready': 'Ready for global access',
     'smart_mode': 'Smart Mode',
     'global_mode': 'Global Mode',
+    'home_mode_tun': 'TUN Mode',
+    'tun_caption': 'TUN takes all traffic; routing follows {mode} rules',
+    'tun_admin_title': 'Administrator rights required',
+    'tun_admin_body_win': 'TUN creates a virtual adapter and edits the routing table, '
+        'so Windows requires administrator rights. Choose "Restart as administrator", '
+        'confirm the UAC prompt, then connect again. Without elevation stay on '
+        'Smart/Global (system proxy) — web and apps still go through the proxy, '
+        'but UDP/games are not captured.',
+    'tun_admin_body_mac': 'TUN needs root to create the utun interface and modify '
+        'routes. On macOS use Smart/Global (system proxy), or launch this app as root '
+        'from a terminal. (Automatic elevation on macOS needs a privileged helper and '
+        'is not included yet.)',
+    'tun_admin_relaunch': 'Restart as administrator',
+    'tun_admin_cancel': 'Use system proxy',
+    'tun_admin_cancelled': 'Elevation cancelled, staying in {mode} mode',
+    'tun_admin_fail': 'Could not request an administrator restart (blocked by policy?). Close this app and run it via right-click -> Run as administrator.', 
     'mode_hint': 'Smart = direct CN, proxy others | Global = proxy all',
     'auto_test_title': 'Auto Speed Test',
     'auto_test_on': 'ON',

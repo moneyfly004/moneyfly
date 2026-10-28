@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,8 @@ import '../../widgets/subscribe_issue.dart';
 import '../../widgets/update_prompt.dart';
 import '../../core/api/api_client.dart';
 import '../../core/services/app_log.dart';
+import '../../core/platform/elevation.dart';
+import '../../widgets/tun_elevation_dialog.dart';
 import '../../core/services/country_slots.dart';
 import '../../widgets/traffic_chart.dart';
 import '../../l10n/app_strings.dart';
@@ -1272,29 +1275,96 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildModeSwitch(ConnectionController conn) {
+    // 桌面端三态：智能 / 全局 / TUN；移动端只有两态 —— VpnService /
+    // PacketTunnel 本身就是 TUN，「不开 TUN」这个选项在移动端不存在。
+    final modes = <(HomeMode, String, IconData)>[
+      (HomeMode.smart, AppStrings.t('smart_mode'), Icons.gps_fixed),
+      (HomeMode.global, AppStrings.t('global_mode'), Icons.travel_explore),
+      if (conn.supportsTun)
+        (HomeMode.tun, AppStrings.t('home_mode_tun'), Icons.vpn_lock),
+    ];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
           color: MFColors.card, borderRadius: BorderRadius.circular(14),
           border: Border.all(color: MFColors.line)),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _ModeOption(
-            label: AppStrings.t('smart_mode'),
-            icon: Icons.gps_fixed,
-            selected: conn.smartMode,
-            onTap: conn.switchingMode ? null : () => conn.toggleMode(true),
+          Row(
+            children: [
+              for (final (mode, label, icon) in modes)
+                _ModeOption(
+                  label: label,
+                  icon: icon,
+                  selected: conn.homeMode == mode,
+                  onTap: conn.switchingMode ? null : () => _selectMode(mode),
+                ),
+            ],
           ),
-          _ModeOption(
-            label: AppStrings.t('global_mode'),
-            icon: Icons.travel_explore,
-            selected: !conn.smartMode,
-            onTap: conn.switchingMode ? null : () => conn.toggleMode(false),
-          ),
+          // TUN 与「智能/全局」是两个维度：TUN 只负责「接管全部流量」，
+          // 分流规则仍按用户上次选的方式走。不写这一行，用户会以为
+          // 进 TUN 后「智能分流」就失效了。
+          if (conn.tunActive)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 2),
+              child: Text(
+                AppStrings.t('tun_caption', {
+                  'mode': conn.smartMode
+                      ? AppStrings.t('smart_mode')
+                      : AppStrings.t('global_mode'),
+                }),
+                style: TextStyle(fontSize: 10.5, color: MFColors.txt3),
+              ),
+            ),
         ],
       ),
     );
   }
+
+  /// 首页模式点按：TUN 需要管理员权限，未提权时先引导「以管理员身份重启」。
+  Future<void> _selectMode(HomeMode mode) async {
+    final conn = ConnectionController.instance;
+    if (conn.homeMode == mode) return;
+    if (mode == HomeMode.tun && !Elevation.isElevated) {
+      final proceed = await requestTunElevation(context);
+      if (!mounted) return;
+      if (!proceed) {
+        // macOS 上本来就没有「一键提权」（需要特权助手），对话框里已说明，
+        // 再弹「已取消提权」只会让人以为操作失败。Windows 用户点了取消才提示。
+        if (Platform.isWindows) {
+          _toast(AppStrings.t('tun_admin_cancelled',
+              {'mode': _homeModeLabel(conn.homeMode)}));
+        }
+        return;
+      }
+      // 已安排提权重启：立刻退出，让新实例（管理员）接管。
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      exit(0);
+    }
+    try {
+      await conn.switchHomeMode(mode);
+    } on StateError catch (e) {
+      // 控制器兜底拒绝（例如设置页选了强制 TUN 但没提权）：同一条引导
+      if (e.message == 'tun_needs_admin') {
+        if (!mounted) return;
+        final proceed = await requestTunElevation(context);
+        if (proceed && mounted) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          exit(0);
+        }
+      }
+    } catch (e) {
+      _toast(AppStrings.t('mode_switch_fail', {'err': '$e'}));
+    }
+  }
+
+  /// 首页三态的名字（提示文案复用，避免各写一份 switch）
+  String _homeModeLabel(HomeMode m) => switch (m) {
+        HomeMode.smart => AppStrings.t('smart_mode'),
+        HomeMode.global => AppStrings.t('global_mode'),
+        HomeMode.tun => AppStrings.t('home_mode_tun'),
+      };
 
   Widget _buildStats(ConnectionController conn, bool compact) {
     return ValueListenableBuilder<SpeedSnapshot>(
@@ -1774,14 +1844,21 @@ class _ModeOption extends StatelessWidget {
                   color: selected
                       ? Colors.white
                       : (enabled ? MFColors.txt2 : MFColors.txt3)),
-              const SizedBox(width: 7),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: selected
-                          ? Colors.white
-                          : (enabled ? MFColors.txt2 : MFColors.txt3))),
+              const SizedBox(width: 5),
+              // 三段式（智能/全局/TUN）在 380 最小窗口下总宽会超出 0.2px：
+              // 标签必须可压缩 + 省略号，否则直接 RenderFlex overflow 黄条。
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: selected
+                            ? Colors.white
+                            : (enabled ? MFColors.txt2 : MFColors.txt3))),
+              ),
               if (!enabled) ...[
                 const SizedBox(width: 6),
                 SizedBox(

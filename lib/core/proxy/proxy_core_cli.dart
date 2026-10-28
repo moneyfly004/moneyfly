@@ -391,12 +391,23 @@ class ProxyCoreCli extends ProxyCore {
     var apiReadyButPortDead = false;
     while (sw.elapsed < _readyTimeout) {
       if (_proc == null) {
+        // 内核**因 TUN 起不来而立即退出**是最常见的一种（Windows 未提权时
+        // mihomo 打一行 `Start TUN listening error: configure tun interface:
+        // Access is denied.` 就退出）。这种失败必须按 TUN 分类上报，
+        // 否则用户只会看到「内核进程启动后立即退出」+ 一段与真实原因无关的
+        // 提示（0xC0000005 / 杀毒拦截），永远不知道该提权。
+        final tunFailure = detectTunStartFailure(_tunFatalContext);
+        if (tunFailure != TunStartFailure.none) {
+          throw TunStartException(tunFailure, _tunFatalContext.join(' | '));
+        }
         // 进程启动后立即退出（_watchProcess 已记录退出码与尾部日志）：
         // 给出可诊断信息，而不是含糊的「（无输出）」
         final why = (_lastError?.isNotEmpty ?? false)
             ? _lastError!
             : '内核进程启动后立即退出';
-        throw UnsupportedError('内核启动失败：$why$_winKernelHint');
+        final tail = _tail();
+        final tailPart = tail.startsWith('（无输出）') ? '' : '（$tail）';
+        throw UnsupportedError('内核启动失败：$why$tailPart$_winKernelHint');
       }
       try {
         final r = await _api.get('/version', options: Options(validateStatus: (s) => true));

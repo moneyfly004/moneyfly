@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/api/server_pool.dart';
+import '../../core/platform/elevation.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/services/account_service.dart';
 import '../../core/services/app_log.dart';
@@ -18,6 +19,7 @@ import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/mf_input.dart';
+import '../../widgets/tun_elevation_dialog.dart';
 import '../../widgets/mf_row.dart';
 import '../auth/change_password_page.dart';
 import '../devices/devices_page.dart';
@@ -1290,6 +1292,22 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (v != null) {
       final mode = v == AppStrings.t('tun_force') ? 'force' : (v == AppStrings.t('tun_off') ? 'off' : 'auto');
+      // 「强制 TUN」在桌面端等价于「让内核接管全部流量」，需要管理员/root；
+      // 未提权就落盘会让用户下一次连接直接撞上「内核立即退出（Access is
+      // denied）」。因此在这里先问清楚：要么现在提权重启，要么保持原模式。
+      if (mode == 'force' &&
+          (Platform.isWindows || Platform.isMacOS) &&
+          !Elevation.isElevated) {
+        if (!mounted) return;
+        final proceed = await requestTunElevation(context);
+        if (!proceed) {
+          _toast(AppStrings.t('tun_admin_cancelled', {'mode': _tunModeValue()}));
+          return;
+        }
+        await _set('tunMode', mode);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        exit(0);
+      }
       await _set('tunMode', mode);
       // TUN 是**建连期参数**：内核只在启动时读它。旧实现只落盘、不重连也不提示，
       // 用户切到 TUN 后当前连接其实还是系统代理（或反之），界面却毫无反馈。
