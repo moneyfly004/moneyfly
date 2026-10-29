@@ -70,6 +70,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
+# 自动补跑（rerun-failed-jobs）需要 actions:write；发布资产需要 contents:write。
+# 不写这段时 GITHUB_TOKEN 默认只读 → auto-retry 会 403（实测）。
+permissions:
+  contents: write
+  actions: write
+
 env:
   FLUTTER_VERSION: '3.44.4' # 与开发机一致，保证构建可复现
   MIHOMO_VERSION: '1.19.30' # mihomo 内核版本（升级只改这里；需与 mihomo-lib release tag 一致）
