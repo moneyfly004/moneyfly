@@ -596,7 +596,11 @@ class ConnectionController extends ChangeNotifier {
     // TUN 策略：桌面读设置；移动端恒为 auto（没有「关闭 TUN」语义）。
     // 启动第一次：除非是提权重启后的续连（pendingTunConnect），否则把上次
     // 残留的 force 归一化成 off —— 打开软件默认停在「智能模式」。
-    final pendingTun = s['pendingTunConnect'] == true;
+    // 命令行标记（提权重启）等价于「用户刚刚点过 TUN 并同意提权」：即使设置
+    // 写入没抢到，也要自动续连一次。
+    final adminRestartForTun = Platform.isWindows &&
+        Platform.executableArguments.contains('--admin-restart-for-tun');
+    final pendingTun = s['pendingTunConnect'] == true || adminRestartForTun;
     final rawTun = (Platform.isAndroid || Platform.isIOS)
         ? 'auto'
         : (s['tunMode']?.toString() ?? 'off');

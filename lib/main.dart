@@ -270,9 +270,24 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     _session.addListener(_onSessionChanged);
     _session.restore();
     // 启动时应用持久化设置（自动测速 / 断线重连 / 默认模式）+ 恢复主题
+    // 「为 TUN 提权重启」进入的实例：先把「强制 TUN + 待续连」落盘，再应用设置。
+    // 不这么做的话，后续 autoConnectIfEnabled 会重新 load 一份**旧快照**，
+    // pendingTunConnect 丢了 → 提权重启后不会自动连接（用户以为还得手动点）。
+    final adminRestartForTun = Platform.isWindows &&
+        Platform.executableArguments.contains('--admin-restart-for-tun');
     SettingsStore.instance
         .load()
-        .then(ConnectionController.instance.applySettings)
+        .then((settings) async {
+          if (adminRestartForTun) {
+            await SettingsStore.instance.update((m) {
+              m['tunMode'] = 'force';
+              m['pendingTunConnect'] = true;
+            });
+            settings['tunMode'] = 'force';
+            settings['pendingTunConnect'] = true;
+          }
+          ConnectionController.instance.applySettings(settings);
+        })
         .catchError((_) {});
     ThemeController.instance.restore();
     // 恢复用户语言(设置页选择/首次按设备语言),否则每次启动都回到中文
