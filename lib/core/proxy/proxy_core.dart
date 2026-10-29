@@ -587,6 +587,12 @@ class ConnectionController extends ChangeNotifier {
         AppLog.log('SPEED', '测速方式切换为 ${speedTestModeKey(mode)}，已清空旧延迟');
       }
     }
+    // 「为 TUN 提权重启」进来的实例：命令行带标记 → 直接按 TUN 续连处理，
+    // 不依赖设置写入是否抢在退出前落盘（两条链路互为兜底）。
+    if (Platform.isWindows &&
+        Platform.executableArguments.contains('--admin-restart-for-tun')) {
+      s = {...s, 'tunMode': 'force', 'pendingTunConnect': true};
+    }
     // TUN 策略：桌面读设置；移动端恒为 auto（没有「关闭 TUN」语义）。
     // 启动第一次：除非是提权重启后的续连（pendingTunConnect），否则把上次
     // 残留的 force 归一化成 off —— 打开软件默认停在「智能模式」。

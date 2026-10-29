@@ -78,8 +78,11 @@ class Elevation {
     final exe = Platform.resolvedExecutable;
     // PowerShell 单引号字符串里把单引号转义成两个单引号
     final quoted = exe.replaceAll("'", "''");
+    // --admin-restart-for-tun：告诉新实例「你是来接替旧进程的」，让它跳过
+    // 单实例互斥量检查。旧实例（非提权）退出通常要 1~3s，只靠延迟等待会偶发
+    // 「新实例被旧实例的 mutex 挡回去」，用户看到点完 TUN 应用闪一下就没了。
     final script = 'Start-Sleep -Milliseconds 1500; '
-        "Start-Process -FilePath '$quoted' -Verb RunAs";
+        "Start-Process -FilePath '$quoted' -ArgumentList '--admin-restart-for-tun' -Verb RunAs";
     try {
       await Process.start(
         'powershell.exe',
