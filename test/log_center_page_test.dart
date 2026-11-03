@@ -108,27 +108,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('等级 chip：命中区 ≥40 且是 InkWell（点击即切换过滤）', (tester) async {
-    // 这一个用例要看「过滤」，所以级别先用默认 warning
-    SharedPreferences.setMockInitialValues({
-      'moneyfly_settings_v1': jsonEncode({'kernelLogLevel': 'warning'}),
-    });
+  testWidgets('等级档位：合并为四档（全部/信息/警告/错误），点击切换过滤且命中区 ≥40',
+      (tester) async {
     await _pump(tester);
     await _feed(tester, _dbgLine);
-    expect(find.text(_dbgLine), findsNothing, reason: 'warning 级别下过滤掉 debug 行');
+    // 默认「全部」：debug 行可见
+    expect(find.text(_dbgLine), findsOneWidget);
 
-    final chip = find
-        .ancestor(of: find.text('DEBUG'), matching: find.byType(InkWell))
-        .first;
-    final size = tester.getSize(chip);
+    // 命中区 ≥40，且是带 key 的 InkWell
+    final warnChip = find.byKey(const ValueKey('log-bucket-warn'));
+    expect(warnChip, findsOneWidget);
+    final size = tester.getSize(warnChip);
     expect(size.height, greaterThanOrEqualTo(40),
         reason: '旧实现 ~23px 高且没有按压反馈');
     expect(size.width, greaterThanOrEqualTo(40));
 
-    await tester.tap(chip);
+    // 切到「警告」：debug 行被过滤
+    await tester.tap(warnChip);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    expect(find.text(_dbgLine), findsOneWidget, reason: '切到 DEBUG 后应能看见');
+    expect(find.text(_dbgLine), findsNothing,
+        reason: '「警告」档不应显示 debug 行');
+
+    // 切到「信息」：debug 行重新可见（信息档 = debug+info）
+    await tester.tap(find.byKey(const ValueKey('log-bucket-info')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text(_dbgLine), findsOneWidget, reason: '「信息」档包含 debug 行');
     expect(tester.takeException(), isNull);
   });
 

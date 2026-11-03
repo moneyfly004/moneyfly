@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import '../../core/proxy/proxy_core.dart';
 import '../../core/proxy/proxy_core_cli.dart';
 import '../../core/services/app_log.dart';
-import '../../core/services/settings_store.dart';
 import '../../l10n/app_strings.dart';
 import '../../theme/app_theme.dart';
+
+/// 内核日志的四个显示档位（由 mihomo 的 debug/info/warning/error/silent 归并而来）。
+enum _LogBucket { all, info, warn, error }
 
 /// 日志中心：两个 Tab
 /// - 内核日志（实时）：mihomo 引擎输出 —— 引擎级排障（连不上/打不开网页）
@@ -96,9 +98,21 @@ class _KernelLogTabState extends State<_KernelLogTab>
 
   StreamSubscription<String>? _streamSub;
   Timer? _pollTimer;
-  String _level = 'warning';
+  /// 合并后的四档显示级别（按信息量归并 mihomo 的 debug/info/warning/error/silent）。
+  ///
+  /// 旧实现把 5 个级别原样铺成 chip，并按「>= 级别」累积过滤，导致两个真机问题：
+  /// 1. 正常运行时几乎没有 debug 行，debug 与 info 两档看到的内容完全一样；
+  /// 2. `level=fatal`（如 YAML 配置解析失败）被 `_levelRank` 归成 info，于是
+  ///    真正的错误行在「警告/错误」档下反而**消失**，看起来就是warning/error空白。
+  /// 现在归并成四档并显示行数：全部 / 信息(debug+info) / 警告 / 错误(error+fatal+panic)。
+  _LogBucket _bucket = _LogBucket.all;
 
-  static const _levels = ['debug', 'info', 'warning', 'error', 'silent'];
+  static const _buckets = [
+    _LogBucket.all,
+    _LogBucket.info,
+    _LogBucket.warn,
+    _LogBucket.error,
+  ];
 
   // Android 轮询状态：_pollBusy 防止上一轮（含 drain 续读）未结束时定时器重入；
   // _cursorReset 仅首次进入页面时为 true，让第一轮请求原生侧回放「最近行」建立
@@ -112,11 +126,6 @@ class _KernelLogTabState extends State<_KernelLogTab>
   @override
   void initState() {
     super.initState();
-    SettingsStore.instance.load().then((s) {
-      if (!mounted) return;
-      final lv = s['kernelLogLevel']?.toString() ?? 'warning';
-      setState(() => _level = _levels.contains(lv) ? lv : 'warning');
-    });
     if (Platform.isAndroid || Platform.isIOS) {
       // 原生侧自上次读取位置起只回传增量行，且返回内容经 hasMore 分片追平，
       // 因此轮询间隔可放宽到 1200ms 而不丢日志。
@@ -212,14 +221,18 @@ class _KernelLogTabState extends State<_KernelLogTab>
     }
   }
 
-  Future<void> _setLevel(String lv) async {
-    setState(() => _level = lv);
+  /// 切换显示档位，并把对应级别同步给内核输出：
+  /// 「全部/信息」要持续产生 info 行 → info；「警告」→ warning；「错误」→ error。
+  /// 这样档位既能过滤已收集的行，也决定后续内核吐什么级别，避免切到高级别后
+  /// 仍被 debug 噪声刷屏。
+  Future<void> _setBucket(_LogBucket b) async {
+    setState(() => _bucket = b);
     final conn = ConnectionController.instance;
     final wasConnected = conn.status == ConnStatus.connected;
-    final live = await conn.setKernelLogLevel(lv);
+    final live = await conn.setKernelLogLevel(_bucketKernelLevel(b));
     if (!mounted) return;
     // 已连接但未能热更（Android：embed 模式禁 PATCH）→ 明确告知需重连，
-    // 否则用户会以为「切了级别却没日志」是内核出问题。
+    // 否则用户会以为「切了档位却没日志」是内核出问题。
     if (wasConnected && !live) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(AppStrings.t('log_level_need_reconnect'),
@@ -229,6 +242,19 @@ class _KernelLogTabState extends State<_KernelLogTab>
     }
   }
 
+  static String _bucketKernelLevel(_LogBucket b) => switch (b) {
+        _LogBucket.all || _LogBucket.info => 'info',
+        _LogBucket.warn => 'warning',
+        _LogBucket.error => 'error',
+      };
+
+  static String _bucketKey(_LogBucket b) => switch (b) {
+        _LogBucket.all => 'log_bucket_all',
+        _LogBucket.info => 'log_bucket_info',
+        _LogBucket.warn => 'log_bucket_warn',
+        _LogBucket.error => 'log_bucket_error',
+      };
+
   /// 清空内核日志：与 App 日志 tab 一样**先确认**再清
   Future<void> _clear() async {
     final ok = await _confirmClearLog(
@@ -237,11 +263,13 @@ class _KernelLogTabState extends State<_KernelLogTab>
     setState(_lines.clear);
   }
 
-  /// 等级筛选 chip：整块 40 高命中区 + InkWell 按压反馈
-  /// （旧实现是 GestureDetector + ~23px 的 Container：没有按压反馈、命中区偏小）
-  Widget _levelChip(String lv) {
-    final active = _level == lv;
+  /// 合并后的档位 chip：整块 40 高命中区 + InkWell 按压反馈，并显示该档行数。
+  /// 行数让「空档」一眼可见（旧设计下 warning/error/silent 常年空白却看不出原因）。
+  Widget _bucketChip(_LogBucket b) {
+    final active = _bucket == b;
     final radius = BorderRadius.circular(8);
+    final label = AppStrings.t(_bucketKey(b));
+    final count = _countOf(b);
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: Material(
@@ -255,7 +283,8 @@ class _KernelLogTabState extends State<_KernelLogTab>
                 color: active ? Colors.transparent : MFColors.line),
           ),
           child: InkWell(
-            onTap: () => _setLevel(lv),
+            key: ValueKey('log-bucket-${b.name}'),
+            onTap: () => _setBucket(b),
             borderRadius: radius,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 40),
@@ -264,7 +293,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   child: Text(
-                    lv.toUpperCase(),
+                    '$label $count',
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
@@ -298,7 +327,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      for (final lv in _levels) _levelChip(lv),
+                      for (final b in _buckets) _bucketChip(b),
                     ],
                   ),
                 ),
@@ -370,7 +399,7 @@ class _KernelLogTabState extends State<_KernelLogTab>
                       _lines.isEmpty
                           ? AppStrings.t('kernel_log_empty')
                           : AppStrings.t('kernel_log_empty_at_level',
-                              {'level': _level.toUpperCase()}),
+                              {'level': AppStrings.t(_bucketKey(_bucket))}),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 12, color: MFColors.txt3, height: 1.7)))
@@ -401,7 +430,10 @@ class _KernelLogTabState extends State<_KernelLogTab>
     );
   }
 
-  /// 级别数值：越大越严重（与 mihomo 的 debug/info/warning/error/silent 一致）
+  /// 级别数值：越大越严重。**fatal/panic/critical 必须归到 error 档** ——
+  /// 旧实现漏了它们，落到 default 被当成 info，于是 YAML 解析失败这类
+  /// `level=fatal` 的错误行只在 debug/info 档出现、在 warning/error 档消失，
+  /// 正是真机反馈「warning/error 空白」的直接原因。
   static int _levelRank(String level) {
     switch (level.toLowerCase()) {
       case 'debug':
@@ -412,9 +444,11 @@ class _KernelLogTabState extends State<_KernelLogTab>
       case 'warn':
         return 2;
       case 'error':
-        return 3;
+      case 'fatal':
+      case 'panic':
+      case 'critical':
       case 'silent':
-        return 4;
+        return 3;
       default:
         return 1; // 无法识别的行（如自有的提示行）按 info 处理
     }
@@ -426,14 +460,26 @@ class _KernelLogTabState extends State<_KernelLogTab>
     return m?.group(1) ?? 'info';
   }
 
-  /// 本页显示的行：**按当前级别过滤**。
-  /// 原先级别只作用于「内核输出」（PATCH /configs），已收集的日志不受影响，
-  /// 于是切换 debug/info/warning/error 时看到的内容几乎一样（真机反馈
-  /// 「感觉区别不大」）。现在同一级别同时过滤显示，切换立刻可见。
+  /// 把一行归入显示档位：rank≤1 → 信息；rank==2 → 警告；rank≥3 → 错误。
+  static _LogBucket _bucketOf(String line) {
+    final rank = _levelRank(_lineLevel(line));
+    if (rank <= 1) return _LogBucket.info;
+    if (rank == 2) return _LogBucket.warn;
+    return _LogBucket.error;
+  }
+
+  /// 某档的行数（「全部」即总行数），用于 chip 上的角标。
+  int _countOf(_LogBucket b) {
+    if (b == _LogBucket.all) return _lines.length;
+    return _lines.where((l) => _bucketOf(l) == b).length;
+  }
+
+  /// 本页显示的行：按当前档位**精确过滤**（不再用「>= 级别」累积，
+  /// 避免 debug/info 看起来一模一样）。
   List<String> get _visibleLines {
-    final min = _levelRank(_level);
+    if (_bucket == _LogBucket.all) return _lines;
     return _lines
-        .where((l) => _levelRank(_lineLevel(l)) >= min)
+        .where((l) => _bucketOf(l) == _bucket)
         .toList(growable: false);
   }
 
