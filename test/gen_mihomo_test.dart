@@ -256,6 +256,35 @@ void main() {
     expect((select['proxies'] as List), contains(tricky.tag));
   });
 
+  test('YAML 编码: 控制字符/制表符/Unicode 行分隔符不会破坏 flow 结构', () {
+    // 旧「黑名单」漏掉的正是这些字符：一旦节点名里出现，内核会整份配置
+    // Parse error 直接退出（线上事故：yaml: line 489: did not find expected ','）。
+    const trickyName = '节点\tA\u0085B\u2028C\u2029D中';
+    final tricky = ProxyNode(
+        tag: trickyName,
+        type: 'ss',
+        server: '1.1.1.1',
+        port: 8388,
+        password: 'p@ss:word,with#specials',
+        cipher: 'aes-256-gcm',
+        countryCode: 'HK',
+        raw: const {
+          'name': trickyName,
+          'type': 'ss',
+          'server': '1.1.1.1',
+          'port': 8388,
+          'password': 'p@ss:word,with#specials',
+          'cipher': 'aes-256-gcm',
+        });
+    final cfg = MihomoConfigBuilder.build(
+        nodes: [tricky], selectedTag: tricky.tag, smartMode: true);
+    final yamlText = MihomoConfigBuilder.encode(cfg);
+    final parsed = loadYaml(yamlText) as Map;
+    final proxies = (parsed['proxies'] as List).cast<Map>();
+    expect(proxies.single['name'], trickyName);
+    expect(proxies.single['password'], 'p@ss:word,with#specials');
+  });
+
   test('直连名单三类条目: DOMAIN-SUFFIX / IP-CIDR / DOMAIN', () {
     final cfg = MihomoConfigBuilder.build(
         nodes: [vlessNode],

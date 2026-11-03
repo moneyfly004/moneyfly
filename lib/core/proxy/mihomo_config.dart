@@ -645,37 +645,78 @@ class MihomoConfigBuilder {
     }
   }
 
-  /// 标量值 → YAML（字符串按需加引号，数字/布尔原样）
+  /// 标量值 → YAML（字符串按需加引号，数字/布尔原样）。
+  ///
+  /// **白名单策略**：只有整串都落在「YAML 纯标量绝对安全」字符集里才不加引号；
+  /// 其余（制表符/换行/控制符、YAML 特殊 Unicode 分隔符、中文/emoji、各类标点）
+  /// 一律用双引号包起来再做转义。
+  ///
+  /// 为什么不再用旧的「黑名单」：旧实现只要漏掉一个字符，生成的配置就会在该行
+  /// 变成非法 YAML，内核直接 `Parse config error` 退出、整机连不上
+  /// （2026-11-02 09:38 的 `yaml: line 489: did not find expected ',' or '}'`
+  /// 就是这类事故）。白名单从根上消除「漏一个字符」的可能。
   static String _scalarToYaml(dynamic v) {
     if (v == null) return 'null';
     if (v is bool) return v ? 'true' : 'false';
     if (v is num) return '$v';
     final s = v.toString();
     if (s.isEmpty) return '""';
-    // YAML 特殊起始字符 / 结构字符 / 注释符 / 数字或布尔外观 → 必须引号
-    const specialStart = '*&!%@`|>-#?{}[],';
+    // 仅「字母/数字开头，其余为字母数字或 . _ / -」才允许裸写；数字/布尔外观
+    // 必须加引号，否则 YAML 会把它解析成 number/bool 而改变类型。
+    final plainSafe = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_./-]*$').hasMatch(s);
     final looksLikeNumber = num.tryParse(s) != null;
     final looksLikeBool = s == 'true' || s == 'false' || s == 'yes' ||
         s == 'no' || s == 'null' || s == 'on' || s == 'off';
-    if (specialStart.contains(s[0]) ||
-        s.contains(':') ||
-        s.contains('#') ||
-        s.contains('"') ||
-        s.contains("'") ||
-        s.contains('\n') ||
-        s.contains('{') ||
-        s.contains('}') ||
-        s.contains('[') ||
-        s.contains(']') ||
-        s.contains(',') ||
-        s.startsWith(' ') ||
-        s.endsWith(' ') ||
-        s.endsWith(':') ||
-        looksLikeNumber ||
-        looksLikeBool) {
-      return '"${s.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
+    if (!plainSafe || looksLikeNumber || looksLikeBool) {
+      return '"${_escapeYamlDoubleQuoted(s)}"';
     }
     return s;
+  }
+
+  /// YAML 双引号字符串转义：引号/反斜杠/换行/制表符/回车/控制字符，以及
+  /// YAML 1.1 的特殊换行符（NEL U+0085 / LS U+2028 / PS U+2029）全部转义，
+  /// 保证引号内的字节流永远不会破坏 flow 结构。
+  static String _escapeYamlDoubleQuoted(String s) {
+    final b = StringBuffer();
+    for (final r in s.runes) {
+      switch (r) {
+        case 0x22:
+          b.write(r'\"');
+          break;
+        case 0x5C:
+          b.write(r'\\');
+          break;
+        case 0x0A:
+          b.write(r'\n');
+          break;
+        case 0x09:
+          b.write(r'\t');
+          break;
+        case 0x0D:
+          b.write(r'\r');
+          break;
+        case 0x00:
+          b.write(r'\0');
+          break;
+        case 0x85:
+          b.write(r'\u0085');
+          break;
+        case 0x2028:
+          b.write(r'\u2028');
+          break;
+        case 0x2029:
+          b.write(r'\u2029');
+          break;
+        default:
+          if (r < 0x20 || r == 0x7F) {
+            b.write(r'\x');
+            b.write(r.toRadixString(16).padLeft(2, '0'));
+          } else {
+            b.writeCharCode(r);
+          }
+      }
+    }
+    return b.toString();
   }
 
   /// Map → flow 风格 {key: val, key: val}（用于 proxies 列表里的节点定义）
