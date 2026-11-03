@@ -700,6 +700,7 @@
 					"-lc++",
 					"-lresolv",
 				);
+				DEVELOPMENT_TEAM = 84NTF72R9U;
 				PRODUCT_BUNDLE_IDENTIFIER = top.moneyfly.app.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -889,6 +890,7 @@
 					"-lc++",
 					"-lresolv",
 				);
+				DEVELOPMENT_TEAM = 84NTF72R9U;
 				PRODUCT_BUNDLE_IDENTIFIER = top.moneyfly.app.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -919,6 +921,7 @@
 					"-lc++",
 					"-lresolv",
 				);
+				DEVELOPMENT_TEAM = 84NTF72R9U;
 				PRODUCT_BUNDLE_IDENTIFIER = top.moneyfly.app.tunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
