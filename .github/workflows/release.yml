@@ -418,7 +418,18 @@ jobs:
           fi
           IDENT=$(security find-identity -p codesigning 2>/dev/null | grep -q LocalDev && echo LocalDev || echo -)
           codesign --force --deep -s "$IDENT" --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
-          hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-arm64-$V.dmg"
+          # hdiutil 偶发 "Resource busy"：先卸载同名卷，再重试 3 次
+          for attempt in 1 2 3; do
+            hdiutil detach "/Volumes/MoneyFly" 2>/dev/null || true
+            if hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-arm64-$V.dmg"; then
+              break
+            fi
+            echo "hdiutil create 第 $attempt 次失败，5s 后重试..."
+            sleep 5
+            if [ "$attempt" = "3" ]; then
+              echo "hdiutil create 连续 3 次失败"; exit 1
+            fi
+          done
           cd dist && shasum -a 256 MoneyFly-macos-arm64-$V.dmg > SHA256SUMS-macos-arm64.txt
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
@@ -505,7 +516,18 @@ jobs:
           fi
           IDENT=$(security find-identity -p codesigning 2>/dev/null | grep -q LocalDev && echo LocalDev || echo -)
           codesign --force --deep -s "$IDENT" --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
-          hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-x64-$V.dmg"
+          # hdiutil 偶发 "Resource busy"：先卸载同名卷，再重试 3 次
+          for attempt in 1 2 3; do
+            hdiutil detach "/Volumes/MoneyFly" 2>/dev/null || true
+            if hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-x64-$V.dmg"; then
+              break
+            fi
+            echo "hdiutil create 第 $attempt 次失败，5s 后重试..."
+            sleep 5
+            if [ "$attempt" = "3" ]; then
+              echo "hdiutil create 连续 3 次失败"; exit 1
+            fi
+          done
           cd dist && shasum -a 256 MoneyFly-macos-x64-$V.dmg > SHA256SUMS-macos-x64.txt
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
@@ -603,7 +625,18 @@ jobs:
           fi
           IDENT=$(security find-identity -p codesigning 2>/dev/null | grep -q LocalDev && echo LocalDev || echo -)
           codesign --force --deep -s "$IDENT" --entitlements macos/Runner/Release.entitlements "$STAGE/MoneyFly.app"
-          hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-universal-$V.dmg"
+          # hdiutil 偶发 "Resource busy"（残留挂载/并行 IO）：先卸载同名卷，再重试 3 次
+          for attempt in 1 2 3; do
+            hdiutil detach "/Volumes/MoneyFly" 2>/dev/null || true
+            if hdiutil create -volname MoneyFly -srcfolder "$STAGE" -ov -format UDZO "dist/MoneyFly-macos-universal-$V.dmg"; then
+              break
+            fi
+            echo "hdiutil create 第 $attempt 次失败，5s 后重试..."
+            sleep 5
+            if [ "$attempt" = "3" ]; then
+              echo "hdiutil create 连续 3 次失败"; exit 1
+            fi
+          done
           cd dist && shasum -a 256 MoneyFly-macos-universal-$V.dmg > SHA256SUMS-macos-universal.txt
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
