@@ -90,6 +90,9 @@ class _FakeKernel implements ProxyCore {
   Future<bool> checkAlive() async => isRunning;
 
   @override
+  void onAppResumed() {}
+
+  @override
   String? get lastError => 'fake kernel';
 
   @override
