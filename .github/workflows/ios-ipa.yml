@@ -6,10 +6,14 @@ name: iOS IPA (测试包)
 #     https://github.com/moneyfly004/moneyfly/releases/download/ios-test/MoneyFly-ios-test.ipa
 #   · 正式版本仍走 release.yml（tag 触发，全平台 + Releases）。
 #
-# 触发：Actions 页面手动 Run workflow（workflow_dispatch）。
+# 触发：Actions 页面手动 Run workflow（workflow_dispatch），或推送 ios-v* tag
+# （便于在没有仓库写权限的机器上，用 git push tag 触发）。
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'ios-v*'
 
 # 连续触发时只保留最新一次
 concurrency:
@@ -84,6 +88,18 @@ jobs:
             --notes "每次手动触发覆盖同名 IPA，仅供真机调试，勿分发给用户。"
           gh release upload ios-test dist/MoneyFly-ios-test.ipa dist/SHA256SUMS-ios-test.txt dist/VERSION.txt --clobber
           echo "下载地址：https://github.com/moneyfly004/moneyfly/releases/download/ios-test/MoneyFly-ios-test.ipa"
+      - name: 覆盖当前版本发布里的 iOS IPA（版本不变，只换修复后的包）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          V=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          cp dist/MoneyFly-ios-test.ipa "dist/MoneyFly-ios-$V.ipa"
+          (cd dist && shasum -a 256 "MoneyFly-ios-$V.ipa" > "SHA256SUMS-ios-$V.txt")
+          gh release view "v$V" >/dev/null 2>&1 || {
+            echo "error: 版本发布 v$V 不存在，请先跑正式发布"; exit 1; }
+          gh release upload "v$V" "dist/MoneyFly-ios-$V.ipa" "dist/SHA256SUMS-ios-$V.txt" --clobber
+          echo "已更新：https://github.com/moneyfly004/moneyfly/releases/download/v$V/MoneyFly-ios-$V.ipa"
       - uses: actions/upload-artifact@v4
         with:
           name: moneyfly-ios-test
