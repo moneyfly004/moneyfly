@@ -50,6 +50,14 @@ class VpnCorePlugin {
     /// 增量读内核日志的游标（字节偏移）
     private static var logCursor: UInt64 = 0
 
+    /// 隧道进入 reasserting 的时刻。该中间态若持续过久，说明隧道实际已不可用，
+    /// 但 NEVPNStatus 仍报「活着」—— 看门狗会因此永远不判死（真机「假连接」根因）。
+    private static var reassertingSince: Date?
+
+    /// NE 状态变化的事件通道（原生 → Dart）。系统状态是最终事实，必须回传，
+    /// 否则扩展被 iOS 终止后 App 会一直停在「已连接」。
+    static var statusSink: FlutterEventSink?
+
     static func register(with messenger: FlutterBinaryMessenger) {
         let channel = FlutterMethodChannel(
             name: "top.moneyfly/vpn_core", binaryMessenger: messenger)
@@ -82,6 +90,27 @@ class VpnCorePlugin {
             default:
                 result(FlutterMethodNotImplemented)
             }
+        }
+
+        // 状态事件通道：NE 状态一变就推给 Dart（含首次订阅时的当前状态回放）。
+        let statusChannel = FlutterEventChannel(
+            name: "top.moneyfly/vpn_status", binaryMessenger: messenger)
+        statusChannel.setStreamHandler(StatusStreamHandler())
+    }
+
+    /// FlutterEventChannel 的 StreamHandler：订阅时回放当前状态，之后随
+    /// NEVPNStatusDidChange 持续推送。
+    final class StatusStreamHandler: NSObject, FlutterStreamHandler {
+        func onListen(withArguments arguments: Any?,
+                      eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+            VpnCorePlugin.statusSink = events
+            VpnCorePlugin.emitCurrentStatus()
+            return nil
+        }
+
+        func onCancel(withArguments arguments: Any?) -> FlutterError? {
+            VpnCorePlugin.statusSink = nil
+            return nil
         }
     }
 
@@ -152,6 +181,11 @@ class VpnCorePlugin {
             manager.protocolConfiguration = proto
             manager.localizedDescription = "MoneyFly"
             manager.isEnabled = true
+            // 开启按需连接：扩展被 iOS 终止（内存压力/崩溃）后由系统自动重建隧道，
+            // 避免「断了就一直断」。用户手动断开时会在 handleStop 里先关掉它，
+            // 否则 NEOnDemandRuleConnect 会立刻把隧道重新拉起来。
+            manager.isOnDemandEnabled = true
+            manager.onDemandRules = [NEOnDemandRuleConnect()]
             manager.saveToPreferences { error in
                 if let error {
                     fail("保存 VPN 配置失败：\(error.localizedDescription)", result)
@@ -180,8 +214,19 @@ class VpnCorePlugin {
 
     private static func handleStop(_ result: @escaping FlutterResult) {
         withManager { manager in
-            manager?.connection.stopVPNTunnel()
-            reply(result, true)
+            guard let manager else {
+                reply(result, true)
+                return
+            }
+            // 必须先关按需再停隧道：否则 NEOnDemandRuleConnect 会在断开瞬间
+            // 立刻把隧道重新拉起来，用户「断开」等于无效。
+            manager.isOnDemandEnabled = false
+            manager.saveToPreferences { _ in
+                manager.loadFromPreferences { _ in
+                    manager.connection.stopVPNTunnel()
+                    reply(result, true)
+                }
+            }
         }
     }
 
@@ -190,12 +235,23 @@ class VpnCorePlugin {
     private static func handleIsRunning(_ result: @escaping FlutterResult) {
         withManager { manager in
             guard let status = manager?.connection.status else {
-                reply(result, false)
+                // 查询不到 manager 不代表团建已断：loadAllFromPreferences 在前后台
+                // 切换/系统繁忙的瞬间可能短暂返回空。保守返回 true（宁可不断，
+                // 也不误杀）—— 旧实现返回 false，是看门狗反复误判「内核死亡」、
+                // 连接每 1~2 分钟被重连一次的直接原因。
+                reply(result, true)
                 return
             }
             switch status {
-            case .connected, .reasserting:
+            case .connected:
                 reply(result, true)
+            case .reasserting:
+                // 卡在 reasserting 超过 10s → 隧道实际已不可用，按断开处理。
+                // 旧实现无条件返回 true，看门狗因此永远不会判死（假连接根因）。
+                let stuck = reassertingSince.map {
+                    Date().timeIntervalSince($0) > 10
+                } ?? false
+                reply(result, !stuck)
             default:
                 reply(result, false)
             }
@@ -338,10 +394,40 @@ class VpnCorePlugin {
         }
         let conn = manager.connection
         note("会话初始状态=\(statusName(conn.status))")
+        updateReasserting(conn.status)
+        emitStatus(statusName(conn.status))
         statusObserver = NotificationCenter.default.addObserver(
             forName: .NEVPNStatusDidChange, object: conn, queue: .main
         ) { _ in
-            note("NE 状态 → \(statusName(conn.status))")
+            let name = statusName(conn.status)
+            note("NE 状态 → \(name)")
+            updateReasserting(conn.status)
+            emitStatus(name)
+        }
+    }
+
+    /// 记录/清除 reasserting 起始时间（用于判断是否卡死在该中间态）。
+    private static func updateReasserting(_ status: NEVPNStatus) {
+        if status == .reasserting {
+            if reassertingSince == nil { reassertingSince = Date() }
+        } else {
+            reassertingSince = nil
+        }
+    }
+
+    /// 把当前 NE 状态回放给刚订阅的 Dart 侧。
+    static func emitCurrentStatus() {
+        withManager { manager in
+            guard let manager else { return }
+            updateReasserting(manager.connection.status)
+            emitStatus(statusName(manager.connection.status))
+        }
+    }
+
+    /// 推送状态到 Dart（主线程）。
+    static func emitStatus(_ name: String) {
+        DispatchQueue.main.async {
+            statusSink?(name)
         }
     }
 

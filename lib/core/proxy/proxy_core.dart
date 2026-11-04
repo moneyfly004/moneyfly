@@ -129,6 +129,14 @@ abstract class ProxyCore {
 
   /// 释放资源
   void dispose();
+
+  /// 隧道/内核是否仍存活（回前台校验用）。
+  /// 默认返回 [isRunning]；平台实现可覆写为更可靠的探测（如 iOS 查扩展里的内核）。
+  Future<bool> checkAlive() async => isRunning;
+
+  /// App 回到前台时的复位钩子：清理看门狗计数并给一段宽限期，避免刚恢复时
+  /// 网络仍在重连导致的误判。默认空实现。
+  void onAppResumed() {}
 }
 
 /// 平台内核工厂
@@ -1791,6 +1799,35 @@ class ConnectionController extends ChangeNotifier {
     if (status != ConnStatus.connected || !_core.isRunning) return;
     if (!autoTest) return;
     unawaited(retest());
+  }
+
+  /// 回前台时校验隧道是否还活着。
+  ///
+  /// iOS 上 PacketTunnel 扩展可能已被系统终止，而 Dart 看门狗在 App 后台时被
+  /// 挂起、收不到任何通知 → UI 会一直停在「已连接」。回到前台必须先主动查一次，
+  /// 不能等看门狗的下一个 5s 周期（它可能已经被系统冻结很久）。
+  Future<void> verifyTunnelOnResume() async {
+    if (status != ConnStatus.connected) return;
+    // 先复位看门狗计数并给宽限期：刚回前台时网络可能仍在重连，
+    // 立刻按 /version 失败判死会造成「一回来就断」。
+    _core.onAppResumed();
+    bool alive;
+    try {
+      alive = await _core.checkAlive();
+    } catch (_) {
+      alive = true; // 查询异常保守放行，避免误杀正常隧道
+    }
+    if (alive) return;
+    // 二次确认：系统恢复隧道（reasserting）需要一点时间
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    try {
+      alive = await _core.checkAlive();
+    } catch (_) {
+      alive = true;
+    }
+    if (alive) return;
+    AppLog.kernel('回前台校验：隧道已不存在 → 按异常退出处理');
+    onDisconnectedUnexpectedly();
   }
 
   /// 内核异常退出回调：未连接/用户主动断开时忽略，否则走重连或放弃

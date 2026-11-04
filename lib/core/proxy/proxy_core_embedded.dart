@@ -78,11 +78,20 @@ class ProxyCoreEmbedded extends ProxyCore {
   CancelToken? _trafficCancel;
   final List<int> _trafficBuf = [];
 
+  /// iOS：NE 状态事件通道（原生 → Dart）。系统说断了就立刻修正，不等看门狗
+  /// 的 5s 周期 —— 扩展被终止时看门狗往往已被系统冻结，等不到下一次巡检。
+  static const _vpnStatusChannel = EventChannel('top.moneyfly/vpn_status');
+  StreamSubscription<dynamic>? _vpnStatusSub;
+
   /// 看门狗连续失败计数。单次 /version 失败不判定内核死亡 —— App 切后台、
   /// 弹系统框、Doze 限流都可能让某一次轮询瞬时失败，但隧道其实还活着。
   /// 连续多次失败、且原生 VpnService 也确认已停，才判定真死亡。
   int _watchdogFailures = 0;
   static const _watchdogDeadThreshold = 3; // 连续 3 次(约15s)才判死
+
+  /// 看门狗宽限期：刚连上/刚回前台时网络可能仍在恢复，期间不探测也不累计失败，
+  /// 避免把「网络重连中的抖动」误判成内核死亡（真机日志里每 1~2 分钟断一次）。
+  DateTime? _watchdogGraceUntil;
 
   @override
   bool get isRunning => _running;
@@ -373,6 +382,8 @@ class ProxyCoreEmbedded extends ProxyCore {
     _running = false;
     _watchdog?.cancel();
     _watchdog = null;
+    unawaited(_vpnStatusSub?.cancel());
+    _vpnStatusSub = null;
     _trafficCancel?.cancel();
     _trafficCancel = null;
     try {
@@ -468,10 +479,16 @@ class ProxyCoreEmbedded extends ProxyCore {
 
   void _startWatchdog() {
     _watchdog?.cancel();
+    _listenVpnStatus();
     _watchdogFailures = 0;
+    _watchdogGraceUntil = DateTime.now().add(const Duration(seconds: 20));
     _watchdogInFlight = false;
     _watchdog = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!_running || _watchdogInFlight) return;
+      if (_watchdogGraceUntil != null &&
+          DateTime.now().isBefore(_watchdogGraceUntil!)) {
+        return; // 宽限期内不探测、不累计失败
+      }
       _watchdogInFlight = true;
       try {
         bool ok;
@@ -546,6 +563,43 @@ class ProxyCoreEmbedded extends ProxyCore {
     }
   }
 
+  /// 回前台/看门狗之外的主动存活校验：
+  /// - 原生 NE 状态必须仍是 connected（reasserting 超时会被原生判 false）；
+  /// - 扩展里的内核必须还能响应 provider message（返回 "unknown" = 扩展没响应）。
+  @override
+  Future<bool> checkAlive() async {
+    if (!_running) return false;
+    if (!await _nativeVpnAlive()) return false;
+    try {
+      final v = await _channel.invokeMethod<String>('kernelVersion');
+      return v != null && v != 'unknown';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 回前台：复位失败计数并给 20s 宽限，避免「一回来就判死」。
+  @override
+  void onAppResumed() {
+    _watchdogFailures = 0;
+    _watchdogGraceUntil = DateTime.now().add(const Duration(seconds: 20));
+  }
+
+  /// 订阅原生 NE 状态：扩展被系统终止时立刻收到 disconnected，直接按内核
+  /// 死亡处理 —— 这是「App 显示已连接、实际 VPN 已断」的核心修正。
+  void _listenVpnStatus() {
+    _vpnStatusSub ??= _vpnStatusChannel.receiveBroadcastStream().listen(
+      (event) {
+        final s = event?.toString() ?? '';
+        if ((s == 'disconnected' || s == 'invalid') && _running) {
+          AppLog.kernel('NE 状态 → $s（App 仍认为已连接）→ 按异常退出处理');
+          _onKernelDead();
+        }
+      },
+      onError: (_) {},
+    );
+  }
+
   void _onKernelDead() {
     _running = false;
     _watchdogFailures = 0;
@@ -599,6 +653,8 @@ class ProxyCoreEmbedded extends ProxyCore {
   @override
   void dispose() {
     _watchdog?.cancel();
+    unawaited(_vpnStatusSub?.cancel());
+    _vpnStatusSub = null;
     _trafficCancel?.cancel();
     _api.close(force: true);
     unawaited(stop());

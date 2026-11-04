@@ -532,6 +532,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 seq += 1
                 let rss = Self.residentMB()
                 if seq % 2 == 0 { TunnelDiag.heartbeat(seq: seq / 2, rssMB: rss) }
+                // 每 10 拍（约 5s）校验一次内核是否还在跑：进程活着但内核已死
+                // 是最隐蔽的「假连接」—— App 侧 /version 走回环也可能失败，但
+                // NEVPNStatus 仍是 connected。这里主动拿下隧道，交给按需规则重建。
+                if seq % 10 == 0 {
+                    #if canImport(Mihomelib)
+                    if !MihomelibRunning() {
+                        TunnelDiag.log("heartbeat: 内核已停止 → cancelTunnelWithError")
+                        DispatchQueue.main.async {
+                            self.cancelTunnelWithError(
+                                self.tunnelError("内核已停止运行（heartbeat 检测）"))
+                        }
+                        break
+                    }
+                    #endif
+                }
                 Thread.sleep(forTimeInterval: 0.5)
             }
         }
@@ -801,7 +816,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler()
     }
 
-    override func wake() {}
+    override func wake() {
+        TunnelDiag.log("wake")
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            #if canImport(Mihomelib)
+            if !MihomelibRunning() {
+                TunnelDiag.log("wake: 内核已停止 → cancelTunnelWithError")
+                self.cancelTunnelWithError(self.tunnelError("唤醒后内核未运行"))
+                return
+            }
+            #endif
+            // 唤醒后物理出口可能已变（Wi-Fi↔蜂窝）：重新挑接口并热更新内核绑定，
+            // 否则内核仍绑在旧网卡上 → 所有出站 i/o timeout（假连接）。
+            if let iface = Self.pickPhysicalInterface() {
+                self.boundInterface = iface
+                self.patchInterfaceName(iface)
+            }
+        }
+    }
 
     // MARK: - 内核
 

@@ -528,6 +528,9 @@ class _MoneyFlyAppState extends State<MoneyFlyApp> with WidgetsBindingObserver, 
     // 回前台自动补一次静默刷新(距上次成功 ≥10 分钟才拉,避免 JWT 抖动)
     if (state == AppLifecycleState.resumed) {
       SubscriptionScheduler.instance.onAppResumed();
+      // iOS：扩展可能在后台被系统终止，回到前台先校验一次隧道是否还在，
+      // 避免 UI 停在「已连接」（详情见 ConnectionController.verifyTunnelOnResume）
+      ConnectionController.instance.verifyTunnelOnResume();
     }
   }
 

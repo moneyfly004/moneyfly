@@ -87,6 +87,9 @@ class _FakeKernel implements ProxyCore {
   bool get isRunning => startCalls.isNotEmpty;
 
   @override
+  Future<bool> checkAlive() async => isRunning;
+
+  @override
   String? get lastError => 'fake kernel';
 
   @override

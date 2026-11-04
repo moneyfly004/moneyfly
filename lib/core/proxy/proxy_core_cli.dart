@@ -131,6 +131,10 @@ class ProxyCoreCli extends ProxyCore {
   @override
   bool get isRunning => _proc != null;
 
+  /// 回前台存活校验：桌面端内核是子进程，进程在即存活。
+  @override
+  Future<bool> checkAlive() async => isRunning;
+
   @override
   String? get lastError => _lastError;
 
