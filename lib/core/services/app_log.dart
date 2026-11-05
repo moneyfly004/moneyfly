@@ -5,12 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../utils/log_rotation.dart';
-import '../utils/serial_executor.dart';
+import '../utils/bounded_log_queue.dart';
 
 /// 应用诊断日志：记录连接状态变化、内核事件、错误、闪退等关键事件。
 /// 所有日志写入 app_log.txt，设置页可导出给开发者排查问题。
 ///
-/// 写路径经 [SerialExecutor] 串行化：append 与旋转进同一条队列，杜绝并发
+/// 写路径经 [BoundedLogQueue] 串行化：append 与旋转进同一条队列，杜绝并发
 /// fire-and-forget 的「读半份改写」竞态（丢行/截断内容互相污染）。
 class AppLog {
   AppLog._();
@@ -18,7 +18,10 @@ class AppLog {
   static File? _file;
   static const _maxSize = 512 * 1024; // 512KB
 
-  static final SerialExecutor _queue = SerialExecutor();
+  static final BoundedLogQueue _queue = BoundedLogQueue((batch) async {
+    final f = await _resolve();
+    if (f != null) await appendBoundedLog(f, batch, maxBytes: _maxSize);
+  });
 
   static Future<File?> _resolve() async {
     if (_file != null) return _file;
@@ -38,11 +41,10 @@ class AppLog {
   }
 
   /// 获取日志内容（设置页预览用）
-  static Future<String> read() async {
+  static Future<String> read() => _queue.run(() async {
     final f = await _resolve();
-    if (f == null || !f.existsSync()) return '';
-    return f.readAsString();
-  }
+    return f == null ? '' : readLogTail(f);
+  });
 
   /// 清空日志（入队执行，避免与在写 append 交错）
   static Future<void> clear() {
@@ -57,7 +59,9 @@ class AppLog {
   /// 写入一条日志（fire-and-forget，不阻塞调用方）
   static void log(String tag, String message) {
     if (kIsWeb) return;
-    _writeAsync('[${DateTime.now().toIso8601String()}] [$tag] $message\n');
+    _writeAsync(
+      '[${DateTime.now().toIso8601String()}] [${capLogRecord(tag, maxBytes: 1024)}] ${capLogRecord(message)}\n',
+    );
   }
 
   /// 连接状态变化
@@ -72,18 +76,5 @@ class AppLog {
   /// 网络事件
   static void net(String message) => log('NET', message);
 
-  static void _writeAsync(String line) {
-    _queue.run(() async {
-      try {
-        final f = await _resolve();
-        if (f == null) return;
-        await f.writeAsString(line, mode: FileMode.append, flush: false);
-        // 超 512KB：保留后半（按整行旋转，避免截断半个字符/半行）
-        if (await f.length() > _maxSize) {
-          final content = await f.readAsString();
-          await f.writeAsString(keepSecondHalf(content), flush: true);
-        }
-      } catch (_) {}
-    });
-  }
+  static void _writeAsync(String line) => _queue.add(line);
 }

@@ -8,7 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../utils/log_rotation.dart';
-import '../utils/serial_executor.dart';
+import '../utils/bounded_log_queue.dart';
 import 'endpoints.dart';
 import 'refresh_policy.dart';
 import 'server_pool.dart';
@@ -24,45 +24,20 @@ class ApiClient {
   static Dio? debugDio;
 
   ApiClient._internal() {
-    _dio = debugDio ?? Dio(BaseOptions(
-      baseUrl: Endpoints.baseUrl,
-      connectTimeout: const Duration(seconds: 12),
-      receiveTimeout: const Duration(seconds: 25),
-      sendTimeout: const Duration(seconds: 15),
-      headers: {'Accept': 'application/json', 'User-Agent': userAgent},
-    ));
+    _dio =
+        debugDio ??
+        Dio(
+          BaseOptions(
+            baseUrl: Endpoints.baseUrl,
+            connectTimeout: const Duration(seconds: 12),
+            receiveTimeout: const Duration(seconds: 25),
+            sendTimeout: const Duration(seconds: 15),
+            headers: {'Accept': 'application/json', 'User-Agent': userAgent},
+          ),
+        );
     if (debugDio != null) return; // 测试环境：跳过 JWT 拦截器
-    // 请求日志（写入 App Support 目录 http.log，登录/网络问题排查用）
-    _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (o, h) {
-        _logHttp('>>> ${o.method} ${_maskUri(o.uri)}\n'
-            '    body: ${_isSensitivePath(o.path) ? '[REDACTED]' : o.data}');
-        h.next(o);
-      },
-      onResponse: (r, h) {
-        final data = r.data;
-        // 二进制响应（订阅原文按 bytes 拉取以支持 gzip 解压）不做 toString：
-        // 否则整份内容会变成 "[1, 2, 3, ...]" 巨串写进 http.log，既无意义又费内存
-        final body = data is String
-            ? data
-            : (data is List<int>
-                ? '<binary ${data.length}B>'
-                : (data?.toString() ?? ''));
-        // 敏感接口（登录/刷新/改密）响应体含 token，同样脱敏，避免凭据明文落盘
-        final masked = _isSensitivePath(r.requestOptions.path) ? '[REDACTED]' : body;
-        _logHttp('<<< ${r.statusCode} ${_maskUri(r.requestOptions.uri)}\n'
-            '    body: ${masked.length > 400 ? masked.substring(0, 400) : masked}');
-        h.next(r);
-      },
-      onError: (e, h) {
-        final respBody = _isSensitivePath(e.requestOptions.path)
-            ? '[REDACTED]'
-            : e.response?.data;
-        _logHttp('!!! ${e.type} ${_maskUri(e.requestOptions.uri)} status=${e.response?.statusCode}\n'
-            '    err: $e\n    resp: $respBody');
-        h.next(e);
-      },
-    ));
+    // Deliberately metadata-only: never format bodies, headers or exceptions.
+    _dio.interceptors.add(buildLogInterceptor(_logHttp));
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -77,8 +52,8 @@ class ApiClient {
           final overrideUa = options.extra['_ua']?.toString();
           options.headers['User-Agent'] =
               (overrideUa != null && overrideUa.isNotEmpty)
-                  ? overrideUa
-                  : userAgent;
+              ? overrideUa
+              : userAgent;
           // 注入设备详情头（型号/品牌/OS/类型），后端据此补充 UA 解析不全的设备信息
           for (final e in UserAgent.deviceHeaders.entries) {
             options.headers[e.key] = e.value;
@@ -99,7 +74,8 @@ class ApiClient {
         onError: (e, handler) async {
           final resp = e.response;
           final noSession = e.requestOptions.extra['_noSessionExpired'] == true;
-          if (resp?.statusCode == 401 && !noSession &&
+          if (resp?.statusCode == 401 &&
+              !noSession &&
               e.requestOptions.extra['_retried'] != true) {
             e.requestOptions.extra['_retried'] = true;
             final outcome = await _tryRefresh();
@@ -123,13 +99,17 @@ class ApiClient {
             // 传输层失败（超时/连不上/5xx…）：**不登出**，如实报「网络异常」。
             // 旧实现把这种情况也当会话失效 → 客户网络/代理一抖就被踢回登录页，
             // 这正是「软件无故退出」的主因（见 refresh_policy.dart 文件头注释）。
-            _logHttp('!!! 刷新失败（传输层）→ 保留会话，报网络错误: ${e.requestOptions.uri}');
-            return handler.next(DioException(
-              requestOptions: e.requestOptions,
-              response: e.response,
-              type: DioExceptionType.connectionError,
-              error: '令牌刷新失败：网络不可用',
-            ));
+            _logHttp(
+              '!!! 刷新失败（传输层）→ 保留会话，报网络错误: ${_maskUri(e.requestOptions.uri)}',
+            );
+            return handler.next(
+              DioException(
+                requestOptions: e.requestOptions,
+                response: e.response,
+                type: DioExceptionType.connectionError,
+                error: '令牌刷新失败：网络不可用',
+              ),
+            );
           }
           handler.next(e);
         },
@@ -138,7 +118,12 @@ class ApiClient {
 
     // 域名轮换拦截器（最后添加 → onError 最先执行）：见 server_pool.dart
     // 的实现与说明（只在「连接层失败」时换域名重试，4xx/5xx 业务错误不换）。
-    _dio.interceptors.add(buildServerFailoverInterceptor(_dio, onLog: _logHttp));
+    _dio.interceptors.add(
+      buildServerFailoverInterceptor(
+        _dio,
+        onLog: (_) => _logHttp('domain failover event'),
+      ),
+    );
   }
 
   static ApiClient? _instance;
@@ -202,7 +187,7 @@ class ApiClient {
       await _storage.write(key: 'access_token', value: access);
       await _storage.write(key: 'refresh_token', value: refresh);
     } catch (e) {
-      _logHttp('!!! token 持久化失败（内存兜底）: $e');
+      _logHttp('!!! token 持久化失败（内存兜底）: ${e.runtimeType}');
     }
   }
 
@@ -216,7 +201,7 @@ class ApiClient {
       await _storage.delete(key: 'access_token');
       await _storage.delete(key: 'refresh_token');
     } catch (e) {
-      _logHttp('!!! token 清除失败（内存已清空，视为已登出）: $e');
+      _logHttp('!!! token 清除失败（内存已清空，视为已登出）: ${e.runtimeType}');
     }
   }
 
@@ -248,13 +233,17 @@ class ApiClient {
         // _noDomainFailover：刷新**禁止**换域名重试 —— 该接口会轮换并拉黑旧
         // refresh_token，第一次已成功而响应丢失时，换域名拿同一个旧 token 再刷
         // 必然 401，反而把用户登出。
-        final r = await _dio.post(Endpoints.refresh,
-            data: {'refresh_token': rt},
-            options: Options(extra: {
+        final r = await _dio.post(
+          Endpoints.refresh,
+          data: {'refresh_token': rt},
+          options: Options(
+            extra: {
               '_noSessionExpired': true,
               '_retried': true,
               '_noDomainFailover': true,
-            }));
+            },
+          ),
+        );
         final data = _unwrap(r.data);
         // 200 但正文不是标准信封（网关/WAF 页、维护页、后端改字段名）→ **不登出**：
         // 只当传输层异常，退避重试后如实报网络错误，会话留着。
@@ -272,10 +261,12 @@ class ApiClient {
       } catch (e) {
         final outcome = classifyRefreshError(e);
         if (outcome == RefreshOutcome.rejected) {
-          _logHttp('!!! 刷新令牌被服务端拒绝 → 需要重新登录（$e）');
+          _logHttp('!!! 刷新令牌被服务端拒绝 → 需要重新登录（${e.runtimeType}）');
           return RefreshOutcome.rejected;
         }
-        _logHttp('!!! 刷新令牌失败（第 $attempt/$kRefreshMaxAttempts 次，传输层）: $e');
+        _logHttp(
+          '!!! 刷新令牌失败（第 $attempt/$kRefreshMaxAttempts 次，传输层）: ${e.runtimeType}',
+        );
         if (attempt == kRefreshMaxAttempts) break;
         await Future<void>.delayed(refreshBackoff(attempt));
       }
@@ -309,11 +300,13 @@ class ApiClient {
     List<String>? bases,
   }) async {
     final list = bases ?? ServerPool.instance.all;
-    final dio = Dio(BaseOptions(
-      connectTimeout: timeout,
-      receiveTimeout: timeout,
-      headers: {'Accept': 'application/json', 'User-Agent': userAgent},
-    ));
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: timeout,
+        receiveTimeout: timeout,
+        headers: {'Accept': 'application/json', 'User-Agent': userAgent},
+      ),
+    );
     final ok = <({String base, int ms})>[];
     for (final base in list) {
       final sw = Stopwatch()..start();
@@ -344,7 +337,10 @@ class ApiClient {
   static Future<File?>? _logFileFuture;
 
   /// http.log 串行写队列：append 与旋转依次执行，杜绝并发交错/半份改写
-  static final SerialExecutor _logQueue = SerialExecutor();
+  static final _logQueue = BoundedLogQueue((batch) async {
+    final f = await _resolveLogFile();
+    if (f != null) await appendBoundedLog(f, batch);
+  });
 
   static Future<File?> _resolveLogFile() async {
     _logFileFuture ??= () async {
@@ -358,48 +354,33 @@ class ApiClient {
     return _logFileFuture;
   }
 
-  /// 响应体/请求体含凭据的敏感接口（登录/刷新/改密/验证码）。
-  /// 这类路径的请求体与响应体都脱敏，避免 access_token/refresh_token 明文落盘。
-  static const _sensitivePaths = [
-    '/auth/login', '/auth/refresh', '/auth/register', '/auth/reset-password',
-    '/auth/forgot-password', '/auth/verification', '/users/change-password',
-  ];
+  /// URI paths can themselves contain subscription credentials. Keep no URI
+  /// components: endpoint diagnostics must never become credential storage.
+  static String _maskUri(Uri _) => '[URI omitted]';
 
-  static bool _isSensitivePath(String path) =>
-      _sensitivePaths.any((p) => path.contains(p));
-
-  /// 日志用 URI 脱敏：query 含 token/subscribe_url 等敏感参数时整体打码，
-  /// 避免订阅地址/token 明文落盘 http.log（凭据泄露风险）
-  static String _maskUri(Uri u) {
-    try {
-      const sensitiveKeys = ['token', 'access_token', 'subscription_url', 'subscribe_url', 'key'];
-      final q = u.queryParameters;
-      if (q.keys.any(sensitiveKeys.contains)) {
-        return u.replace(query: '[REDACTED]').toString();
-      }
-    } catch (_) {}
-    return u.toString();
-  }
+  @visibleForTesting
+  static Interceptor buildLogInterceptor(void Function(String) sink) =>
+      InterceptorsWrapper(
+        onRequest: (o, h) {
+          sink('>>> request ${_maskUri(o.uri)} [body omitted]');
+          h.next(o);
+        },
+        onResponse: (r, h) {
+          sink('<<< status=${r.statusCode} [body omitted]');
+          h.next(r);
+        },
+        onError: (e, h) {
+          sink(
+            '!!! type=${e.type.name} status=${e.response?.statusCode} '
+            '[error and body omitted]',
+          );
+          h.next(e);
+        },
+      );
 
   static void _logHttp(String line) {
     if (kIsWeb) return;
-    // 不 await：日志写入绝不阻塞请求链路；经串行队列避免并发交错
-    _logQueue.run(() async {
-      try {
-        final f = await _resolveLogFile();
-        if (f == null) return;
-        await f.writeAsString(
-          '[${DateTime.now().toIso8601String()}] $line\n',
-          mode: FileMode.append,
-          flush: false,
-        );
-        // 大小上限：超 512KB 截断保留尾部（按整行，避免切半个字符）
-        if (await f.length() > 512 * 1024) {
-          final content = await f.readAsString();
-          await f.writeAsString(keepSecondHalf(content), flush: true);
-        }
-      } catch (_) {}
-    });
+    _logQueue.add('[${DateTime.now().toIso8601String()}] $line\n');
   }
 
   // ---------- 统一解包 ----------
@@ -419,10 +400,16 @@ class ApiClient {
   }
 
   /// GET：返回解包后的 data
-  Future<dynamic> get(String path,
-      {Map<String, dynamic>? query, Map<String, dynamic>? extra}) async {
-    final r = await _dio.get(path,
-        queryParameters: query, options: Options(extra: extra));
+  Future<dynamic> get(
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? extra,
+  }) async {
+    final r = await _dio.get(
+      path,
+      queryParameters: query,
+      options: Options(extra: extra),
+    );
     return _unwrap(r.data);
   }
 
@@ -430,9 +417,17 @@ class ApiClient {
   /// [extra] 传 {'_noSessionExpired': true} 可跳过 401 会话过期触发
   /// （logout 用：避免 token 失效后 logout 自身 401 → onSessionExpired →
   /// 再次 logout → 无限递归循环）。
-  Future<dynamic> post(String path,
-      {Object? data, bool raw = false, Map<String, dynamic>? extra}) async {
-    final r = await _dio.post(path, data: data, options: Options(extra: extra));
+  Future<dynamic> post(
+    String path, {
+    Object? data,
+    bool raw = false,
+    Map<String, dynamic>? extra,
+  }) async {
+    final r = await _dio.post(
+      path,
+      data: data,
+      options: Options(extra: extra),
+    );
     return raw ? r.data : _unwrap(r.data);
   }
 
@@ -507,7 +502,8 @@ class ApiClient {
         // 网关/WAF/运营商的拦截页原样塞进提示框客户既看不懂，还会被
         // subscription_service 的关键词判据误用（把正在用的连接断开、清空节点）。
         final s = d.trim();
-        final looksHtml = s.startsWith('<') ||
+        final looksHtml =
+            s.startsWith('<') ||
             s.contains('<html') ||
             s.contains('<!DOCTYPE') ||
             s.contains('<body');

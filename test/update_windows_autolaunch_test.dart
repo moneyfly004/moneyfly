@@ -15,7 +15,6 @@ import 'package:moneyfly/core/services/update_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Windows 上 File.path 用的是反斜杠，断言前统一成正斜杠再比
-String _norm(String p) => p.replaceAll('\\', '/');
 
 Directory _tmpCache() {
   final d = Directory.systemTemp.createTempSync('mf_update_cache');
@@ -59,25 +58,26 @@ void main() {
       UpdateInfo.currentVersion = '2.2.13';
       _installer(cache, '2.2.12'); // 旧包：用户手里可能留着
       _installer(cache, '2.2.13'); // 同版本
-      final newer = _installer(cache, '2.2.14');
+      _installer(cache, '2.2.14');
 
       final pending = await UpdateService.instance.pendingNewerInstaller();
 
-      expect(pending, isNotNull);
-      expect(pending!.version, '2.2.14');
-      expect(_norm(pending.path), _norm(newer.path));
+      expect(
+        pending,
+        isNull,
+        reason: 'filename discovery cannot authorize execution',
+      );
     });
 
     test('多个候选取版本最高的', () async {
       UpdateInfo.currentVersion = '2.2.13';
       _installer(cache, '2.2.14');
-      final highest = _installer(cache, '2.2.20');
+      _installer(cache, '2.2.20');
       _installer(cache, '2.2.15');
 
       final pending = await UpdateService.instance.pendingNewerInstaller();
 
-      expect(_norm(pending!.path), _norm(highest.path));
-      expect(pending.version, '2.2.20');
+      expect(pending, isNull);
     });
 
     test('空文件（下到一半/被杀）不算待安装', () async {
@@ -90,12 +90,13 @@ void main() {
     test('非本平台安装器（APK/DMG/zip）一律忽略', () async {
       UpdateInfo.currentVersion = '2.2.13';
       final d = _updateDir(cache);
-      File('${d.path}/MoneyFly-android-arm64-v8a-2.2.14.apk')
-          .writeAsBytesSync([1, 2, 3]);
-      File('${d.path}/MoneyFly-macos-arm64-2.2.14.dmg')
-          .writeAsBytesSync([1, 2, 3]);
-      File('${d.path}/MoneyFly-setup-2.2.14.exe.sha256')
-          .writeAsStringSync('x');
+      File(
+        '${d.path}/MoneyFly-android-arm64-v8a-2.2.14.apk',
+      ).writeAsBytesSync([1, 2, 3]);
+      File(
+        '${d.path}/MoneyFly-macos-arm64-2.2.14.dmg',
+      ).writeAsBytesSync([1, 2, 3]);
+      File('${d.path}/MoneyFly-setup-2.2.14.exe.sha256').writeAsStringSync('x');
 
       expect(await UpdateService.instance.pendingNewerInstaller(), isNull);
     });
@@ -118,11 +119,21 @@ void main() {
         return true;
       };
 
-      final ok =
-          await UpdateService.instance.installWindowsSilently('/tmp/x.exe');
+      final file = _installer(cache, '2.2.14');
+      final info = UpdateService.trustInfoForTest(
+        UpdateInfo(
+          latestVersion: '2.2.14',
+          assetName: 'MoneyFly-setup-2.2.14.exe',
+          sha256: UpdateService.sha256HexForTest(file.readAsBytesSync()),
+        ),
+      );
+      final ok = await UpdateService.instance.installWindowsSilently(
+        file.path,
+        info,
+      );
 
       expect(ok, isTrue);
-      expect(gotExe, '/tmp/x.exe');
+      expect(gotExe, file.path);
       expect(gotArgs, contains('/SILENT'));
       // 静默模式下不再弹任何确认框
       expect(gotArgs, contains('/SP-'));
@@ -135,8 +146,10 @@ void main() {
     test('启动安装器失败 → 返回 false（上层回退到手动更新）', () async {
       UpdateService.debugStartDetached = (_, _) async => false;
 
-      expect(await UpdateService.instance.installWindowsSilently('/tmp/x.exe'),
-          isFalse);
+      expect(
+        await UpdateService.instance.installWindowsSilently('/tmp/x.exe'),
+        isFalse,
+      );
     });
   });
 }

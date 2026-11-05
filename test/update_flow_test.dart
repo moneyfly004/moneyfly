@@ -17,16 +17,22 @@ import 'package:moneyfly/core/services/update_service.dart';
 import 'package:moneyfly/widgets/update_prompt.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-UpdateInfo _info(String version,
-        {String sha256 = '', String? url, String? name, int sizeBytes = 0}) =>
-    UpdateInfo(
-      latestVersion: version,
-      downloadUrl: url ?? 'https://example.com/$version.pkg',
-      sizeText: '1 MB',
-      assetName: name ?? 'MoneyFly-macos-arm64-$version.dmg',
-      sha256: sha256,
-      sizeBytes: sizeBytes,
-    );
+UpdateInfo _info(
+  String version, {
+  String sha256 = '',
+  String? url,
+  String? name,
+  int sizeBytes = 0,
+}) => UpdateService.trustInfoForTest(
+  UpdateInfo(
+    latestVersion: version,
+    downloadUrl: url ?? 'https://example.com/$version.pkg',
+    sizeText: '1 MB',
+    assetName: name ?? 'MoneyFly-macos-arm64-$version.dmg',
+    sha256: sha256.isEmpty ? _sha256Hex('installer') : sha256,
+    sizeBytes: sizeBytes,
+  ),
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -81,7 +87,7 @@ void main() {
       var calls = 0;
       UpdateService.debugDownloadOverride = (url, path) async {
         calls++;
-        await File(path).writeAsString('fake-installer');
+        await File(path).writeAsString('installer');
       };
       final info = _info('1.0.1');
 
@@ -118,8 +124,9 @@ void main() {
       UpdateService.debugDownloadOverride = (url, path) async {
         await File(path).writeAsString(content);
       };
-      final p = await UpdateService.instance
-          .downloadInstaller(info: _info('1.0.1', sha256: expectHash));
+      final p = await UpdateService.instance.downloadInstaller(
+        info: _info('1.0.1', sha256: expectHash),
+      );
       expect(p, isNotNull);
     });
 
@@ -128,7 +135,7 @@ void main() {
       UpdateService.debugDownloadOverride = (url, path) async {
         calls++;
         await Future<void>.delayed(const Duration(milliseconds: 50));
-        await File(path).writeAsString('x');
+        await File(path).writeAsString('installer');
       };
       final info = _info('1.0.1');
       final results = await Future.wait([
@@ -142,17 +149,27 @@ void main() {
     test('downloadedInstaller：没下过返回 null，下过返回路径', () async {
       final info = _info('1.0.1');
       expect(await UpdateService.instance.downloadedInstaller(info), isNull);
-      UpdateService.debugDownloadOverride =
-          (url, path) async => File(path).writeAsString('x');
+      UpdateService.debugDownloadOverride = (url, path) async =>
+          File(path).writeAsString('installer');
       final p = await UpdateService.instance.downloadInstaller(info: info);
       expect(await UpdateService.instance.downloadedInstaller(info), p);
     });
 
-    test('launchInstaller 走测试缝并回传结果', () async {
-      UpdateService.debugLaunchInstallerOverride = (path) async =>
-          path.endsWith('.dmg');
-      expect(await UpdateService.instance.launchInstaller('/tmp/a.dmg'), isTrue);
-      expect(await UpdateService.instance.launchInstaller('/tmp/a.exe'), isFalse);
+    test('launchInstaller verifies before invoking process seam', () async {
+      final info = _info('1.0.1');
+      final dir = Directory('${tmp.path}/update')..createSync();
+      final file = File('${dir.path}/${info.assetName}')
+        ..writeAsStringSync('installer');
+      UpdateService.debugLaunchInstallerOverride = (_) async => true;
+      expect(
+        await UpdateService.instance.launchInstaller(file.path, info),
+        isTrue,
+      );
+      file.writeAsStringSync('replaced!');
+      expect(
+        await UpdateService.instance.launchInstaller(file.path, info),
+        isFalse,
+      );
     });
   });
 
@@ -160,13 +177,20 @@ void main() {
     // 说明：这两条用例刻意**不**在 runAsync 里 await 弹窗流程 ——
     // 弹窗会一直等到用户点按钮，包在 runAsync 里就是死锁（实测把整轮测试挂死）。
     // 文件也都用同步 API 造好，避免真实 I/O 与 fake-async 泵冲突。
-    Future<void> pumpHost(WidgetTester tester, void Function(BuildContext) onCtx) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(builder: (c) {
-          onCtx(c);
-          return const SizedBox();
-        }),
-      ));
+    Future<void> pumpHost(
+      WidgetTester tester,
+      void Function(BuildContext) onCtx,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (c) {
+              onCtx(c);
+              return const SizedBox();
+            },
+          ),
+        ),
+      );
     }
 
     testWidgets('发现新版本 → 弹窗；点「稍后」记住版本，同版本不再弹', (tester) async {
@@ -189,8 +213,10 @@ void main() {
       await tester.pumpAndSettle();
       await flow;
 
-      expect((await SettingsStore.instance.load())['dismissedUpdateVersion'],
-          '1.0.1');
+      expect(
+        (await SettingsStore.instance.load())['dismissedUpdateVersion'],
+        '1.0.1',
+      );
 
       // 同版本再次进入 → 不再打扰
       UpdatePrompt.debugReset();
@@ -232,6 +258,12 @@ void main() {
 
       final flow = UpdatePrompt.installNow(ctx, info: info); // 不 await
       await tester.pump();
+      for (var n = 0; n < 12; n++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+        await tester.pump();
+      }
       await tester.pumpAndSettle();
 
       if (Platform.isMacOS) {
@@ -272,9 +304,13 @@ void main() {
       await tester.pumpAndSettle();
       await flow;
 
-      expect(launchedInstaller, isFalse,
-          reason: '移动端不走应用内安装（安卓需 FileProvider+安装意图，真机行为无法在'
-              '开发机验证；iOS 系统不允许自更新）→ 只能给下载页');
+      expect(
+        launchedInstaller,
+        isFalse,
+        reason:
+            '移动端不走应用内安装（安卓需 FileProvider+安装意图，真机行为无法在'
+            '开发机验证；iOS 系统不允许自更新）→ 只能给下载页',
+      );
       expect(openedUrl, isNotNull, reason: '应打开与本机架构匹配的下载地址');
     });
 

@@ -66,7 +66,7 @@ class MacTunHelper {
     final script = '''
 set -e
 tmp="\$(mktemp /tmp/mf-sudoers.XXXXXX)"
-printf '%s\\n' '# MoneyFly TUN —— 仅允许该用户免密以 root 运行下面这一个内核' '$user ALL=(root) NOPASSWD: $escapedCore' > "\$tmp"
+printf '%s\\n' '# MoneyFly TUN —— 允许该用户免密以 root 运行内核 + 强制清理残留内核进程' '$user ALL=(root) NOPASSWD: $escapedCore' '$user ALL=(root) NOPASSWD: /usr/bin/pkill -9 -f moneyfly_core' > "\$tmp"
 VISUDO="/usr/sbin/visudo"
 "\$VISUDO" -cf "\$tmp" >/dev/null
 install -m 0440 -o root -g wheel "\$tmp" $sudoersFile

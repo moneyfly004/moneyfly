@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
@@ -118,12 +119,17 @@ class UpdateService {
   /// `Authorization: Bearer <登录 token>`，GitHub 对无效 Bearer 一律返回 401
   /// （实测日志 Bad credentials）→ 检测永远失败、UI 误报「已是最新版本」。
   /// 这里不带任何登录态，只带 UA 直连 GitHub。
-  static final Dio _ghDio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 12),
-    receiveTimeout: const Duration(seconds: 25),
-    sendTimeout: const Duration(seconds: 15),
-    headers: {'Accept': 'application/json', 'User-Agent': ApiClient.userAgent},
-  ));
+  static final Dio _ghDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 25),
+      sendTimeout: const Duration(seconds: 15),
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': ApiClient.userAgent,
+      },
+    ),
+  );
 
   /// 上一次 check() 是否**因为失败**而没拿到结果（网络全不通 / 面板不可用），
   /// 与「已是最新版本」是两件事：UI 必须据此显示「检查更新失败」而不是「已是最新」。
@@ -136,50 +142,107 @@ class UpdateService {
   static Dio get _gh => debugGhDio ?? _ghDio;
 
   /// 最近一次成功的通道下标（0 = 直连，>0 = [GhMirror.prefixes] 里第 n 个镜像）。
-  /// 记住它有两个作用：后续的校验和与安装包下载直接走同一通道，不必各自再试错一轮；
-  /// 「打开下载页」也能据此把 GitHub 直链换成国内镜像地址。
+  /// Used for payload transport only; never checksum metadata or browser pages.
   static int _ghChannel = 0;
 
   /// 当前是否已在走镜像通道（供日志/排查使用）
   static bool get usingGhMirror => _ghChannel > 0;
 
-  /// 候选尝试顺序：先试上次成功的通道，再按「直连 → 各镜像」补齐其余。
-  static List<int> _attemptOrder(String url) {
-    final n = GhMirror.candidates(url).length;
-    if (n <= 1) return [for (var i = 0; i < n; i++) i];
-    final start = _ghChannel.clamp(0, n - 1);
-    return [start, for (var i = 0; i < n; i++) if (i != start) i];
+  /// Browser fallback always opens the authoritative release page, never a mirror.
+  static String mirroredUrl(String url) => url;
+
+  static final Set<UpdateInfo> _trustedInfos = <UpdateInfo>{};
+
+  /// Test fixtures represent metadata obtained over the authoritative channel.
+  @visibleForTesting
+  static UpdateInfo trustInfoForTest(UpdateInfo info) {
+    _trustedInfos.add(info);
+    return info;
   }
 
-  /// 带镜像兜底的请求：直连不通（连接层错误/超时）就依次换镜像重试；
-  /// 全部失败返回 null 并记日志（调用方各自决定「当作没有更新」还是「放弃校验」）。
-  static Future<T?> _withMirrorFallback<T>(
-    String url,
-    Future<T> Function(String url) attempt,
-  ) async {
-    Object? lastError;
-    for (final idx in _attemptOrder(url)) {
-      final candidate = GhMirror.at(url, idx);
-      try {
-        final result = await attempt(candidate);
-        if (idx != _ghChannel) {
-          AppLog.net(
-              'GitHub 通道切换为${idx == 0 ? '直连' : '镜像 #$idx'}（$candidate）');
-        }
-        _ghChannel = idx;
-        return result;
-      } catch (e) {
-        lastError = e;
-      }
+  String? lastFailure;
+
+  bool _trusted(UpdateInfo? info) =>
+      info != null &&
+      _trustedInfos.contains(info) &&
+      RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(info.sha256);
+
+  static bool validAssetName(String name) =>
+      name.isNotEmpty &&
+      name.length <= 240 &&
+      !RegExp(r'[<>:"/\\|?*\x00-\x1f]').hasMatch(name) &&
+      !name.endsWith('.') &&
+      !name.endsWith(' ') &&
+      name != '.' &&
+      name != '..' &&
+      !RegExp(
+        r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)',
+        caseSensitive: false,
+      ).hasMatch(name);
+
+  static String _normalized(String path) {
+    final normalized = File(path).absolute.uri.normalizePath().toFilePath();
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  static bool _within(String root, String child) => _normalized(
+    child,
+  ).startsWith('${_normalized(root)}${Platform.pathSeparator}');
+
+  /// Resolve both directory and file: reject symlinks/junction escapes as well
+  /// as Windows separators/drive names on non-Windows test hosts.
+  Future<File?> _assetFile(String name) async {
+    if (!validAssetName(name)) return null;
+    final dir = await _updateDir();
+    if (dir == null) return null;
+    final root = dir.resolveSymbolicLinksSync();
+    final file = File('$root${Platform.pathSeparator}$name');
+    final type = FileSystemEntity.typeSync(file.path, followLinks: false);
+    if (type != FileSystemEntityType.notFound &&
+        type != FileSystemEntityType.file) {
+      return null;
     }
-    AppLog.error('GitHub 直连与镜像均不可用: $url（$lastError）');
-    return null;
+    if (file.existsSync() && !_within(root, file.resolveSymbolicLinksSync())) {
+      return null;
+    }
+    return file;
   }
 
-  /// 供「打开下载页」用：把 GitHub 直链换成当前已确认可用的通道地址。
-  /// 直连正常（从未切换过通道）时原样返回，不改变既有行为。
-  static String mirroredUrl(String url) =>
-      _ghChannel == 0 ? url : GhMirror.at(url, _ghChannel);
+  /// HTTPS origin authentication, not a publisher signature. Only GitHub's
+  /// release CDN may receive redirects; mirrors never supply trust metadata.
+  static Future<Response<dynamic>> _authoritativeGet(
+    String url, {
+    bool plain = false,
+  }) async {
+    var uri = Uri.parse(url);
+    for (var hop = 0; hop < 5; hop++) {
+      if (uri.scheme != 'https' ||
+          uri.userInfo.isNotEmpty ||
+          uri.port != 443 ||
+          !{
+            'api.github.com',
+            'github.com',
+            'release-assets.githubusercontent.com',
+            'objects.githubusercontent.com',
+          }.contains(uri.host)) {
+        throw StateError('Untrusted update metadata origin');
+      }
+      final response = await _gh.get<dynamic>(
+        uri.toString(),
+        options: Options(
+          followRedirects: false,
+          responseType: plain ? ResponseType.plain : ResponseType.json,
+          validateStatus: (s) =>
+              s == 200 || {301, 302, 303, 307, 308}.contains(s),
+        ),
+      );
+      if (response.statusCode == 200) return response;
+      final location = response.headers.value('location');
+      if (location == null) throw StateError('Missing metadata redirect');
+      uri = uri.resolve(location);
+    }
+    throw StateError('Too many metadata redirects');
+  }
 
   /// 测试缝：替换整段「查最新版本」逻辑（单测不打网络）
   @visibleForTesting
@@ -187,7 +250,8 @@ class UpdateService {
 
   /// 测试缝：替换真实下载（单测不写盘、不打网络）
   @visibleForTesting
-  static Future<void> Function(String url, String savePath)? debugDownloadOverride;
+  static Future<void> Function(String url, String savePath)?
+  debugDownloadOverride;
 
   /// 测试缝：替换「调起安装器」
   @visibleForTesting
@@ -213,15 +277,17 @@ class UpdateService {
       hasUpdate.value = _cacheInfo!.isNewer;
       return _cacheInfo;
     }
-    // 先问 GitHub（信息最全）；直连不通时再问自己的面板（见 _checkViaPanel）
+    // Trust metadata must come directly from the authoritative GitHub origin.
     lastCheckFailed = false;
-    final info = await _checkViaGitHub() ?? await _checkViaPanel();
+    lastFailure = null;
+    final info = await _checkViaGitHub();
     if (info == null) {
       // 两条路都没拿到结果 = **检查失败**，不是「已是最新」。
       // 旧实现在这里直接 return null，而 UI 只在抛异常/超时时才判 failed，
       // 于是国内网络（GitHub + 4 个镜像 + 面板全不通）会看到
       // 「已是最新版本」，实际早有新版 —— 用户永远停在旧版还自认为最新。
       lastCheckFailed = true;
+      lastFailure = '无法从 GitHub 官方源获取可信更新校验信息；已停止自动更新。';
       return null;
     }
     _cacheInfo = info;
@@ -230,14 +296,12 @@ class UpdateService {
     return info;
   }
 
-  /// 直接问 GitHub Releases API（带镜像兜底；网络异常/取不到包返回 null）
+  /// Direct GitHub metadata only. Failure is explicit, never mirror fallback.
   Future<UpdateInfo?> _checkViaGitHub() async {
     try {
-      // 直连 api.github.com 在国内常超时/被阻断 → 依次退到镜像（见 GhMirror）
-      final data = await _withMirrorFallback<dynamic>(
+      final data = (await _authoritativeGet(
         'https://api.github.com/repos/$githubRepo/releases/latest',
-        (u) async => (await _gh.get(u)).data,
-      );
+      )).data;
       if (data is! Map) return null;
       final tag = data['tag_name']?.toString() ?? '';
       final version = tag.startsWith('v') ? tag.substring(1) : tag;
@@ -249,94 +313,49 @@ class UpdateService {
           .toList();
       final picked = await _pickAsset(assets);
       if (picked == null) return null;
+      final assetUri = Uri.tryParse(picked.url);
+      if (assetUri == null ||
+          assetUri.scheme != 'https' ||
+          assetUri.host != 'github.com' ||
+          assetUri.userInfo.isNotEmpty ||
+          !assetUri.path.startsWith('/$githubRepo/releases/download/')) {
+        return null;
+      }
 
-      return UpdateInfo(
+      final hash = await _fetchSha256(assets, picked.name);
+      if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) return null;
+      final info = UpdateInfo(
         latestVersion: version,
         downloadUrl: picked.url,
         sizeText: _sizeText(picked.size),
         assetName: picked.name,
-        // 顺带取 sha256：下载完校验完整性（拿不到就跳过校验，不阻塞更新）
-        sha256: await _fetchSha256(assets, picked.name),
+        // Mandatory authoritative checksum, not a publisher signature.
+        sha256: hash,
         sizeBytes: picked.size,
       );
+      _trustedInfos.add(info);
+      return info;
     } catch (_) {
       return null;
     }
   }
 
-  /// 问自己的面板：服务器代查 GitHub（`GET /api/v1/software/latest`）。
-  ///
-  /// 为什么必须有这条兜底（2026-09-23 实测）：GitHub 加速镜像**只代理 Release
-  /// 资产、不代理 API**（ghfast.top 对 api.github.com 返回 403，gh.ddlc.top 404），
-  /// 所以「App 端换镜像」解决不了国内检查更新失败；而服务器本身能直连 GitHub。
-  /// 这条路径只依赖「App 能连上自己的面板」—— 那正是 ServerPool 已经保证的事
-  /// （多域名 + 连不上自动换域名）。
+  /// Retained test seam to assert that panel metadata is never trusted.
+  @visibleForTesting
   static Future<Map?> Function(String configKey)? debugPanelLatestOverride;
-
-  Future<UpdateInfo?> _checkViaPanel() async {
-    final key = await _panelConfigKey();
-    if (key.isEmpty) return null; // 该平台面板没有对应入口（如 iOS 侧载包）
-    Map<String, dynamic>? data;
-    try {
-      final override = debugPanelLatestOverride;
-      if (override != null) {
-        final r = await override(key);
-        data = r == null ? null : Map<String, dynamic>.from(r);
-      } else {
-        final r = await ApiClient.instance
-            .get('/software/latest', query: {'key': key});
-        if (r is Map) data = Map<String, dynamic>.from(r);
-      }
-    } catch (e) {
-      AppLog.net('面板代查最新版本失败: $e');
-      return null;
-    }
-    if (data == null) return null;
-
-    final version = (data['version'] ?? '').toString().trim();
-    final assetName = (data['asset_name'] ?? '').toString().trim();
-    if (version.isEmpty || assetName.isEmpty) return null;
-    final size = (data['size_bytes'] as num?)?.toInt() ?? 0;
-    final url = (data['download_url'] ?? '').toString().trim();
-    if (url.isEmpty) return null; // 拿不到下载地址就没法更新，不如如实返回 null
-
-    return UpdateInfo(
-      latestVersion: version,
-      downloadUrl: url,
-      sizeText: _sizeText(size),
-      assetName: assetName,
-      sha256: (data['sha256'] ?? '').toString().trim(),
-      sizeBytes: size,
-    );
-  }
-
-  /// 本平台在面板「软件下载配置」里的键名（与后端同步目录的 ConfigKey 一致）
-  static Future<String> _panelConfigKey() async {
-    if (kIsWeb) return '';
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.windows:
-        return 'moneyfly_windows_url';
-      case TargetPlatform.android:
-        return 'moneyfly_android_url';
-      case TargetPlatform.macOS:
-        return await _isMacIntel()
-            ? 'moneyfly_macos_url'
-            : 'moneyfly_macos_arm_url';
-      default:
-        // iOS 走侧载 IPA，面板没有对应入口 → 不兜底（与「检查失败」同表现）
-        return '';
-    }
-  }
 
   /// 选择本平台安装包资产(macOS 按真实架构选 arm64/x64 dmg,避免 Intel 拿到 arm64)
   static Future<({String url, int size, String name})?> _pickAsset(
-      List<Map> assets) async {
+    List<Map> assets,
+  ) async {
     final entries = assets
-        .map((a) => (
-              name: a['name']?.toString() ?? '',
-              url: a['browser_download_url']?.toString() ?? '',
-              size: (a['size'] as num?)?.toInt() ?? 0,
-            ))
+        .map(
+          (a) => (
+            name: a['name']?.toString() ?? '',
+            url: a['browser_download_url']?.toString() ?? '',
+            size: (a['size'] as num?)?.toInt() ?? 0,
+          ),
+        )
         .toList();
     if (kIsWeb) return null;
     // 本平台的**可接受前缀集合**：兜底也只在集合内挑，避免把 Android APK
@@ -365,16 +384,11 @@ class UpdateService {
     }
     for (final p in prefixes) {
       for (final e in entries) {
-        if (e.name.startsWith(p) && e.url.isNotEmpty) {
+        if (validAssetName(e.name) &&
+            e.name.startsWith(p) &&
+            e.url.isNotEmpty) {
           return (url: e.url, size: e.size, name: e.name);
         }
-      }
-    }
-    // 宽松兜底仍限定在同平台前缀内（例如版本号命名变化导致前缀不完全匹配）
-    final platTag = prefixes.first.replaceAll(RegExp(r'(x64|arm64|arm64-v8a|ia32)-$'), '');
-    for (final e in entries) {
-      if (e.url.isNotEmpty && e.name.startsWith(platTag)) {
-        return (url: e.url, size: e.size, name: e.name);
       }
     }
     return null;
@@ -407,11 +421,12 @@ class UpdateService {
         TargetPlatform.android => 'SHA256SUMS-android-apk.txt',
         TargetPlatform.windows => 'SHA256SUMS-windows.txt',
         TargetPlatform.iOS => 'SHA256SUMS-ios.txt',
-        TargetPlatform.macOS => assetName.contains('-macos-arm64-')
-            ? 'SHA256SUMS-macos-arm64.txt'
-            : assetName.contains('-macos-universal-')
-                ? 'SHA256SUMS-macos-universal.txt'
-                : 'SHA256SUMS-macos-x64.txt',
+        TargetPlatform.macOS =>
+          assetName.contains('-macos-arm64-')
+              ? 'SHA256SUMS-macos-arm64.txt'
+              : assetName.contains('-macos-universal-')
+              ? 'SHA256SUMS-macos-universal.txt'
+              : 'SHA256SUMS-macos-x64.txt',
         _ => '',
       },
       'SHA256SUMS.txt',
@@ -423,22 +438,27 @@ class UpdateService {
           .map((a) => a['browser_download_url']?.toString() ?? '')
           .firstWhere((u) => u.isNotEmpty, orElse: () => '');
       if (sums.isEmpty) continue;
-      // 校验和与安装包走同一通道：既然直连不通，独立再试一轮只会让用户白等
-      final text = await _withMirrorFallback<String>(
-            sums,
-            (u) async =>
-                (await _gh.get<String>(u,
-                            options:
-                                Options(responseType: ResponseType.plain)))
-                        .data ??
-                    '',
-          ) ??
-          '';
-      for (final line in text.split('\n')) {
-        if (!line.contains(assetName)) continue;
-        // 兼容 Windows 上 sha256sum 的二进制模式标记：`<hash> *<name>`
-        final hash = line.trim().split(RegExp(r'\s+')).first.toLowerCase();
-        if (hash.length == 64) return hash;
+      final uri = Uri.tryParse(sums);
+      if (uri == null ||
+          uri.host != 'github.com' ||
+          !uri.path.startsWith('/$githubRepo/releases/download/')) {
+        continue;
+      }
+      try {
+        final text = (await _authoritativeGet(
+          sums,
+          plain: true,
+        )).data.toString();
+        for (final line in text.split('\n')) {
+          final match = RegExp(
+            r'^([a-fA-F0-9]{64})\s+\*?(.+)$',
+          ).firstMatch(line.trim());
+          if (match != null && match.group(2) == assetName) {
+            return match.group(1)!.toLowerCase();
+          }
+        }
+      } catch (_) {
+        /* Try the other authoritative checksum asset. */
       }
     }
     return '';
@@ -464,7 +484,8 @@ class UpdateService {
   ///   属于原生改动且真机行为无法在开发机上验证（曾因此把 CI 的 assembleRelease
   ///   搞挂）。与其带一个验证不了的原生路径，不如老老实实打开下载页。
   static bool get canInstallInApp =>
-      debugCanInstallInApp ?? (!kIsWeb && (Platform.isWindows || Platform.isMacOS));
+      debugCanInstallInApp ??
+      (!kIsWeb && (Platform.isWindows || Platform.isMacOS));
 
   Future<Directory?> _updateDir() async {
     final base = debugCacheDir != null
@@ -473,6 +494,12 @@ class UpdateService {
     if (base == null) return null;
     final dir = Directory('${base.path}/update');
     if (!dir.existsSync()) dir.createSync(recursive: true);
+    if (!_within(
+      base.resolveSymbolicLinksSync(),
+      dir.resolveSymbolicLinksSync(),
+    )) {
+      return null;
+    }
     return dir;
   }
 
@@ -486,9 +513,8 @@ class UpdateService {
     final i = info ?? _cacheInfo;
     final name = i?.assetName;
     if (name == null || name.isEmpty) return null;
-    final dir = await _updateDir();
-    if (dir == null) return null;
-    final f = File('${dir.path}/$name');
+    final f = await _assetFile(name);
+    if (f == null) return null;
     if (!f.existsSync() || f.lengthSync() == 0) return null;
     final expect = i?.sizeBytes ?? 0;
     if (expect > 0 && f.lengthSync() != expect) {
@@ -501,35 +527,34 @@ class UpdateService {
     return f.path;
   }
 
-  /// 安装前再核一次 sha256（有校验值时必须一致，否则删包返回 false）。
+  /// Require authoritative metadata and hash the current bytes before each launch.
   /// 缓存命中路径也要核：只有「下载那一刻」校验过是不够的 —— 磁盘写坏、
   /// 手动替换、下载被 kill 都可能留下一个大小正确但内容错误的包。
   Future<bool> verifyInstaller(String path, [UpdateInfo? info]) async {
     final i = info ?? _cacheInfo;
-    final expect = (i?.sha256 ?? '').toLowerCase();
-    if (expect.isEmpty) return true; // 发布方没给校验值：不阻塞安装（大小已核过）
-    final key = '$path|$expect';
-    if (_verifiedSha[key] == true) return true;
+    if (!_trusted(i)) {
+      lastFailure = '缺少 GitHub 官方源的 SHA-256 校验信息，拒绝安装。';
+      return false;
+    }
     try {
-      final actual = await _sha256Of(File(path));
-      if (actual == expect) {
-        _verifiedSha[key] = true;
-        return true;
+      final file = await _assetFile(i!.assetName ?? '');
+      if (file == null ||
+          !file.existsSync() ||
+          _normalized(File(path).resolveSymbolicLinksSync()) !=
+              _normalized(file.resolveSymbolicLinksSync()) ||
+          file.lengthSync() == 0 ||
+          (i.sizeBytes > 0 && file.lengthSync() != i.sizeBytes)) {
+        return false;
       }
-      AppLog.error('更新包校验失败（sha256 不匹配），丢弃: $path');
-      try {
-        File(path).deleteSync();
-      } catch (_) {}
-      _verifiedSha.remove(key);
+      final actual = await _sha256Of(file);
+      if (actual == i.sha256.toLowerCase()) return true;
+      lastFailure = '更新包 SHA-256 校验失败，拒绝安装。';
       return false;
     } catch (e) {
-      AppLog.error('更新包校验异常: $e');
+      lastFailure = '无法验证更新包：$e';
       return false;
     }
   }
-
-  /// sha256 校验结果缓存（key = 路径|期望值）：避免弹窗/安装流程重复哈希几十 MB
-  static final Map<String, bool> _verifiedSha = {};
 
   /// 后台/前台下载本机匹配的安装包（幂等：已下好直接返回路径）。
   ///
@@ -539,14 +564,21 @@ class UpdateService {
     UpdateInfo? info,
     void Function(double progress)? onProgress,
   }) async {
+    lastFailure = null;
     final i = info ?? _cacheInfo;
     final url = i?.downloadUrl;
     final name = i?.assetName;
     if (url == null || url.isEmpty || name == null || name.isEmpty) return null;
-    final dir = await _updateDir();
-    if (dir == null) return null;
-    final path = '${dir.path}/$name';
-    final dest = File(path);
+    if (!_trusted(i)) {
+      lastFailure = '缺少 GitHub 官方源的 SHA-256 校验信息，拒绝下载及安装。';
+      return null;
+    }
+    final dest = await _assetFile(name);
+    if (dest == null) {
+      lastFailure = '更新包文件名或缓存路径不安全。';
+      return null;
+    }
+    final path = dest.path;
     if (dest.existsSync() && dest.lengthSync() > 0) {
       // 缓存命中也要「大小 + sha256」过关才算数（见 downloadedInstaller 的说明）
       final sizeOk = i!.sizeBytes <= 0 || dest.lengthSync() == i.sizeBytes;
@@ -574,9 +606,14 @@ class UpdateService {
 
   static final Map<String, Future<String?>> _inFlight = {};
 
-  static Future<String?> _downloadTo(String url, String name, String path,
-      File dest, void Function(double progress)? onProgress,
-      String expectSha) async {
+  static Future<String?> _downloadTo(
+    String url,
+    String name,
+    String path,
+    File dest,
+    void Function(double progress)? onProgress,
+    String expectSha,
+  ) async {
     final override = debugDownloadOverride;
     downloadProgress.value = 0;
     try {
@@ -604,13 +641,16 @@ class UpdateService {
         for (final idx in order) {
           final candidate = all[idx];
           try {
-            await _gh.download(candidate, path,
-                onReceiveProgress: (received, total) {
-              if (total <= 0) return;
-              final p = received / total;
-              downloadProgress.value = p;
-              onProgress?.call(p);
-            });
+            await _gh.download(
+              candidate,
+              path,
+              onReceiveProgress: (received, total) {
+                if (total <= 0) return;
+                final p = received / total;
+                downloadProgress.value = p;
+                onProgress?.call(p);
+              },
+            );
             _ghChannel = idx;
             downloaded = true;
             break;
@@ -658,42 +698,16 @@ class UpdateService {
 
   /// 测试用：算一段字节的 sha256（避免测试自己再引一份 crypto 实现）
   @visibleForTesting
-  static String sha256HexForTest(List<int> bytes) => sha256.convert(bytes).toString();
+  static String sha256HexForTest(List<int> bytes) =>
+      sha256.convert(bytes).toString();
 
-  /// 「重启即更新」用：缓存里已下好、且比当前版本新的安装包。
-  ///
-  /// 只认本平台的安装器文件名前缀（Windows: `MoneyFly-setup-<ver>.exe`），
-  /// 版本从文件名解析并与当前版本比较 —— 比当前版本旧或相同的缓存一律忽略
-  /// （用户手里可能留着老包）。多个候选取版本最高的。
+  /// Unattended cache execution is disabled until an authenticated persisted
+  /// manifest exists. Manual updates still revalidate authoritative metadata.
   Future<({String path, String version})?> pendingNewerInstaller() async {
-    final dir = await _updateDir();
-    if (dir == null || !dir.existsSync()) return null;
-    ({String path, String version})? best;
-    for (final f in dir.listSync()) {
-      if (f is! File) continue;
-      final name = f.uri.pathSegments.isEmpty ? '' : f.uri.pathSegments.last;
-      final m = RegExp(r'^MoneyFly-setup-(\d+\.\d+\.\d+)\.exe$').firstMatch(name);
-      if (m == null) continue;
-      final v = m.group(1)!;
-      if (!_newerThanCurrent(v)) continue;
-      if (f.lengthSync() == 0) continue;
-      if (best == null || _versionKey(v).compareTo(_versionKey(best.version)) > 0) {
-        best = (path: f.path, version: v);
-      }
-    }
-    return best;
+    // Disk discovery is not authorization. No persisted authenticated manifest
+    // exists yet, so unattended startup execution is deliberately disabled.
+    return null;
   }
-
-  static String _versionKey(String v) {
-    final m = RegExp(r'(\d+)\.(\d+)\.(\d+)').firstMatch(v);
-    if (m == null) return v;
-    return '${int.parse(m.group(1)!).toString().padLeft(6, '0')}'
-        '${int.parse(m.group(2)!).toString().padLeft(6, '0')}'
-        '${int.parse(m.group(3)!).toString().padLeft(6, '0')}';
-  }
-
-  static bool _newerThanCurrent(String v) =>
-      _versionKey(v).compareTo(_versionKey(UpdateInfo.currentVersion)) > 0;
 
   /// 当前是否以「安装版」形态运行（%LOCALAPPDATA%\Programs\MoneyFly）。
   ///
@@ -705,14 +719,13 @@ class UpdateService {
         .replaceAll('\\', '/')
         .toLowerCase();
     if (local.isEmpty) return false;
-    final exe =
-        Platform.resolvedExecutable.replaceAll('\\', '/').toLowerCase();
+    final exe = Platform.resolvedExecutable.replaceAll('\\', '/').toLowerCase();
     return exe.startsWith('$local/programs/moneyfly/');
   }
 
   /// 测试缝：替换「分离式启动安装器」（返回是否成功启动）
   static Future<bool> Function(String exe, List<String> args)?
-      debugStartDetached;
+  debugStartDetached;
 
   /// Windows：静默安装（无向导、自动关占用进程、不重启系统；装完由安装器
   /// 自己把 App 拉起来 —— 见 scripts/windows_installer.iss 的 [Run]）。
@@ -723,7 +736,8 @@ class UpdateService {
   ///   /CLOSEAPPLICATIONS 自动结束占用待替换文件的进程（正在运行的旧版本）
   ///   /NORESTART         即使需要也不要重启系统
   ///   /SUPPRESSMSGBOXES  静默模式下不弹任何消息框
-  Future<bool> installWindowsSilently(String path) async {
+  Future<bool> installWindowsSilently(String path, [UpdateInfo? info]) async {
+    if (!await verifyInstaller(path, info)) return false;
     final args = const [
       '/SILENT',
       '/SP-',
@@ -744,21 +758,24 @@ class UpdateService {
 
   /// 调起系统安装器（Windows 打开 exe；macOS 走 [installMacDmg] 就地替换）。
   /// **不退出进程** —— 退出由上层在断连后决定，避免装到一半内核还在跑。
-  Future<bool> launchInstaller(String path) async {
+  Future<bool> launchInstaller(String path, [UpdateInfo? info]) async {
+    if (!await verifyInstaller(path, info)) return false;
     final override = debugLaunchInstallerOverride;
     if (override != null) return override(path);
     if (Platform.isMacOS) {
       // 旧实现这里是 `open <dmg>`：只是把安装包丢给 Finder，用户还得自己把
       // App 拖进「应用程序」—— 这不是「自动安装」，而且拖出来的 App 带着
       // 隔离属性时 Gatekeeper 会直接报「已损坏」。现在自己做完整流程。
-      final r = await installMacDmg(path);
+      final r = await installMacDmg(path, info);
       return r == MacInstallResult.installed ||
           r == MacInstallResult.openedExternally;
     }
     if (Platform.isWindows) {
       try {
-        return await launchUrl(Uri.file(path),
-            mode: LaunchMode.externalApplication);
+        return await launchUrl(
+          Uri.file(path),
+          mode: LaunchMode.externalApplication,
+        );
       } catch (_) {
         return false;
       }
@@ -773,7 +790,7 @@ class UpdateService {
   /// 测试缝：替换进程调用（真实路径要挂 DMG、复制几十 MB、替换 App）
   @visibleForTesting
   static Future<ProcessResult> Function(String exe, List<String> args)?
-      debugRunProcess;
+  debugRunProcess;
 
   /// 测试缝：替换「用系统默认程序打开某个文件」（测试环境里 launchUrl 永不返回）
   @visibleForTesting
@@ -789,14 +806,19 @@ class UpdateService {
   ///  1. 真正的自动更新：用户点一次就完事，不需要手动拖进「应用程序」；
   ///  2. **隔离属性**：从 DMG 里拖出来的 App 可能带 `com.apple.quarantine`，
   ///     而我们的 App 是 ad-hoc 签名（无 TeamIdentifier），一旦被隔离，
-  ///     Gatekeeper 只会报「已损坏，无法打开」—— 用 `ditto --noqtn` + 
+  ///     Gatekeeper 只会报「已损坏，无法打开」—— 用 `ditto --noqtn` +
   ///     `xattr -dr com.apple.quarantine` 从根上避免；
   ///  3. 挂载失败能区分出「安装包损坏」（半截下载）并让 UI 给出正确指引。
-  Future<MacInstallResult> installMacDmg(String dmgPath) async {
+  Future<MacInstallResult> installMacDmg(
+    String dmgPath, [
+    UpdateInfo? info,
+  ]) async {
+    if (!await verifyInstaller(dmgPath, info)) return MacInstallResult.failed;
     final override = debugInstallMacOverride;
     if (override != null) return override(dmgPath);
     if (!Platform.isMacOS) return MacInstallResult.failed;
-    final run = debugRunProcess ??
+    final run =
+        debugRunProcess ??
         (String exe, List<String> args) => Process.run(exe, args);
     if (!File(dmgPath).existsSync()) return MacInstallResult.failed;
 
@@ -816,16 +838,26 @@ class UpdateService {
     try {
       // 1) 挂载（不弹 Finder、只读）。
       const attachArgs = ['attach', '-nobrowse', '-readonly'];
-      var attach = await run(
-          'hdiutil', [...attachArgs, '-mountpoint', mnt.path, dmgPath]);
+      var attach = await run('hdiutil', [
+        ...attachArgs,
+        '-mountpoint',
+        mnt.path,
+        dmgPath,
+      ]);
       var err = '${attach.stderr}';
       // 「资源忙」= 这张 DMG 已经挂载过（上一次尝试留下的卷）→ 先卸载再试一次，
       // 不要把这种情况误判成「安装包损坏」（用户会以为自己下载坏了）
       if (attach.exitCode != 0 &&
-          (err.contains('忙') || err.contains('busy') || err.contains('already'))) {
+          (err.contains('忙') ||
+              err.contains('busy') ||
+              err.contains('already'))) {
         await run('hdiutil', ['detach', '/Volumes/MoneyFly', '-force']);
-        attach = await run(
-            'hdiutil', [...attachArgs, '-mountpoint', mnt.path, dmgPath]);
+        attach = await run('hdiutil', [
+          ...attachArgs,
+          '-mountpoint',
+          mnt.path,
+          dmgPath,
+        ]);
         err = '${attach.stderr}';
       }
       if (attach.exitCode != 0) {
@@ -850,8 +882,12 @@ class UpdateService {
       final stagingPath = '$target.new';
       staging = Directory(stagingPath);
       if (staging.existsSync()) staging.deleteSync(recursive: true);
-      final copy = await run('ditto',
-          ['--noqtn', '-rsrc', src.first.path, stagingPath]);
+      final copy = await run('ditto', [
+        '--noqtn',
+        '-rsrc',
+        src.first.path,
+        stagingPath,
+      ]);
       if (copy.exitCode != 0) {
         AppLog.error('更新包复制失败: ${copy.stderr}');
         return MacInstallResult.failed;
@@ -916,8 +952,10 @@ class UpdateService {
     final override = debugOpenFileOverride;
     if (override != null) return override(path);
     try {
-      return await launchUrl(Uri.file(path),
-          mode: LaunchMode.externalApplication);
+      return await launchUrl(
+        Uri.file(path),
+        mode: LaunchMode.externalApplication,
+      );
     } catch (_) {
       return false;
     }
@@ -968,6 +1006,8 @@ class UpdateService {
     debugGhDio = null;
     _ghChannel = 0;
     debugPanelLatestOverride = null;
-    _verifiedSha.clear();
+    _trustedInfos.clear();
+    instance.lastFailure = null;
+    instance.lastCheckFailed = false;
   }
 }

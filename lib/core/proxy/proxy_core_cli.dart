@@ -551,14 +551,33 @@ class ProxyCoreCli extends ProxyCore {
         manageSystemProxy ? SystemProxyManager.restore() : Future.value();
 
     await Future.wait([killFut, restoreFut]);
-    // sudo 启动时，杀掉 sudo 父进程不一定带走 root 内核：按工作目录兜底一次
+    // sudo 启动时：root 内核的优雅关闭会被 App 的 API 长连接拖住（10s 不释放
+    // 9090），必须 SIGKILL 强杀；普通内核同样 SIGKILL 兜底。
     if (_launchedViaSudo && _kernelDir != null) {
       try {
         await Process.run('sudo',
-            ['-n', 'pkill', '-f', _kernelDir!],
+            ['-n', 'pkill', '-9', '-f', 'moneyfly_core'],
             stdoutEncoding: utf8, stderrEncoding: utf8);
       } catch (_) {}
       _launchedViaSudo = false;
+    } else if (p != null) {
+      try {
+        p.kill(ProcessSignal.sigkill);
+      } catch (_) {}
+    }
+    // 等端口真正释放（最多 3s），否则下一个内核 bind 会撞「address already in use」。
+    // 只有「本来真的有内核在跑」时才等：没内核时等也是白等，且在 widget 测试的
+    // fake-clock 下 Socket.connect 不会返回，会拖死调用方（更新流程断连即如此）。
+    if (p != null) {
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (DateTime.now().isBefore(deadline)) {
+        final apiBusy = await _portListening(_clashApiPort);
+        final mixedBusy = (_tunForceMode || !manageSystemProxy)
+            ? false
+            : await _portListening(_localPort);
+        if (!apiBusy && !mixedBusy) break;
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
     }
   }
 

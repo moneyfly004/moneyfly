@@ -97,34 +97,39 @@ abstract final class UpdatePrompt {
     if (pending == null) return;
     if (_busy) return;
 
-    final tried = (await SettingsStore.instance
-            .load())['autoInstallTriedVersion']
-        ?.toString() ??
+    final tried =
+        (await SettingsStore.instance.load())['autoInstallTriedVersion']
+            ?.toString() ??
         '';
     if (tried == pending.version) {
-      AppLog.log('UPDATE',
-          '已自动安装过 ${pending.version} 但仍未生效 → 不再自动重试，改走手动更新');
+      AppLog.log('UPDATE', '已自动安装过 ${pending.version} 但仍未生效 → 不再自动重试，改走手动更新');
       return;
     }
     // 先记账再动手：即使进程在安装过程中被结束，也不会陷入「启动→安装→失败」循环
-    await SettingsStore.instance
-        .update((s) => s['autoInstallTriedVersion'] = pending.version);
+    await SettingsStore.instance.update(
+      (s) => s['autoInstallTriedVersion'] = pending.version,
+    );
     if (!context.mounted) return;
 
     _busy = true;
     AppLog.log('UPDATE', '启动时发现已下载的 ${pending.version}，开始静默安装');
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        backgroundColor: MFColors.card,
-        title: Text(AppStrings.t('update_installing_title'),
-            style: const TextStyle(fontSize: 15)),
-        content: Text(
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: MFColors.card,
+          title: Text(
+            AppStrings.t('update_installing_title'),
+            style: const TextStyle(fontSize: 15),
+          ),
+          content: Text(
             AppStrings.t('update_installing_body', {'v': pending.version}),
-            style: TextStyle(fontSize: 13, color: MFColors.txt2)),
+            style: TextStyle(fontSize: 13, color: MFColors.txt2),
+          ),
+        ),
       ),
-    ));
+    );
 
     // 与手动安装同一条路径：先断开内核 + 还原系统代理，避免文件占用与
     // 「代理指向死端口导致整机断网」的残留
@@ -137,7 +142,9 @@ abstract final class UpdatePrompt {
       await SystemProxyManager.restore();
     } catch (_) {}
 
-    final ok = await UpdateService.instance.installWindowsSilently(pending.path);
+    final ok = await UpdateService.instance.installWindowsSilently(
+      pending.path,
+    );
     if (!ok) {
       _busy = false;
       if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -152,7 +159,10 @@ abstract final class UpdatePrompt {
   static Future<void> checkManually(BuildContext context) async {
     if (_busy || !context.mounted) return;
     _busy = true;
-    final loading = _showLoadingDialog(context, AppStrings.t('update_checking'));
+    final loading = _showLoadingDialog(
+      context,
+      AppStrings.t('update_checking'),
+    );
     UpdateInfo? info;
     var failed = false;
     try {
@@ -173,20 +183,16 @@ abstract final class UpdatePrompt {
       await _alert(
         context,
         checkFailed
-            ? AppStrings.t('update_check_failed')
-            : AppStrings.t('update_up_to_date',
-                {'v': UpdateInfo.currentVersion}),
+            ? (UpdateService.instance.lastFailure ??
+                  AppStrings.t('update_check_failed'))
+            : AppStrings.t('update_up_to_date', {
+                'v': UpdateInfo.currentVersion,
+              }),
       );
       return;
     }
     _promptedThisRun.add(info.latestVersion);
-    await showUpdateDialog(context, info: UpdateInfo(
-      latestVersion: info.latestVersion,
-      downloadUrl: info.downloadUrl,
-      sizeText: info.sizeText,
-      assetName: info.assetName,
-      sha256: info.sha256,
-    ), force: true);
+    await showUpdateDialog(context, info: info, force: true);
   }
 
   /// 新版本弹窗。点「立即更新」进入下载/安装流程；点「稍后」记住该版本。
@@ -201,15 +207,18 @@ abstract final class UpdatePrompt {
     _busy = true;
     try {
       // 后台可能已经下好了 → 文案要如实区分「已就绪」与「正在后台下载」
-      final downloaded = await UpdateService.instance.downloadedInstaller(info) != null;
+      final downloaded =
+          await UpdateService.instance.downloadedInstaller(info) != null;
       if (!context.mounted) return;
       final ok = await showDialog<bool>(
         context: context,
         barrierDismissible: !force,
         builder: (ctx) => AlertDialog(
           backgroundColor: MFColors.card2,
-          title: Text('${AppStrings.t('new_version')} v$version',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          title: Text(
+            '${AppStrings.t('new_version')} v$version',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -218,15 +227,28 @@ abstract final class UpdatePrompt {
                 downloaded
                     ? AppStrings.t('update_ready_body')
                     : (UpdateService.canInstallInApp
-                        ? AppStrings.t('update_downloading_body')
-                        : AppStrings.t('update_manual_body', {'v': version})),
-                style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.6),
+                          ? AppStrings.t('update_downloading_body')
+                          : AppStrings.t('update_manual_body', {'v': version})),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: MFColors.txt2,
+                  height: 1.6,
+                ),
               ),
               if (info!.sizeText != null && info.sizeText!.isNotEmpty) ...[
                 const SizedBox(height: 6),
-                Text(AppStrings.t('update_body',
-                    {'cur': 'v${UpdateInfo.currentVersion}', 'latest': 'v$version', 'size': ' · ${info.sizeText}'}),
-                    style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6)),
+                Text(
+                  AppStrings.t('update_body', {
+                    'cur': 'v${UpdateInfo.currentVersion}',
+                    'latest': 'v$version',
+                    'size': ' · ${info.sizeText}',
+                  }),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: MFColors.txt3,
+                    height: 1.6,
+                  ),
+                ),
               ],
             ],
           ),
@@ -246,8 +268,10 @@ abstract final class UpdatePrompt {
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: Text(AppStrings.t('update_install_now'),
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              child: Text(
+                AppStrings.t('update_install_now'),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
           ],
         ),
@@ -256,8 +280,9 @@ abstract final class UpdatePrompt {
         await installNow(context, info: info);
       } else if (ok == false) {
         // 记住「稍后」：同一个版本不再反复弹
-        await SettingsStore.instance
-            .update((s) => s['dismissedUpdateVersion'] = version);
+        await SettingsStore.instance.update(
+          (s) => s['dismissedUpdateVersion'] = version,
+        );
       }
     } finally {
       _busy = false;
@@ -290,7 +315,13 @@ abstract final class UpdatePrompt {
         await _alert(context, AppStrings.t('no_download_url'));
         return;
       }
-      await _fallback(context, info: info, reason: AppStrings.t('update_download_failed'));
+      await _fallback(
+        context,
+        info: info,
+        reason:
+            UpdateService.instance.lastFailure ??
+            AppStrings.t('update_download_failed'),
+      );
       return;
     }
     if (!context.mounted) return;
@@ -304,7 +335,13 @@ abstract final class UpdatePrompt {
     // 每次点更新都拿它去装 —— macOS 上就是挂载失败（用户看到「磁盘损坏」）。
     if (!await UpdateService.instance.verifyInstaller(path, info)) {
       if (!context.mounted) return;
-      await _fallback(context, info: info, reason: AppStrings.t('update_pkg_corrupt'));
+      await _fallback(
+        context,
+        info: info,
+        reason:
+            UpdateService.instance.lastFailure ??
+            AppStrings.t('update_pkg_corrupt'),
+      );
       return;
     }
     if (!context.mounted) return;
@@ -322,14 +359,16 @@ abstract final class UpdatePrompt {
 
     // macOS：直接就地安装（挂载 DMG → 复制出 .app（不带隔离属性）→ 替换 → 起新版本）
     if (Platform.isMacOS) {
-      final r = await UpdateService.instance.installMacDmg(path);
+      final r = await UpdateService.instance.installMacDmg(path, info);
       if (!context.mounted) return;
       switch (r) {
         case MacInstallResult.installed:
           await _alert(
-              context,
-              AppStrings.t('update_installed_restart',
-                  {'v': info?.latestVersion ?? ''}));
+            context,
+            AppStrings.t('update_installed_restart', {
+              'v': info?.latestVersion ?? '',
+            }),
+          );
           (debugExitOverride ?? exit)(0);
           return;
         case MacInstallResult.openedExternally:
@@ -338,21 +377,32 @@ abstract final class UpdatePrompt {
           (debugExitOverride ?? exit)(0);
           return;
         case MacInstallResult.damaged:
-          await _fallback(context,
-              info: info, reason: AppStrings.t('update_pkg_corrupt'));
+          await _fallback(
+            context,
+            info: info,
+            reason:
+                UpdateService.instance.lastFailure ??
+                AppStrings.t('update_pkg_corrupt'),
+          );
           return;
         case MacInstallResult.failed:
-          await _fallback(context,
-              info: info, reason: AppStrings.t('update_install_failed'));
+          await _fallback(
+            context,
+            info: info,
+            reason: AppStrings.t('update_install_failed'),
+          );
           return;
       }
     }
 
-    final launched = await UpdateService.instance.launchInstaller(path);
+    final launched = await UpdateService.instance.launchInstaller(path, info);
     if (!context.mounted) return;
     if (!launched) {
-      await _fallback(context,
-          info: info, reason: AppStrings.t('update_install_launch_failed'));
+      await _fallback(
+        context,
+        info: info,
+        reason: AppStrings.t('update_install_launch_failed'),
+      );
       return;
     }
     if (Platform.isAndroid) {
@@ -385,17 +435,23 @@ abstract final class UpdatePrompt {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('update_fallback_title'),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        title: Text(
+          AppStrings.t('update_fallback_title'),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(reason,
-                style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.6)),
+            Text(
+              reason,
+              style: TextStyle(fontSize: 13, color: MFColors.txt2, height: 1.6),
+            ),
             const SizedBox(height: 10),
-            Text(AppStrings.t('update_fallback_body'),
-                style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6)),
+            Text(
+              AppStrings.t('update_fallback_body'),
+              style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6),
+            ),
           ],
         ),
         actions: [
@@ -407,14 +463,19 @@ abstract final class UpdatePrompt {
               },
               child: Text(AppStrings.t('update_manual_help')),
             ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(AppStrings.t('cancel'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppStrings.t('cancel')),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               openDownloadPage(downloadPageUrl);
             },
-            child: Text(AppStrings.t('update_open_download_page'),
-                style: const TextStyle(fontWeight: FontWeight.w600)),
+            child: Text(
+              AppStrings.t('update_open_download_page'),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),
@@ -431,18 +492,32 @@ abstract final class UpdatePrompt {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: MFColors.card2,
-        title: Text(AppStrings.t('update_manual_help'),
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        title: Text(
+          AppStrings.t('update_manual_help'),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(AppStrings.t('update_manual_steps'),
-                  style: TextStyle(fontSize: 12.5, color: MFColors.txt2, height: 1.7)),
+              Text(
+                AppStrings.t('update_manual_steps'),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: MFColors.txt2,
+                  height: 1.7,
+                ),
+              ),
               const SizedBox(height: 12),
-              Text(AppStrings.t('update_manual_damaged_hint'),
-                  style: TextStyle(fontSize: 12, color: MFColors.txt3, height: 1.6)),
+              Text(
+                AppStrings.t('update_manual_damaged_hint'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: MFColors.txt3,
+                  height: 1.6,
+                ),
+              ),
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
@@ -452,11 +527,14 @@ abstract final class UpdatePrompt {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: MFColors.line),
                 ),
-                child: SelectableText(cmd,
-                    style: TextStyle(
-                        fontSize: 11.5,
-                        color: MFColors.txt,
-                        fontFamily: kNumFont)),
+                child: SelectableText(
+                  cmd,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: MFColors.txt,
+                    fontFamily: kNumFont,
+                  ),
+                ),
               ),
             ],
           ),
@@ -467,13 +545,15 @@ abstract final class UpdatePrompt {
               Clipboard.setData(const ClipboardData(text: cmd));
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(AppStrings.t('update_manual_copied'))));
+                SnackBar(content: Text(AppStrings.t('update_manual_copied'))),
+              );
             },
             child: Text(AppStrings.t('update_manual_copy_cmd')),
           ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppStrings.t('confirm'))),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppStrings.t('confirm')),
+          ),
         ],
       ),
     );
@@ -488,7 +568,9 @@ abstract final class UpdatePrompt {
   /// 无法从 UI 侧 abort（服务层没有暴露 CancelToken），所以取消的语义是
   /// **停止等待 + 不安装**，弹窗文案已明确说明，不再有「关不掉」的死锁感。
   static Future<({String? path, bool cancelled})> _downloadWithProgress(
-      BuildContext context, UpdateInfo? info) async {
+    BuildContext context,
+    UpdateInfo? info,
+  ) async {
     if (info?.downloadUrl == null || info!.downloadUrl!.isEmpty) {
       return (path: null, cancelled: false);
     }
@@ -508,11 +590,15 @@ abstract final class UpdatePrompt {
     UpdateService.downloadProgress.addListener(onTick);
     var cancelled = false;
     final cancelSignal = Completer<void>();
-    final dialog = _showProgressDialog(context, progress, onCancel: () {
-      if (cancelled) return;
-      cancelled = true;
-      if (!cancelSignal.isCompleted) cancelSignal.complete();
-    });
+    final dialog = _showProgressDialog(
+      context,
+      progress,
+      onCancel: () {
+        if (cancelled) return;
+        cancelled = true;
+        if (!cancelSignal.isCompleted) cancelSignal.complete();
+      },
+    );
     final download = UpdateService.instance.downloadInstaller(
       info: info,
       onProgress: (p) {
@@ -567,13 +653,17 @@ abstract final class UpdatePrompt {
         canPop: false,
         child: AlertDialog(
           backgroundColor: MFColors.card2,
-          content: Row(children: [
-            const SizedBox(
-                width: 18, height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2.2)),
-            const SizedBox(width: 14),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
-          ]),
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2.2),
+              ),
+              const SizedBox(width: 14),
+              Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+            ],
+          ),
         ),
       ),
     );
@@ -587,8 +677,10 @@ abstract final class UpdatePrompt {
   }
 
   static _DialogHandle _showProgressDialog(
-      BuildContext context, ValueListenable<double?> progress,
-      {VoidCallback? onCancel}) {
+    BuildContext context,
+    ValueListenable<double?> progress, {
+    VoidCallback? onCancel,
+  }) {
     final nav = Navigator.of(context, rootNavigator: true);
     var closed = false;
     showDialog<void>(
@@ -599,8 +691,10 @@ abstract final class UpdatePrompt {
         canPop: false,
         child: AlertDialog(
           backgroundColor: MFColors.card2,
-          title: Text(AppStrings.t('update_downloading_pkg'),
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          title: Text(
+            AppStrings.t('update_downloading_pkg'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
           content: ValueListenableBuilder<double?>(
             valueListenable: progress,
             builder: (_, v, _) => Column(
@@ -610,15 +704,22 @@ abstract final class UpdatePrompt {
                 LinearProgressIndicator(value: v?.clamp(0, 1)),
                 const SizedBox(height: 10),
                 Text(
-                  v == null ? '' : '${(v * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                  v == null
+                      ? ''
+                      : '${(v * 100).clamp(0, 100).toStringAsFixed(0)}%',
                   style: TextStyle(fontSize: 12, color: MFColors.txt3),
                 ),
                 const SizedBox(height: 8),
                 // 取消的真实语义写清楚：不再等待、不会安装；底层下载（与后台
                 // 预下载共享）无法从 UI 侧 abort，所以如实说明而不是假装停掉
-                Text(AppStrings.t('update_cancel_hint'),
-                    style: TextStyle(
-                        fontSize: 11, color: MFColors.txt3, height: 1.5)),
+                Text(
+                  AppStrings.t('update_cancel_hint'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: MFColors.txt3,
+                    height: 1.5,
+                  ),
+                ),
               ],
             ),
           ),
@@ -655,7 +756,6 @@ abstract final class UpdatePrompt {
       ),
     );
   }
-
 }
 
 /// 可关闭的弹窗句柄（幂等；用弹窗自己的 navigator 关，避免关错栈）

@@ -19,13 +19,15 @@ import 'package:moneyfly/l10n/app_strings.dart';
 import 'package:moneyfly/widgets/update_prompt.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-UpdateInfo _info(String version) => UpdateInfo(
-      latestVersion: version,
-      downloadUrl: 'https://example.com/$version.pkg',
-      sizeText: '1 MB',
-      assetName: 'MoneyFly-macos-arm64-$version.dmg',
-      sha256: '',
-    );
+UpdateInfo _info(String version) => UpdateService.trustInfoForTest(
+  UpdateInfo(
+    latestVersion: version,
+    downloadUrl: 'https://example.com/$version.pkg',
+    sizeText: '1 MB',
+    assetName: 'MoneyFly-macos-arm64-$version.dmg',
+    sha256: UpdateService.sha256HexForTest('installer'.codeUnits),
+  ),
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -57,13 +59,19 @@ void main() {
   });
 
   Future<void> pumpHost(
-      WidgetTester tester, void Function(BuildContext) onCtx) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(builder: (c) {
-        onCtx(c);
-        return const SizedBox();
-      }),
-    ));
+    WidgetTester tester,
+    void Function(BuildContext) onCtx,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (c) {
+            onCtx(c);
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
   }
 
   testWidgets('下载中：进度弹窗有「取消」按钮和取消说明，不再是无出口的转圈', (tester) async {
@@ -84,10 +92,16 @@ void main() {
     await tester.pump();
 
     expect(find.text(AppStrings.t('update_downloading_pkg')), findsOneWidget);
-    expect(find.text(AppStrings.t('cancel')), findsOneWidget,
-        reason: '旧实现没有取消按钮：barrierDismissible=false + canPop=false = 关不掉');
-    expect(find.text(AppStrings.t('update_cancel_hint')), findsOneWidget,
-        reason: '取消的真实语义（停止等待、下载仍在后台继续、不会安装）必须写明');
+    expect(
+      find.text(AppStrings.t('cancel')),
+      findsOneWidget,
+      reason: '旧实现没有取消按钮：barrierDismissible=false + canPop=false = 关不掉',
+    );
+    expect(
+      find.text(AppStrings.t('update_cancel_hint')),
+      findsOneWidget,
+      reason: '取消的真实语义（停止等待、下载仍在后台继续、不会安装）必须写明',
+    );
 
     // 收尾：点「取消」让流程结束、再放行底层下载（不留下未完成的异步任务）
     await tester.tap(find.text(AppStrings.t('cancel')));
@@ -129,17 +143,24 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(find.text(AppStrings.t('update_downloading_pkg')), findsNothing,
-        reason: '取消后进度弹窗必须关掉');
+    expect(
+      find.text(AppStrings.t('update_downloading_pkg')),
+      findsNothing,
+      reason: '取消后进度弹窗必须关掉',
+    );
 
     // 关键：flow 必须真的返回（旧实现只能等到下载超时/完成）
-    await flow.timeout(const Duration(seconds: 5),
-        onTimeout: () => fail('取消后 installNow 仍然卡在等待下载上'));
+    await flow.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('取消后 installNow 仍然卡在等待下载上'),
+    );
 
     expect(launched, isFalse, reason: '取消 = 不安装');
     expect(openedUrl, isEmpty, reason: '取消不能被当成「下载失败」去打开下载页');
-    expect(find.textContaining(AppStrings.t('update_download_failed')),
-        findsNothing);
+    expect(
+      find.textContaining(AppStrings.t('update_download_failed')),
+      findsNothing,
+    );
 
     // 底层下载随后完成也不会引发异常（进度 notifier 已 dispose，靠 alive 闸门挡住）
     gate.complete();
@@ -179,7 +200,7 @@ void main() {
     // （只有 pump(Duration) 推进），缓存目录解析与磁盘写入是**真实**异步
     // （需要 runAsync 给事件循环时间）—— 两者交替推进才能走完。
     await tester.pump();
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 15; i++) {
       await tester.pump(const Duration(milliseconds: 200));
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 80));
@@ -192,10 +213,13 @@ void main() {
     // macOS 走就地安装时是「安装包已打开」提示（只有非 .app 运行 / 权限不足才会退到
     // open <dmg>），其它平台仍是「安装程序已启动」
     expect(
-        find.textContaining(Platform.isMacOS
+      find.textContaining(
+        Platform.isMacOS
             ? AppStrings.t('update_manual_open_hint')
-            : AppStrings.t('update_installing_exit')),
-        findsOneWidget);
+            : AppStrings.t('update_installing_exit'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text(AppStrings.t('confirm')));
     await tester.pumpAndSettle();
     await flow;

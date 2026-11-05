@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../utils/log_rotation.dart';
-import '../utils/serial_executor.dart';
+import '../utils/bounded_log_queue.dart';
 import 'app_log.dart';
 import 'local_paths.dart';
 
@@ -27,7 +27,14 @@ class KernelLog {
   static File? _crashFile;
   static const _maxSize = 512 * 1024; // 512KB，与 app_log.txt 同量级
 
-  static final SerialExecutor _queue = SerialExecutor();
+  static final BoundedLogQueue _queue = BoundedLogQueue((batch) async {
+    final f = await _resolveLog();
+    if (f != null) await appendBoundedLog(f, batch, maxBytes: _maxSize);
+  });
+  static final BoundedLogQueue _crashQueue = BoundedLogQueue((batch) async {
+    final f = await _resolveCrash();
+    if (f != null) await appendBoundedLog(f, batch, maxBytes: _maxSize);
+  });
 
   static Future<File?> _resolveLog() async {
     if (_file != null) return _file;
@@ -63,17 +70,7 @@ class KernelLog {
   /// 追加一行内核输出（fire-and-forget，绝不阻塞内核日志流消费）
   static void append(String line) {
     if (kIsWeb) return;
-    _queue.run(() async {
-      try {
-        final f = await _resolveLog();
-        if (f == null) return;
-        await f.writeAsString('$line\n', mode: FileMode.append, flush: false);
-        if (await f.length() > _maxSize) {
-          final content = await f.readAsString();
-          await f.writeAsString(keepSecondHalf(content), flush: true);
-        }
-      } catch (_) {}
-    });
+    _queue.add('${capLogRecord(line)}\n');
   }
 
   /// 内核异常退出：把退出码 + 尾部输出写成一份快照（排查「被谁杀的」的唯一现场）。
@@ -85,64 +82,60 @@ class KernelLog {
     String? note,
   }) async {
     if (kIsWeb) return null;
-    String? path;
-    await _queue.run(() async {
-      try {
-        final f = await _resolveCrash();
-        if (f == null) return;
-        path = f.path;
-        final b = StringBuffer()
-          ..writeln('===== kernel exit ${DateTime.now().toIso8601String()} '
-              'code=$code${note == null ? '' : ' ($note)'} =====');
-        for (final l in tail) {
-          b.writeln(l);
-        }
-        b.writeln();
-        await f.writeAsString(b.toString(), mode: FileMode.append, flush: true);
-        if (await f.length() > _maxSize) {
-          final content = await f.readAsString();
-          await f.writeAsString(keepSecondHalf(content), flush: true);
-        }
-      } catch (_) {}
-    });
-    return path;
+    _crashQueue.add(
+      '===== kernel exit ${DateTime.now().toIso8601String()} '
+      'code=$code ${capLogRecord(note ?? "", maxBytes: 4096)} =====\n',
+    );
+    for (final line in tail) {
+      _crashQueue.add('${capLogRecord(line)}\n');
+    }
+    await _crashQueue.flush();
+    return (await _resolveCrash())?.path;
   }
 
   /// 清空（设置页「清空日志」用；与在写 append 同队列，避免交错）
-  static Future<void> clear() {
-    return _queue.run(() async {
-      for (final f in [await _resolveLog(), await _resolveCrash()]) {
-        try {
-          if (f != null && f.existsSync()) await f.writeAsString('');
-        } catch (_) {}
-      }
-    });
+  static Future<void> clear() async {
+    Future<void> clearFile(Future<File?> Function() resolve) async {
+      try {
+        final file = await resolve();
+        if (file != null && await file.exists()) await file.writeAsString('');
+      } catch (_) {}
+    }
+
+    final log = _queue.run(() => clearFile(_resolveLog));
+    final crash = _crashQueue.run(() => clearFile(_resolveCrash));
+    await Future.wait([log, crash]);
   }
 
   /// 读连续日志（排查/导出用）
-  static Future<String> read() async {
+  static Future<String> read() => _queue.run(() async {
     final f = await _resolveLog();
     if (f == null || !f.existsSync()) return '';
     try {
-      return await f.readAsString();
+      return await readLogTail(f);
     } catch (_) {
       return '';
     }
-  }
+  });
 
   /// 把内核日志路径写进 app_log，用户导出 app_log 时能顺着找到完整内核输出
   static void announcePaths() {
     _queue.run(() async {
       final log = await filePath;
       final crash = await crashFilePath;
-      AppLog.kernel('kernel log file: ${log ?? '(unavailable)'}'
-          '${crash == null ? '' : ' | crash dump: $crash'}');
+      AppLog.kernel(
+        'kernel log file: ${log ?? '(unavailable)'}'
+        '${crash == null ? '' : ' | crash dump: $crash'}',
+      );
     });
   }
 
   /// 等待已入队的写入全部落盘（测试用；生产路径全 fire-and-forget 不阻塞）
   @visibleForTesting
-  static Future<void> flush() => _queue.run(() async {});
+  static Future<void> flush() async {
+    await _queue.flush();
+    await _crashQueue.flush();
+  }
 
   /// 清掉文件句柄缓存（测试换临时目录时用）
   @visibleForTesting
